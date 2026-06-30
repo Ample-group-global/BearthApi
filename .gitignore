@@ -35,3 +35,5 @@ mddoc-divakar/
 
 # Generated output / demo artifacts
 *.txt
+!requirements.txt
+!app/requirements.txt

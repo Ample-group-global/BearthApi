@@ -83,4 +83,4 @@ async def health():
     return {"status": "ok"}
 
 # Vercel ASGI handler
-handler = Mangum(app)
+handler = Mangum(app, lifespan="off")
