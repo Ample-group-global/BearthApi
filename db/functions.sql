@@ -163,23 +163,25 @@ RETURNS json
 LANGUAGE plpgsql AS $$
 BEGIN
   RETURN json_build_object(
-    'paymentMethods',   (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM payment_methods  WHERE is_active = TRUE  ORDER BY sort_order) t),
-    'currencies',       (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM currencies) t),
-    'nftStages',        (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM nft_stages       WHERE is_active = TRUE  ORDER BY sort_order) t),
-    'nftTypes',         (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM nft_types) t),
-    'deliveryStatuses', (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM delivery_statuses) t),
-    'paymentStatuses',  (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM payment_statuses) t),
-    'productStatuses',  (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM product_statuses) t),
-    'roles',            (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM roles WHERE is_active = TRUE AND code != 'customer' ORDER BY name) t),
-    'permissions',      (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM permissions ORDER BY sort_order) t),
-    'exchangeRates',    (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM exchange_rates ORDER BY effective_date DESC LIMIT 10) t)
+    'paymentMethods',         (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM payment_methods   WHERE is_active = TRUE ORDER BY sort_order) t),
+    'currencies',             (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM currencies) t),
+    'nftStages',              (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM nft_stages        WHERE is_active = TRUE ORDER BY sort_order) t),
+    'nftTypes',               (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM nft_types) t),
+    'deliveryStatuses',       (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM delivery_statuses) t),
+    'paymentStatuses',        (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM payment_statuses) t),
+    'productStatuses',        (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM product_statuses) t),
+    'productCategories',      (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT id, code, name, sort_order FROM product_categories WHERE is_active = TRUE ORDER BY sort_order) t),
+    'stockAdjustmentReasons', (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT id, value, label, sort_order FROM stock_adjustment_reasons WHERE is_active = TRUE ORDER BY sort_order) t),
+    'roles',                  (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM roles WHERE is_active = TRUE AND code != 'customer' ORDER BY name) t),
+    'permissions',            (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM permissions ORDER BY sort_order) t),
+    'exchangeRates',          (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM exchange_rates ORDER BY effective_date DESC LIMIT 10) t)
   );
 END;
 $$;
 
 -- ── Customers (queries users table, role = 'customer') ───────────────
 
-CREATE FUNCTION customers_list(
+CREATE OR REPLACE FUNCTION customers_list(
   p_search      TEXT    DEFAULT NULL,
   p_active_only BOOLEAN DEFAULT TRUE,
   p_limit       INT     DEFAULT 20,
@@ -218,7 +220,7 @@ BEGIN
     WHERE u.role_id = (SELECT roles.id FROM roles WHERE roles.code = 'customer')
       AND (NOT p_active_only OR u.is_active = TRUE)
       AND (p_search IS NULL
-           OR u.customer_number ILIKE '%' || p_search || '%'
+           OR u.user_code       ILIKE '%' || p_search || '%'
            OR u.first_name      ILIKE '%' || p_search || '%'
            OR u.last_name       ILIKE '%' || p_search || '%'
            OR u.email           ILIKE '%' || p_search || '%'
@@ -310,10 +312,9 @@ BEGIN
 END;
 $$;
 
-DROP FUNCTION IF EXISTS customers_list(TEXT, BOOLEAN, INT, INT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS customers_create(VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR, UUID, TEXT);
 DROP FUNCTION IF EXISTS customers_update(UUID, VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR, UUID, TEXT, BOOLEAN);
-CREATE FUNCTION customers_create(
+CREATE OR REPLACE FUNCTION customers_create(
   p_first_name  VARCHAR,
   p_last_name   VARCHAR,
   p_phone       VARCHAR DEFAULT NULL,
@@ -363,7 +364,7 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION customers_update(
+CREATE OR REPLACE FUNCTION customers_update(
   p_id          UUID,
   p_first_name  VARCHAR DEFAULT NULL,
   p_last_name   VARCHAR DEFAULT NULL,
@@ -641,10 +642,10 @@ BEGIN
   IF p_customer_id IS NULL THEN
     RAISE EXCEPTION 'Customer is required' USING ERRCODE = 'P0001';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM users WHERE id = p_customer_id) THEN
+  IF NOT EXISTS (SELECT 1 FROM users WHERE users.id = p_customer_id) THEN
     RAISE EXCEPTION 'Customer not found' USING ERRCODE = 'P0002';
   END IF;
-  IF EXISTS (SELECT 1 FROM orders WHERE order_number = upper(trim(p_order_number))) THEN
+  IF EXISTS (SELECT 1 FROM orders WHERE orders.order_number = upper(trim(p_order_number))) THEN
     RAISE EXCEPTION 'Order number already exists' USING ERRCODE = '23505';
   END IF;
 
@@ -653,7 +654,7 @@ BEGIN
     nft_payment_method_id, nft_amount_twd, nft_amount_eth, nft_currency_id, nft_payment_status_id,
     merch_payment_method_id, merch_amount_twd, merch_currency_id, merch_payment_status_id
   ) VALUES (
-    upper(trim(p_order_number)), p_customer_id, p_referrer_id, p_purchase_date,
+    upper(trim(p_order_number)), p_customer_id, p_referrer_id, COALESCE(p_purchase_date, CURRENT_DATE),
     p_payment_notes, p_notes,
     p_nft_payment_method_id, p_nft_amount_twd, p_nft_amount_eth,
     p_nft_currency_id, p_nft_payment_status_id,
@@ -718,28 +719,28 @@ CREATE OR REPLACE FUNCTION orders_update(
 RETURNS TABLE(id UUID, order_number VARCHAR, customer_id UUID, purchase_date DATE, updated_at TIMESTAMPTZ)
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM orders WHERE id = p_id) THEN
+  IF NOT EXISTS (SELECT 1 FROM orders WHERE orders.id = p_id) THEN
     RAISE EXCEPTION 'Order not found' USING ERRCODE = 'P0002';
   END IF;
   RETURN QUERY
   UPDATE orders SET
-    customer_id              = COALESCE(p_customer_id,             customer_id),
-    referrer_id              = COALESCE(p_referrer_id,             referrer_id),
-    purchase_date            = COALESCE(p_purchase_date,           purchase_date),
-    payment_notes            = COALESCE(p_payment_notes,           payment_notes),
-    notes                    = COALESCE(p_notes,                   notes),
-    nft_payment_method_id    = COALESCE(p_nft_payment_method_id,   nft_payment_method_id),
-    nft_amount_twd           = COALESCE(p_nft_amount_twd,          nft_amount_twd),
-    nft_amount_eth           = COALESCE(p_nft_amount_eth,          nft_amount_eth),
-    nft_currency_id          = COALESCE(p_nft_currency_id,         nft_currency_id),
-    nft_payment_status_id    = COALESCE(p_nft_payment_status_id,   nft_payment_status_id),
-    merch_payment_method_id  = COALESCE(p_merch_payment_method_id, merch_payment_method_id),
-    merch_amount_twd         = COALESCE(p_merch_amount_twd,        merch_amount_twd),
-    merch_currency_id        = COALESCE(p_merch_currency_id,       merch_currency_id),
-    merch_payment_status_id  = COALESCE(p_merch_payment_status_id, merch_payment_status_id),
+    customer_id              = COALESCE(p_customer_id,             orders.customer_id),
+    referrer_id              = COALESCE(p_referrer_id,             orders.referrer_id),
+    purchase_date            = COALESCE(p_purchase_date,           orders.purchase_date),
+    payment_notes            = COALESCE(p_payment_notes,           orders.payment_notes),
+    notes                    = COALESCE(p_notes,                   orders.notes),
+    nft_payment_method_id    = COALESCE(p_nft_payment_method_id,   orders.nft_payment_method_id),
+    nft_amount_twd           = COALESCE(p_nft_amount_twd,          orders.nft_amount_twd),
+    nft_amount_eth           = COALESCE(p_nft_amount_eth,          orders.nft_amount_eth),
+    nft_currency_id          = COALESCE(p_nft_currency_id,         orders.nft_currency_id),
+    nft_payment_status_id    = COALESCE(p_nft_payment_status_id,   orders.nft_payment_status_id),
+    merch_payment_method_id  = COALESCE(p_merch_payment_method_id, orders.merch_payment_method_id),
+    merch_amount_twd         = COALESCE(p_merch_amount_twd,        orders.merch_amount_twd),
+    merch_currency_id        = COALESCE(p_merch_currency_id,       orders.merch_currency_id),
+    merch_payment_status_id  = COALESCE(p_merch_payment_status_id, orders.merch_payment_status_id),
     updated_at               = NOW()
-  WHERE id = p_id
-  RETURNING id, order_number, customer_id, purchase_date, updated_at;
+  WHERE orders.id = p_id
+  RETURNING orders.id, orders.order_number, orders.customer_id, orders.purchase_date, orders.updated_at;
 END;
 $$;
 
@@ -747,7 +748,7 @@ CREATE OR REPLACE FUNCTION orders_confirm_nft_payment(p_id UUID, p_nft_payment_s
 RETURNS TABLE(id UUID, order_number VARCHAR, nft_payment_status_id UUID, nft_confirmed_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM orders WHERE id = p_id) THEN
+  IF NOT EXISTS (SELECT 1 FROM orders WHERE orders.id = p_id) THEN
     RAISE EXCEPTION 'Order not found' USING ERRCODE = 'P0002';
   END IF;
   RETURN QUERY
@@ -755,8 +756,8 @@ BEGIN
     nft_payment_status_id = p_nft_payment_status_id,
     nft_confirmed_at      = NOW(),
     updated_at            = NOW()
-  WHERE id = p_id
-  RETURNING id, order_number, nft_payment_status_id, nft_confirmed_at, updated_at;
+  WHERE orders.id = p_id
+  RETURNING orders.id, orders.order_number, orders.nft_payment_status_id, orders.nft_confirmed_at, orders.updated_at;
 END;
 $$;
 
@@ -764,7 +765,7 @@ CREATE OR REPLACE FUNCTION orders_confirm_merch_payment(p_id UUID, p_merch_payme
 RETURNS TABLE(id UUID, order_number VARCHAR, merch_payment_status_id UUID, merch_confirmed_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM orders WHERE id = p_id) THEN
+  IF NOT EXISTS (SELECT 1 FROM orders WHERE orders.id = p_id) THEN
     RAISE EXCEPTION 'Order not found' USING ERRCODE = 'P0002';
   END IF;
   RETURN QUERY
@@ -772,8 +773,8 @@ BEGIN
     merch_payment_status_id = p_merch_payment_status_id,
     merch_confirmed_at      = NOW(),
     updated_at              = NOW()
-  WHERE id = p_id
-  RETURNING id, order_number, merch_payment_status_id, merch_confirmed_at, updated_at;
+  WHERE orders.id = p_id
+  RETURNING orders.id, orders.order_number, orders.merch_payment_status_id, orders.merch_confirmed_at, orders.updated_at;
 END;
 $$;
 
@@ -832,7 +833,7 @@ RETURNS TABLE(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM products WHERE id = p_id) THEN
+  IF NOT EXISTS (SELECT 1 FROM products WHERE products.id = p_id) THEN
     RAISE EXCEPTION 'Product not found' USING ERRCODE = 'P0002';
   END IF;
   RETURN QUERY
@@ -871,7 +872,9 @@ BEGIN
   RETURN QUERY
   INSERT INTO products (name, retail_price, presale_price, status_id, description, stock_qty, sort_order)
   VALUES (trim(p_name), p_retail_price, p_presale_price, p_status_id, p_description, p_stock_qty, p_sort_order)
-  RETURNING id, name, retail_price, presale_price, description, stock_qty, sort_order, status_id, created_at, updated_at;
+  RETURNING products.id, products.name, products.retail_price, products.presale_price,
+            products.description, products.stock_qty, products.sort_order,
+            products.status_id, products.created_at, products.updated_at;
 END;
 $$;
 
@@ -892,21 +895,23 @@ RETURNS TABLE(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM products WHERE id = p_id) THEN
+  IF NOT EXISTS (SELECT 1 FROM products WHERE products.id = p_id) THEN
     RAISE EXCEPTION 'Product not found' USING ERRCODE = 'P0002';
   END IF;
   RETURN QUERY
   UPDATE products SET
-    name          = COALESCE(p_name,          name),
-    retail_price  = COALESCE(p_retail_price,  retail_price),
-    presale_price = COALESCE(p_presale_price, presale_price),
-    status_id     = COALESCE(p_status_id,     status_id),
-    description   = COALESCE(p_description,   description),
-    stock_qty     = COALESCE(p_stock_qty,     stock_qty),
-    sort_order    = COALESCE(p_sort_order,    sort_order),
+    name          = COALESCE(p_name,          products.name),
+    retail_price  = COALESCE(p_retail_price,  products.retail_price),
+    presale_price = COALESCE(p_presale_price, products.presale_price),
+    status_id     = COALESCE(p_status_id,     products.status_id),
+    description   = COALESCE(p_description,   products.description),
+    stock_qty     = COALESCE(p_stock_qty,     products.stock_qty),
+    sort_order    = COALESCE(p_sort_order,    products.sort_order),
     updated_at    = NOW()
-  WHERE id = p_id
-  RETURNING id, name, retail_price, presale_price, description, stock_qty, sort_order, status_id, created_at, updated_at;
+  WHERE products.id = p_id
+  RETURNING products.id, products.name, products.retail_price, products.presale_price,
+            products.description, products.stock_qty, products.sort_order,
+            products.status_id, products.created_at, products.updated_at;
 END;
 $$;
 
@@ -929,11 +934,16 @@ $$;
 CREATE OR REPLACE FUNCTION nft_list(
   p_search               TEXT    DEFAULT NULL,
   p_delivery_status_code VARCHAR DEFAULT NULL,
-  p_limit                INT     DEFAULT 100,
+  p_stage_code           VARCHAR DEFAULT NULL,
+  p_revealed             BOOLEAN DEFAULT NULL,
+  p_limit                INT     DEFAULT 20,
   p_offset               INT     DEFAULT 0
 )
 RETURNS TABLE(
-  id UUID, serial_number VARCHAR, notes TEXT, delivered_at TIMESTAMPTZ,
+  id UUID, serial_number VARCHAR, token_id BIGINT,
+  image_ipfs_hash TEXT, metadata_uri TEXT, blind_box_uri TEXT,
+  is_revealed BOOLEAN, revealed_at TIMESTAMPTZ,
+  notes TEXT, delivered_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ,
   stage_id UUID, stage_name VARCHAR,
   nft_type_id UUID, type_name VARCHAR,
@@ -944,25 +954,36 @@ LANGUAGE plpgsql AS $$
 BEGIN
   RETURN QUERY
   SELECT
-    nr.id, nr.serial_number, nr.notes, nr.delivered_at, nr.created_at, nr.updated_at,
+    nr.id, nr.serial_number, nr.token_id,
+    nr.image_ipfs_hash, nr.metadata_uri, nr.blind_box_uri,
+    nr.is_revealed, nr.revealed_at,
+    nr.notes, nr.delivered_at, nr.created_at, nr.updated_at,
     nr.stage_id, ns.name AS stage_name,
     nr.nft_type_id, nt.name AS type_name,
-    nr.delivery_status_id, ds.code, ds.name AS delivery_status_name,
+    nr.delivery_status_id, ds.code AS delivery_status_code, ds.name AS delivery_status_name,
     COUNT(*) OVER() AS total_count
   FROM nft_records nr
   LEFT JOIN nft_stages        ns ON nr.stage_id            = ns.id
   LEFT JOIN nft_types         nt ON nr.nft_type_id         = nt.id
   LEFT JOIN delivery_statuses ds ON nr.delivery_status_id  = ds.id
-  WHERE (p_search IS NULL OR nr.serial_number ILIKE '%' || p_search || '%')
+  WHERE (p_search IS NULL OR nr.serial_number ILIKE '%' || p_search || '%'
+         OR nr.token_id::TEXT = p_search)
     AND (p_delivery_status_code IS NULL OR ds.code = p_delivery_status_code)
-  ORDER BY nr.serial_number ASC
+    AND (p_stage_code           IS NULL OR ns.code = p_stage_code)
+    AND (p_revealed             IS NULL OR nr.is_revealed = p_revealed)
+  ORDER BY nr.token_id ASC NULLS LAST, nr.serial_number ASC
   LIMIT p_limit OFFSET p_offset;
 END;
 $$;
 
 CREATE OR REPLACE FUNCTION nft_get(p_id UUID)
 RETURNS TABLE(
-  id UUID, serial_number VARCHAR, notes TEXT, delivered_at TIMESTAMPTZ,
+  id UUID, serial_number VARCHAR, token_id BIGINT,
+  image_ipfs_hash TEXT, metadata_uri TEXT, blind_box_uri TEXT,
+  is_revealed BOOLEAN, revealed_at TIMESTAMPTZ,
+  mint_tx_hash TEXT, minted_at TIMESTAMPTZ, owner_address TEXT,
+  traits JSONB,
+  notes TEXT, delivered_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ,
   stage_id UUID, stage_name VARCHAR,
   nft_type_id UUID, type_name VARCHAR,
@@ -970,14 +991,19 @@ RETURNS TABLE(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM nft_records WHERE id = p_id) THEN
+  IF NOT EXISTS (SELECT 1 FROM nft_records WHERE nft_records.id = p_id) THEN
     RAISE EXCEPTION 'NFT record not found' USING ERRCODE = 'P0002';
   END IF;
   RETURN QUERY
-  SELECT nr.id, nr.serial_number, nr.notes, nr.delivered_at, nr.created_at, nr.updated_at,
-         nr.stage_id, ns.name,
-         nr.nft_type_id, nt.name,
-         nr.delivery_status_id, ds.code, ds.name
+  SELECT nr.id, nr.serial_number, nr.token_id,
+         nr.image_ipfs_hash, nr.metadata_uri, nr.blind_box_uri,
+         nr.is_revealed, nr.revealed_at,
+         nr.mint_tx_hash, nr.minted_at, nr.owner_address,
+         nr.traits,
+         nr.notes, nr.delivered_at, nr.created_at, nr.updated_at,
+         nr.stage_id, ns.name AS stage_name,
+         nr.nft_type_id, nt.name AS type_name,
+         nr.delivery_status_id, ds.code AS delivery_status_code, ds.name AS delivery_status_name
   FROM nft_records nr
   LEFT JOIN nft_stages        ns ON nr.stage_id            = ns.id
   LEFT JOIN nft_types         nt ON nr.nft_type_id         = nt.id
@@ -1005,13 +1031,15 @@ BEGIN
   IF p_stage_id IS NULL THEN
     RAISE EXCEPTION 'Stage is required' USING ERRCODE = 'P0001';
   END IF;
-  IF EXISTS (SELECT 1 FROM nft_records WHERE serial_number = upper(trim(p_serial_number))) THEN
+  IF EXISTS (SELECT 1 FROM nft_records WHERE nft_records.serial_number = upper(trim(p_serial_number))) THEN
     RAISE EXCEPTION 'Serial number already exists' USING ERRCODE = '23505';
   END IF;
   RETURN QUERY
   INSERT INTO nft_records (serial_number, stage_id, nft_type_id, delivery_status_id, notes)
   VALUES (upper(trim(p_serial_number)), p_stage_id, p_nft_type_id, p_delivery_status_id, p_notes)
-  RETURNING id, serial_number, stage_id, nft_type_id, delivery_status_id, notes, created_at, updated_at;
+  RETURNING nft_records.id, nft_records.serial_number, nft_records.stage_id,
+            nft_records.nft_type_id, nft_records.delivery_status_id,
+            nft_records.notes, nft_records.created_at, nft_records.updated_at;
 END;
 $$;
 
@@ -1028,18 +1056,20 @@ RETURNS TABLE(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM nft_records WHERE id = p_id) THEN
+  IF NOT EXISTS (SELECT 1 FROM nft_records WHERE nft_records.id = p_id) THEN
     RAISE EXCEPTION 'NFT record not found' USING ERRCODE = 'P0002';
   END IF;
   RETURN QUERY
   UPDATE nft_records SET
-    stage_id           = COALESCE(p_stage_id,           stage_id),
-    nft_type_id        = COALESCE(p_nft_type_id,        nft_type_id),
-    delivery_status_id = COALESCE(p_delivery_status_id, delivery_status_id),
-    notes              = COALESCE(p_notes,              notes),
+    stage_id           = COALESCE(p_stage_id,           nft_records.stage_id),
+    nft_type_id        = COALESCE(p_nft_type_id,        nft_records.nft_type_id),
+    delivery_status_id = COALESCE(p_delivery_status_id, nft_records.delivery_status_id),
+    notes              = COALESCE(p_notes,              nft_records.notes),
     updated_at         = NOW()
-  WHERE id = p_id
-  RETURNING id, serial_number, stage_id, nft_type_id, delivery_status_id, notes, created_at, updated_at;
+  WHERE nft_records.id = p_id
+  RETURNING nft_records.id, nft_records.serial_number, nft_records.stage_id,
+            nft_records.nft_type_id, nft_records.delivery_status_id,
+            nft_records.notes, nft_records.created_at, nft_records.updated_at;
 END;
 $$;
 
@@ -1050,7 +1080,7 @@ RETURNS TABLE(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM nft_records WHERE id = p_id) THEN
+  IF NOT EXISTS (SELECT 1 FROM nft_records WHERE nft_records.id = p_id) THEN
     RAISE EXCEPTION 'NFT record not found' USING ERRCODE = 'P0002';
   END IF;
   IF p_delivery_status_id IS NULL THEN
@@ -1061,8 +1091,205 @@ BEGIN
     delivery_status_id = p_delivery_status_id,
     delivered_at       = NOW(),
     updated_at         = NOW()
-  WHERE id = p_id
-  RETURNING id, serial_number, delivery_status_id, delivered_at, updated_at;
+  WHERE nft_records.id = p_id
+  RETURNING nft_records.id, nft_records.serial_number, nft_records.delivery_status_id,
+            nft_records.delivered_at, nft_records.updated_at;
+END;
+$$;
+
+-- ── NFT Waves ─────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION wave_list()
+RETURNS TABLE(
+  id UUID, wave_number INT, name VARCHAR, stage_id UUID, stage_name VARCHAR,
+  quantity INT, cumulative_start INT, cumulative_end INT,
+  default_price_eth NUMERIC, sale_method VARCHAR,
+  scheduled_start TIMESTAMPTZ, scheduled_end TIMESTAMPTZ,
+  status VARCHAR, notes TEXT,
+  nft_count BIGINT, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    w.id, w.wave_number, w.name, w.stage_id, ns.name AS stage_name,
+    w.quantity, w.cumulative_start, w.cumulative_end,
+    w.default_price_eth, w.sale_method,
+    w.scheduled_start, w.scheduled_end,
+    w.status, w.notes,
+    COUNT(nr.id)::BIGINT AS nft_count,
+    w.created_at, w.updated_at
+  FROM nft_waves w
+  LEFT JOIN nft_stages  ns ON ns.id = w.stage_id
+  LEFT JOIN nft_records nr ON nr.wave_id = w.id
+  GROUP BY w.id, ns.name
+  ORDER BY w.wave_number;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION wave_get(p_id UUID)
+RETURNS TABLE(
+  id UUID, wave_number INT, name VARCHAR, stage_id UUID, stage_name VARCHAR,
+  quantity INT, cumulative_start INT, cumulative_end INT,
+  default_price_eth NUMERIC, sale_method VARCHAR,
+  scheduled_start TIMESTAMPTZ, scheduled_end TIMESTAMPTZ,
+  status VARCHAR, notes TEXT,
+  nft_count BIGINT, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    w.id, w.wave_number, w.name, w.stage_id, ns.name AS stage_name,
+    w.quantity, w.cumulative_start, w.cumulative_end,
+    w.default_price_eth, w.sale_method,
+    w.scheduled_start, w.scheduled_end,
+    w.status, w.notes,
+    COUNT(nr.id)::BIGINT AS nft_count,
+    w.created_at, w.updated_at
+  FROM nft_waves w
+  LEFT JOIN nft_stages  ns ON ns.id = w.stage_id
+  LEFT JOIN nft_records nr ON nr.wave_id = w.id
+  WHERE w.id = p_id
+  GROUP BY w.id, ns.name;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION wave_upsert(
+  p_id               UUID    DEFAULT NULL,
+  p_default_price_eth NUMERIC DEFAULT NULL,
+  p_sale_method      VARCHAR DEFAULT NULL,
+  p_scheduled_start  TIMESTAMPTZ DEFAULT NULL,
+  p_scheduled_end    TIMESTAMPTZ DEFAULT NULL,
+  p_status           VARCHAR DEFAULT NULL,
+  p_notes            TEXT    DEFAULT NULL,
+  p_clear_schedule   BOOLEAN DEFAULT FALSE
+)
+RETURNS TABLE(
+  id UUID, wave_number INT, name VARCHAR,
+  default_price_eth NUMERIC, sale_method VARCHAR,
+  scheduled_start TIMESTAMPTZ, scheduled_end TIMESTAMPTZ,
+  status VARCHAR, notes TEXT, updated_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_id IS NULL OR NOT EXISTS (SELECT 1 FROM nft_waves WHERE nft_waves.id = p_id) THEN
+    RAISE EXCEPTION 'Wave not found' USING ERRCODE = 'P0002';
+  END IF;
+  RETURN QUERY
+  UPDATE nft_waves SET
+    default_price_eth = COALESCE(p_default_price_eth, nft_waves.default_price_eth),
+    sale_method       = COALESCE(p_sale_method,       nft_waves.sale_method),
+    scheduled_start   = CASE WHEN p_clear_schedule THEN NULL
+                             WHEN p_scheduled_start IS NOT NULL THEN p_scheduled_start
+                             ELSE nft_waves.scheduled_start END,
+    scheduled_end     = CASE WHEN p_clear_schedule THEN NULL
+                             WHEN p_scheduled_end IS NOT NULL THEN p_scheduled_end
+                             ELSE nft_waves.scheduled_end END,
+    status            = COALESCE(p_status, nft_waves.status),
+    notes             = COALESCE(p_notes,  nft_waves.notes),
+    updated_at        = NOW()
+  WHERE nft_waves.id = p_id
+  RETURNING nft_waves.id, nft_waves.wave_number, nft_waves.name,
+            nft_waves.default_price_eth, nft_waves.sale_method,
+            nft_waves.scheduled_start, nft_waves.scheduled_end,
+            nft_waves.status, nft_waves.notes, nft_waves.updated_at;
+END;
+$$;
+
+-- Update nft_list to include wave + pricing columns
+
+CREATE OR REPLACE FUNCTION nft_list(
+  p_search               TEXT    DEFAULT NULL,
+  p_delivery_status_code VARCHAR DEFAULT NULL,
+  p_stage_code           VARCHAR DEFAULT NULL,
+  p_revealed             BOOLEAN DEFAULT NULL,
+  p_wave_id              UUID    DEFAULT NULL,
+  p_limit                INT     DEFAULT 20,
+  p_offset               INT     DEFAULT 0
+)
+RETURNS TABLE(
+  id UUID, serial_number VARCHAR, token_id BIGINT,
+  image_ipfs_hash TEXT, metadata_uri TEXT, blind_box_uri TEXT,
+  is_revealed BOOLEAN, revealed_at TIMESTAMPTZ,
+  notes TEXT, delivered_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ,
+  stage_id UUID, stage_name VARCHAR,
+  nft_type_id UUID, type_name VARCHAR,
+  delivery_status_id UUID, delivery_status_code VARCHAR, delivery_status_name VARCHAR,
+  wave_id UUID, wave_number INT, wave_name VARCHAR,
+  price_eth NUMERIC, effective_price_eth NUMERIC,
+  total_count BIGINT
+)
+LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    nr.id, nr.serial_number, nr.token_id,
+    nr.image_ipfs_hash, nr.metadata_uri, nr.blind_box_uri,
+    nr.is_revealed, nr.revealed_at,
+    nr.notes, nr.delivered_at, nr.created_at, nr.updated_at,
+    nr.stage_id, ns.name AS stage_name,
+    nr.nft_type_id, nt.name AS type_name,
+    nr.delivery_status_id, ds.code AS delivery_status_code, ds.name AS delivery_status_name,
+    nr.wave_id, w.wave_number, w.name AS wave_name,
+    nr.price_eth,
+    COALESCE(nr.price_eth, w.default_price_eth) AS effective_price_eth,
+    COUNT(*) OVER() AS total_count
+  FROM nft_records nr
+  LEFT JOIN nft_stages        ns ON nr.stage_id            = ns.id
+  LEFT JOIN nft_types         nt ON nr.nft_type_id         = nt.id
+  LEFT JOIN delivery_statuses ds ON nr.delivery_status_id  = ds.id
+  LEFT JOIN nft_waves          w ON nr.wave_id              = w.id
+  WHERE (p_search IS NULL OR nr.serial_number ILIKE '%' || p_search || '%'
+         OR nr.token_id::TEXT = p_search)
+    AND (p_delivery_status_code IS NULL OR ds.code = p_delivery_status_code)
+    AND (p_stage_code           IS NULL OR ns.code = p_stage_code)
+    AND (p_revealed             IS NULL OR nr.is_revealed = p_revealed)
+    AND (p_wave_id              IS NULL OR nr.wave_id = p_wave_id)
+  ORDER BY nr.token_id ASC NULLS LAST, nr.serial_number ASC
+  LIMIT p_limit OFFSET p_offset;
+END;
+$$;
+
+-- Update nft_update to support wave_id + price_eth
+
+CREATE OR REPLACE FUNCTION nft_update(
+  p_id                 UUID,
+  p_stage_id           UUID    DEFAULT NULL,
+  p_nft_type_id        UUID    DEFAULT NULL,
+  p_delivery_status_id UUID    DEFAULT NULL,
+  p_notes              TEXT    DEFAULT NULL,
+  p_wave_id            UUID    DEFAULT NULL,
+  p_price_eth          NUMERIC DEFAULT NULL,
+  p_clear_price_eth    BOOLEAN DEFAULT FALSE
+)
+RETURNS TABLE(
+  id UUID, serial_number VARCHAR, stage_id UUID, nft_type_id UUID,
+  delivery_status_id UUID, wave_id UUID, price_eth NUMERIC,
+  notes TEXT, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM nft_records WHERE nft_records.id = p_id) THEN
+    RAISE EXCEPTION 'NFT record not found' USING ERRCODE = 'P0002';
+  END IF;
+  RETURN QUERY
+  UPDATE nft_records SET
+    stage_id           = COALESCE(p_stage_id,           nft_records.stage_id),
+    nft_type_id        = COALESCE(p_nft_type_id,        nft_records.nft_type_id),
+    delivery_status_id = COALESCE(p_delivery_status_id, nft_records.delivery_status_id),
+    notes              = COALESCE(p_notes,              nft_records.notes),
+    wave_id            = COALESCE(p_wave_id,            nft_records.wave_id),
+    price_eth          = CASE WHEN p_clear_price_eth THEN NULL
+                              WHEN p_price_eth IS NOT NULL THEN p_price_eth
+                              ELSE nft_records.price_eth END,
+    updated_at         = NOW()
+  WHERE nft_records.id = p_id
+  RETURNING nft_records.id, nft_records.serial_number, nft_records.stage_id,
+            nft_records.nft_type_id, nft_records.delivery_status_id,
+            nft_records.wave_id, nft_records.price_eth,
+            nft_records.notes, nft_records.created_at, nft_records.updated_at;
 END;
 $$;
 
@@ -1114,7 +1341,7 @@ RETURNS TABLE(
 )
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM reconciliation_entries WHERE id = p_id) THEN
+  IF NOT EXISTS (SELECT 1 FROM reconciliation_entries WHERE reconciliation_entries.id = p_id) THEN
     RAISE EXCEPTION 'Reconciliation entry not found' USING ERRCODE = 'P0002';
   END IF;
   RETURN QUERY
@@ -1137,20 +1364,21 @@ CREATE OR REPLACE FUNCTION reconciliation_confirm(p_id UUID, p_notes TEXT DEFAUL
 RETURNS TABLE(id UUID, status VARCHAR, confirmed_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM reconciliation_entries WHERE id = p_id) THEN
+  IF NOT EXISTS (SELECT 1 FROM reconciliation_entries WHERE reconciliation_entries.id = p_id) THEN
     RAISE EXCEPTION 'Reconciliation entry not found' USING ERRCODE = 'P0002';
   END IF;
-  IF EXISTS (SELECT 1 FROM reconciliation_entries WHERE id = p_id AND status = 'received') THEN
+  IF EXISTS (SELECT 1 FROM reconciliation_entries WHERE reconciliation_entries.id = p_id AND reconciliation_entries.status = 'received') THEN
     RAISE EXCEPTION 'Entry is already confirmed' USING ERRCODE = 'P0001';
   END IF;
   RETURN QUERY
   UPDATE reconciliation_entries SET
     status       = 'received',
     confirmed_at = NOW(),
-    notes        = COALESCE(p_notes, notes),
+    notes        = COALESCE(p_notes, reconciliation_entries.notes),
     updated_at   = NOW()
-  WHERE id = p_id
-  RETURNING id, status, confirmed_at, updated_at;
+  WHERE reconciliation_entries.id = p_id
+  RETURNING reconciliation_entries.id, reconciliation_entries.status,
+            reconciliation_entries.confirmed_at, reconciliation_entries.updated_at;
 END;
 $$;
 
@@ -1158,20 +1386,21 @@ CREATE OR REPLACE FUNCTION reconciliation_cancel(p_id UUID, p_notes TEXT DEFAULT
 RETURNS TABLE(id UUID, status VARCHAR, cancelled_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM reconciliation_entries WHERE id = p_id) THEN
+  IF NOT EXISTS (SELECT 1 FROM reconciliation_entries WHERE reconciliation_entries.id = p_id) THEN
     RAISE EXCEPTION 'Reconciliation entry not found' USING ERRCODE = 'P0002';
   END IF;
-  IF EXISTS (SELECT 1 FROM reconciliation_entries WHERE id = p_id AND status = 'cancelled') THEN
+  IF EXISTS (SELECT 1 FROM reconciliation_entries WHERE reconciliation_entries.id = p_id AND reconciliation_entries.status = 'cancelled') THEN
     RAISE EXCEPTION 'Entry is already cancelled' USING ERRCODE = 'P0001';
   END IF;
   RETURN QUERY
   UPDATE reconciliation_entries SET
     status       = 'cancelled',
     cancelled_at = NOW(),
-    notes        = COALESCE(p_notes, notes),
+    notes        = COALESCE(p_notes, reconciliation_entries.notes),
     updated_at   = NOW()
-  WHERE id = p_id
-  RETURNING id, status, cancelled_at, updated_at;
+  WHERE reconciliation_entries.id = p_id
+  RETURNING reconciliation_entries.id, reconciliation_entries.status,
+            reconciliation_entries.cancelled_at, reconciliation_entries.updated_at;
 END;
 $$;
 
@@ -1190,7 +1419,7 @@ BEGIN
       'totalMerchTwd', (SELECT COALESCE(SUM(merch_amount_twd), 0) FROM orders),
       'byNftStatus', (
         SELECT COALESCE(json_agg(row_to_json(t)), '[]')
-        FROM (SELECT ps.code, ps.name, COUNT(o.id) AS total
+        FROM (SELECT ps.code AS "statusCode", ps.name AS "statusName", COUNT(o.id) AS "count"
               FROM orders o
               LEFT JOIN payment_statuses ps ON o.nft_payment_status_id = ps.id
               GROUP BY ps.code, ps.name) t)
@@ -1203,7 +1432,7 @@ BEGIN
       'total', (SELECT COUNT(*) FROM nft_records),
       'byDeliveryStatus', (
         SELECT COALESCE(json_agg(row_to_json(t)), '[]')
-        FROM (SELECT ds.code, ds.name, COUNT(nr.id) AS total
+        FROM (SELECT ds.code AS "statusCode", ds.name AS "statusName", COUNT(nr.id) AS "count"
               FROM nft_records nr
               LEFT JOIN delivery_statuses ds ON nr.delivery_status_id = ds.id
               GROUP BY ds.code, ds.name) t)
@@ -1218,9 +1447,9 @@ BEGIN
       'byStatus', (
         SELECT COALESCE(json_agg(row_to_json(t)), '[]')
         FROM (SELECT status,
-                     COUNT(*)                    AS total,
-                     COALESCE(SUM(amount_twd),0) AS total_twd,
-                     COALESCE(SUM(amount_eth),0) AS total_eth
+                     COUNT(*)                    AS "count",
+                     COALESCE(SUM(amount_twd),0) AS "totalTwd",
+                     COALESCE(SUM(amount_eth),0) AS "totalEth"
               FROM reconciliation_entries
               GROUP BY status) t)
     )

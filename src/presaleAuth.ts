@@ -10,12 +10,15 @@ const ALL_PERMISSIONS = [
   "dashboard.view",
   "orders.view", "orders.create", "orders.edit", "orders.delete",
   "orders.confirm_nft_payment", "orders.confirm_merch_payment",
-  "nft.view", "nft.edit", "nft.confirm_delivery",
+  "nft.view", "nft.edit", "nft.confirm_delivery", "nft.view_technical",
+  "nft.waves.view", "nft.waves.manage",
   "products.view", "products.create", "products.edit", "products.delete",
   "customers.view", "customers.create", "customers.edit", "customers.delete",
   "reconciliation.view", "reconciliation.confirm", "reconciliation.cancel",
   "reports.view",
   "users.view", "users.create", "users.edit", "users.delete", "users.revoke_permission",
+  "nft_gen.view", "nft_gen.manage_collections", "nft_gen.manage_layers",
+  "nft_gen.generate", "nft_gen.upload_ipfs",
 ];
 
 export const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
@@ -25,6 +28,7 @@ export const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
     "orders.view", "orders.create", "orders.edit", "orders.delete",
     "orders.confirm_nft_payment", "orders.confirm_merch_payment",
     "nft.view", "nft.edit", "nft.confirm_delivery",
+    "nft.waves.view",
     "products.view", "products.create", "products.edit", "products.delete",
     "customers.view", "customers.create", "customers.edit", "customers.delete",
     "reconciliation.view", "reconciliation.confirm", "reconciliation.cancel",
@@ -33,19 +37,22 @@ export const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
   ],
   tech: [
     "dashboard.view",
-    "nft.view", "nft.edit", "nft.confirm_delivery",
+    "nft.view", "nft.edit", "nft.confirm_delivery", "nft.view_technical",
+    "nft.waves.view", "nft.waves.manage",
     "products.view", "products.create", "products.edit", "products.delete",
     "reports.view",
+    "nft_gen.view", "nft_gen.manage_collections", "nft_gen.manage_layers",
+    "nft_gen.generate", "nft_gen.upload_ipfs",
   ],
 };
 
-export function signToken(role: AdminRole): string {
-  const payload = `${role}:${Date.now()}`;
+export function signToken(role: AdminRole, userId: string): string {
+  const payload = `${userId}:${role}:${Date.now()}`;
   const sig = createHmac("sha256", SECRET).update(payload).digest("hex");
   return Buffer.from(`${payload}.${sig}`).toString("base64url");
 }
 
-export function verifyToken(token: string): AdminRole | null {
+export function verifyToken(token: string): { role: AdminRole; userId: string } | null {
   try {
     const decoded = Buffer.from(token, "base64url").toString("utf8");
     const lastDot = decoded.lastIndexOf(".");
@@ -56,9 +63,11 @@ export function verifyToken(token: string): AdminRole | null {
     const sigBuf = Buffer.from(sig, "hex");
     const expBuf = Buffer.from(expected, "hex");
     if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) return null;
-    const [role] = payload.split(":");
+    const parts = payload.split(":");
+    if (parts.length < 3) return null;
+    const [userId, role] = parts;
     if (role !== "admin" && role !== "tech" && role !== "ops") return null;
-    return role as AdminRole;
+    return { role: role as AdminRole, userId };
   } catch {
     return null;
   }
@@ -70,18 +79,18 @@ export function extractBearer(req: Request): string | null {
   return auth.slice(7);
 }
 
-export function requireRole(req: Request): AdminRole {
+export function requireRole(req: Request): { role: AdminRole; userId: string } {
   const token = extractBearer(req);
   if (!token) throw new HttpError(401, "Unauthorized");
-  const role = verifyToken(token);
-  if (!role) throw new HttpError(401, "Invalid or expired token");
-  return role;
+  const result = verifyToken(token);
+  if (!result) throw new HttpError(401, "Invalid or expired token");
+  return result;
 }
 
-export function requirePermission(req: Request, permission: string): AdminRole {
-  const role = requireRole(req);
-  if (!ROLE_PERMISSIONS[role].includes(permission)) {
+export function requirePermission(req: Request, permission: string): { role: AdminRole; userId: string } {
+  const result = requireRole(req);
+  if (!ROLE_PERMISSIONS[result.role].includes(permission)) {
     throw new HttpError(403, "Forbidden — insufficient permissions");
   }
-  return role;
+  return result;
 }
