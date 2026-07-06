@@ -1,32 +1,28 @@
 import nodemailer from "nodemailer";
 
 function createTransport() {
-  const user         = process.env.GMAIL_SENDER_EMAIL ?? "";
-  const clientId     = process.env.GMAIL_CLIENT_ID ?? "";
-  const clientSecret = process.env.GMAIL_CLIENT_SECRET ?? "";
-  const refreshToken = process.env.GMAIL_REFRESH_TOKEN ?? "";
+  const user    = process.env.GMAIL_SENDER_EMAIL ?? "";
+  const appPass = process.env.GMAIL_APP_PASSWORD ?? "";
 
-  if (!user || !clientId || !clientSecret || !refreshToken) {
-    throw new Error("Email not configured: GMAIL_SENDER_EMAIL, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN are required");
+  if (!user || !appPass) {
+    throw new Error("Email not configured: GMAIL_SENDER_EMAIL and GMAIL_APP_PASSWORD are required");
   }
 
   return nodemailer.createTransport({
     service: "gmail",
-    auth: {
-      type:         "OAuth2",
-      user,
-      clientId,
-      clientSecret,
-      refreshToken,
-    },
+    auth: { user, pass: appPass },
   });
 }
 
-export async function sendResetPasswordEmail(toEmail: string, resetLink: string, recipientName?: string): Promise<void> {
-  const transport    = createTransport();
-  const senderEmail  = process.env.GMAIL_SENDER_EMAIL ?? "";
-  const senderName   = process.env.GMAIL_SENDER_NAME ?? "Bearth Admin";
-  const displayName  = recipientName ?? toEmail;
+export async function sendResetPasswordEmail(
+  toEmail: string,
+  resetLink: string,
+  recipientName?: string,
+): Promise<void> {
+  const transport   = createTransport();
+  const senderEmail = process.env.GMAIL_SENDER_EMAIL ?? "";
+  const senderName  = process.env.GMAIL_SENDER_NAME ?? "Bearth Admin";
+  const displayName = recipientName ?? toEmail;
 
   const html = `
 <!DOCTYPE html>
@@ -44,25 +40,21 @@ export async function sendResetPasswordEmail(toEmail: string, resetLink: string,
         <tr><td style="padding:40px 40px 24px;">
           <p style="color:#374151;font-size:15px;margin:0 0 16px;">Hi ${displayName},</p>
           <p style="color:#374151;font-size:15px;margin:0 0 24px;">
-            We received a request to reset your password for your Bearth Admin account.
+            We received a request to reset your Bearth Admin password.
             Click the button below to set a new password.
           </p>
           <div style="text-align:center;margin:32px 0;">
             <a href="${resetLink}"
                style="display:inline-block;background:#41afeb;color:#ffffff;text-decoration:none;
-                      padding:14px 36px;border-radius:8px;font-size:15px;font-weight:600;
-                      letter-spacing:0.5px;">
+                      padding:14px 36px;border-radius:8px;font-size:15px;font-weight:600;">
               Reset Password
             </a>
           </div>
-          <p style="color:#6b7280;font-size:13px;margin:0 0 8px;">
-            Or copy this link into your browser:
-          </p>
-          <p style="color:#41afeb;font-size:12px;word-break:break-all;margin:0 0 24px;">
-            ${resetLink}
-          </p>
+          <p style="color:#6b7280;font-size:13px;margin:0 0 8px;">Or copy this link into your browser:</p>
+          <p style="color:#41afeb;font-size:12px;word-break:break-all;margin:0 0 24px;">${resetLink}</p>
           <p style="color:#9ca3af;font-size:13px;margin:0;">
-            This link expires in <strong>1 hour</strong>. If you did not request a password reset, you can safely ignore this email.
+            This link expires in <strong>1 hour</strong>.
+            If you did not request a password reset, ignore this email.
           </p>
         </td></tr>
 

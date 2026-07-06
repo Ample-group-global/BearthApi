@@ -25,6 +25,7 @@
     "ethereum-cryptography": "^2.2.1",
     "express": "^4.21.2",
     "express-rate-limit": "^7.4.1",
+    "googleapis": "^173.0.0",
     "nodemailer": "^9.0.3",
     "pg": "^8.13.1",
     "swagger-jsdoc": "^6.3.0",

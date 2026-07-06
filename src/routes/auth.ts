@@ -60,19 +60,14 @@ router.post("/admin/forgot-password", async (req, res, next) => {
     const { email } = req.body ?? {};
     if (!email) { res.status(400).json({ error: "Email is required" }); return; }
     const user = await authService.getUserByEmail(String(email));
-    // Always return success to avoid user enumeration
-    if (user && user.isActive) {
-      const token     = authService.createResetToken(user.email);
-      const adminUrl  = process.env.ADMIN_URL ?? "http://localhost:3000";
-      const resetLink = `${adminUrl}/reset-password?token=${token}`;
-      try {
-        await sendResetPasswordEmail(user.email, resetLink, user.name);
-      } catch (emailErr) {
-        // Never block the response if email fails — log and continue
-        console.error("[PasswordReset] Email send failed:", (emailErr as Error).message);
-        console.log(`[PasswordReset] fallback link for ${user.email}: ${resetLink}`);
-      }
+    if (!user || !user.isActive) {
+      // Return success to avoid user enumeration — never reveal if email exists
+      res.json({ success: true }); return;
     }
+    const token     = authService.createResetToken(user.email);
+    const adminUrl  = process.env.ADMIN_URL ?? "http://localhost:3000";
+    const resetLink = `${adminUrl}/reset-password?token=${token}`;
+    await sendResetPasswordEmail(user.email, resetLink, user.name);
     res.json({ success: true });
   } catch (e) { next(e); }
 });
