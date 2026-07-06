@@ -3,6 +3,7 @@ import { createSessionToken, verifySessionCookie, COOKIE_NAME, COOKIE_MAX_AGE } 
 import { signToken, verifyToken, AdminRole } from "../presaleAuth";
 import * as authService from "../services/auth.service";
 import * as rbacService from "../services/rbac.service";
+import { sendResetPasswordEmail } from "../services/email.service";
 
 const router = Router();
 const ADMIN_ADDRESS = (process.env.ADMIN_ADDRESS ?? "").toLowerCase();
@@ -64,8 +65,13 @@ router.post("/admin/forgot-password", async (req, res, next) => {
       const token     = authService.createResetToken(user.email);
       const adminUrl  = process.env.ADMIN_URL ?? "http://localhost:3000";
       const resetLink = `${adminUrl}/reset-password?token=${token}`;
-      // Log to console in dev; wire up your email provider here for production
-      console.log(`[PasswordReset] ${user.email} → ${resetLink}`);
+      try {
+        await sendResetPasswordEmail(user.email, resetLink, user.name);
+      } catch (emailErr) {
+        // Never block the response if email fails — log and continue
+        console.error("[PasswordReset] Email send failed:", (emailErr as Error).message);
+        console.log(`[PasswordReset] fallback link for ${user.email}: ${resetLink}`);
+      }
     }
     res.json({ success: true });
   } catch (e) { next(e); }
