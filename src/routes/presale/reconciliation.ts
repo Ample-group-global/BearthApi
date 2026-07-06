@@ -1,31 +1,28 @@
 import { Router } from "express";
-import pool from "../../db";
 import { requirePermission } from "../../presaleAuth";
-import { toCamel } from "../../utils/camel";
+import * as reconciliationService from "../../services/reconciliation.service";
 
 const router = Router();
 
 router.get("/", async (req, res, next) => {
   try {
     requirePermission(req, "reconciliation.view");
-    const status   = (req.query.status    as string) ?? null;
-    const orderId  = (req.query.order_id  as string) ?? null;
-    const limit    = Number(req.query.limit  ?? 100);
-    const offset   = Number(req.query.offset ?? 0);
-    const { rows } = await pool.query(
-      "SELECT * FROM reconciliation_list($1, $2, $3, $4)",
-      [status, orderId, limit, offset]
-    );
-    res.json({ entries: toCamel(rows), total: Number(rows[0]?.total_count ?? 0), limit, offset });
+    const result = await reconciliationService.listReconciliation({
+      status:  (req.query.status   as string) ?? null,
+      orderId: (req.query.order_id as string) ?? null,
+      limit:   Number(req.query.limit  ?? 100),
+      offset:  Number(req.query.offset ?? 0),
+    });
+    res.json(result);
   } catch (e) { next(e); }
 });
 
 router.get("/:id", async (req, res, next) => {
   try {
     requirePermission(req, "reconciliation.view");
-    const { rows } = await pool.query("SELECT * FROM reconciliation_get($1::uuid)", [req.params.id]);
-    if (!rows.length) { res.status(404).json({ error: "Entry not found" }); return; }
-    res.json({ entry: rows[0] });
+    const entry = await reconciliationService.getReconciliation(req.params.id);
+    if (!entry) { res.status(404).json({ error: "Entry not found" }); return; }
+    res.json({ entry });
   } catch (e) { next(e); }
 });
 
@@ -34,13 +31,13 @@ router.put("/:id", async (req, res, next) => {
     const { action, notes } = req.body ?? {};
     if (action === "confirm") {
       requirePermission(req, "reconciliation.confirm");
-      const { rows } = await pool.query("SELECT * FROM reconciliation_confirm($1::uuid, $2)", [req.params.id, notes ?? null]);
-      res.json({ entry: rows[0] }); return;
+      const entry = await reconciliationService.confirmReconciliation(req.params.id, notes);
+      res.json({ entry }); return;
     }
     if (action === "cancel") {
       requirePermission(req, "reconciliation.cancel");
-      const { rows } = await pool.query("SELECT * FROM reconciliation_cancel($1::uuid, $2)", [req.params.id, notes ?? null]);
-      res.json({ entry: rows[0] }); return;
+      const entry = await reconciliationService.cancelReconciliation(req.params.id, notes);
+      res.json({ entry }); return;
     }
     res.status(400).json({ error: "Invalid action — use 'confirm' or 'cancel'" });
   } catch (e) { next(e); }

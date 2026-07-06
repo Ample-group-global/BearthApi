@@ -1,11 +1,18 @@
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
+import swaggerUi from "swagger-ui-express";
+import { swaggerSpec } from "./swagger";
 import authRouter from "./routes/auth";
 import whitelistRouter from "./routes/whitelist";
 import proofRouter from "./routes/proof";
 import presaleRouter from "./routes/presale/index";
-import pool from "./db";
+import adminRolesRouter from "./routes/admin/roles";
+import adminPermissionsRouter from "./routes/admin/permissions";
+import adminMenusRouter from "./routes/admin/menus";
+import adminUsersRouter from "./routes/admin/users";
+import nftGenRouter from "./routes/nft-gen/index";
+import pool from "./pool";
 import { buildMerkleTree } from "./merkle";
 import { errorHandler } from "./errorHandler";
 
@@ -19,12 +26,22 @@ app.use(cors({ origin: corsOrigins, credentials: true }));
 app.use(express.json());
 app.use(rateLimit({ windowMs: 60_000, limit: 500, standardHeaders: "draft-7", legacyHeaders: false }));
 
+// ── Swagger UI ────────────────────────────────────────────────────────────────
+
+app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+app.get("/api/docs.json", (_req, res) => { res.setHeader("Content-Type", "application/json"); res.send(swaggerSpec); });
+
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 app.use("/api/auth", authRouter);
 app.use("/api/whitelist", whitelistRouter);
 app.use("/api/proof", proofRouter);
 app.use("/api/presale", presaleRouter);
+app.use("/api/admin/roles",       adminRolesRouter);
+app.use("/api/admin/permissions", adminPermissionsRouter);
+app.use("/api/admin/menus",       adminMenusRouter);
+app.use("/api/admin/users",       adminUsersRouter);
+app.use("/api/nft-gen",           nftGenRouter);
 app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
 
 // ── Error handler (must be last) ──────────────────────────────────────────────

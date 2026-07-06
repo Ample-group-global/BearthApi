@@ -1,5 +1,5 @@
 import { Router } from "express";
-import pool from "../db";
+import pool from "../pool";
 import { buildMerkleTree, getProof } from "../merkle";
 
 const router = Router();

@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
 import { PoolClient } from "pg";
-import pool from "../db";
+import pool from "../pool";
 import { buildMerkleTree, getProof } from "../merkle";
 import { verifySessionCookie } from "../walletAuth";
 import { HttpError } from "../errors";

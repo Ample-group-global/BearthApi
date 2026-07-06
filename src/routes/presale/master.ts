@@ -1,14 +1,14 @@
 import { Router } from "express";
-import pool from "../../db";
 import { requireRole } from "../../presaleAuth";
+import * as masterService from "../../services/master.service";
 
 const router = Router();
 
 router.get("/", async (req, res, next) => {
   try {
     requireRole(req);
-    const { rows } = await pool.query("SELECT master_get_all() AS data");
-    res.json(rows[0]?.data ?? {});
+    const data = await masterService.getMasterData();
+    res.json(data ?? {});
   } catch (e) { next(e); }
 });
 
