@@ -26,10 +26,23 @@ export async function getSalesByStage() {
   return toCamel(rows);
 }
 
+const DELIVERY_SORT_COLS: Record<string, string> = {
+  serial_number:   "nr.serial_number",
+  stage:           "s.name",
+  type:            "t.name",
+  delivery_status: "ds.code",
+  delivered_at:    "nr.delivered_at",
+  created_at:      "nr.created_at",
+};
+
 export async function getDeliveryReport(params: {
   statusCode?: string | null; limit?: number; offset?: number;
+  sortBy?: string | null; sortDir?: "asc" | "desc" | null;
 }) {
-  const { statusCode = null, limit = 200, offset = 0 } = params;
+  const { statusCode = null, limit = 20, offset = 0, sortBy = null, sortDir = null } = params;
+  const sortCol = sortBy && DELIVERY_SORT_COLS[sortBy] ? DELIVERY_SORT_COLS[sortBy] : null;
+  const dir     = sortDir === "asc" ? "ASC" : "DESC";
+  const orderBy = sortCol ? `${sortCol} ${dir} NULLS LAST` : "nr.created_at DESC";
   const { rows } = await pool.query(`
     SELECT
       nr.id, nr.serial_number,
@@ -44,7 +57,7 @@ export async function getDeliveryReport(params: {
     LEFT JOIN nft_types          t  ON t.id  = nr.nft_type_id
     LEFT JOIN delivery_statuses  ds ON ds.id = nr.delivery_status_id
     WHERE ($1::text IS NULL OR ds.code = $1)
-    ORDER BY nr.created_at DESC
+    ORDER BY ${orderBy}
     LIMIT $2 OFFSET $3
   `, [statusCode, limit, offset]);
   return {
@@ -55,10 +68,24 @@ export async function getDeliveryReport(params: {
   };
 }
 
+const RECON_SORT_COLS: Record<string, string> = {
+  order:        "o.order_number",
+  customer:     "c.first_name",
+  entry_type:   "re.entry_type",
+  amount_twd:   "re.amount_twd",
+  status:       "re.status",
+  confirmed_at: "re.confirmed_at",
+  created_at:   "re.created_at",
+};
+
 export async function getReconciliationReport(params: {
   status?: string | null; limit?: number; offset?: number;
+  sortBy?: string | null; sortDir?: "asc" | "desc" | null;
 }) {
-  const { status = null, limit = 200, offset = 0 } = params;
+  const { status = null, limit = 20, offset = 0, sortBy = null, sortDir = null } = params;
+  const sortCol = sortBy && RECON_SORT_COLS[sortBy] ? RECON_SORT_COLS[sortBy] : null;
+  const dir     = sortDir === "asc" ? "ASC" : "DESC";
+  const orderBy = sortCol ? `${sortCol} ${dir} NULLS LAST` : "re.created_at DESC";
   const { rows } = await pool.query(`
     SELECT
       re.id, re.entry_type, re.amount_twd, re.amount_eth,
@@ -75,7 +102,7 @@ export async function getReconciliationReport(params: {
     LEFT JOIN payment_methods pm  ON pm.id  = re.payment_method_id
     LEFT JOIN currencies      cur ON cur.id = re.currency_id
     WHERE ($1::text IS NULL OR re.status = $1)
-    ORDER BY re.created_at DESC
+    ORDER BY ${orderBy}
     LIMIT $2 OFFSET $3
   `, [status, limit, offset]);
   return {
@@ -86,11 +113,25 @@ export async function getReconciliationReport(params: {
   };
 }
 
+const CUSTOMER_SORT_COLS: Record<string, string> = {
+  user_code:  "u.user_code",
+  name:       "u.first_name",
+  email:      "u.email",
+  orders:     "COUNT(DISTINCT o.id)",
+  nfts:       "COUNT(DISTINCT oni.id)",
+  is_active:  "u.is_active",
+  created_at: "u.created_at",
+};
+
 export async function getCustomerReport(params: {
   search?: string | null; limit?: number; offset?: number;
+  sortBy?: string | null; sortDir?: "asc" | "desc" | null;
 }) {
-  const { search = null, limit = 200, offset = 0 } = params;
+  const { search = null, limit = 20, offset = 0, sortBy = null, sortDir = null } = params;
   const searchParam = search ? `%${search}%` : null;
+  const sortCol = sortBy && CUSTOMER_SORT_COLS[sortBy] ? CUSTOMER_SORT_COLS[sortBy] : null;
+  const dir     = sortDir === "asc" ? "ASC" : "DESC";
+  const orderBy = sortCol ? `${sortCol} ${dir} NULLS LAST` : "u.created_at DESC";
   const { rows } = await pool.query(`
     SELECT
       u.id, u.user_code,
@@ -101,8 +142,8 @@ export async function getCustomerReport(params: {
       COUNT(*) OVER()        AS total_count
     FROM users u
     JOIN roles r ON r.id = u.role_id AND r.code = 'customer'
-    LEFT JOIN orders          o   ON o.customer_id    = u.id
-    LEFT JOIN order_nft_items oni ON oni.order_id      = o.id
+    LEFT JOIN orders          o   ON o.customer_id = u.id
+    LEFT JOIN order_nft_items oni ON oni.order_id  = o.id
     WHERE ($1::text IS NULL
       OR u.email      ILIKE $1
       OR u.first_name ILIKE $1
@@ -110,7 +151,7 @@ export async function getCustomerReport(params: {
       OR u.user_code  ILIKE $1)
     GROUP BY u.id, u.user_code, u.first_name, u.last_name,
              u.email, u.phone, u.created_at, u.is_active
-    ORDER BY u.created_at DESC
+    ORDER BY ${orderBy}
     LIMIT $2 OFFSET $3
   `, [searchParam, limit, offset]);
   return {
