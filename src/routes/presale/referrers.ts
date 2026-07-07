@@ -12,6 +12,14 @@ router.get("/", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+router.get("/:id/referred", async (req, res, next) => {
+  try {
+    requirePermission(req, "customers.view");
+    const referred = await referrersService.listReferredBy(req.params.id);
+    res.json({ referred });
+  } catch (e) { next(e); }
+});
+
 router.post("/", async (req, res, next) => {
   try {
     requirePermission(req, "customers.create");

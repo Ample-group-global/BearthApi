@@ -30,8 +30,8 @@ router.get("/", async (req, res, next) => {
       activeOnly: req.query.active !== "false",
       limit:      Number(req.query.limit  ?? 20),
       offset:     Number(req.query.offset ?? 0),
-      sortBy:     (req.query.sortBy  as string) ?? "created_at",
-      sortDir:    (req.query.sortDir as string) ?? "desc",
+      sortBy:     (req.query.sort_by  as string) ?? "created_at",
+      sortDir:    (req.query.sort_dir as string) ?? "desc",
     });
     res.json(result);
   } catch (e) { next(e); }

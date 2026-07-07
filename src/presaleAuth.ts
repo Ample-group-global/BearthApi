@@ -19,6 +19,7 @@ const ALL_PERMISSIONS = [
   "users.view", "users.create", "users.edit", "users.delete", "users.revoke_permission",
   "nft_gen.view", "nft_gen.manage_collections", "nft_gen.manage_layers",
   "nft_gen.generate", "nft_gen.upload_ipfs",
+  "settings.view", "settings.edit",
 ];
 
 export const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
@@ -34,6 +35,7 @@ export const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
     "reconciliation.view", "reconciliation.confirm", "reconciliation.cancel",
     "reports.view",
     "users.view", "users.create", "users.edit", "users.delete", "users.revoke_permission",
+    "settings.view",
   ],
   tech: [
     "dashboard.view",

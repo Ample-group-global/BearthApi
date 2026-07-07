@@ -11,7 +11,7 @@ router.get("/", async (req, res, next) => {
     const result = await ordersService.listOrders({
       search:     (req.query.search      as string) ?? null,
       customerId: (req.query.customer_id as string) ?? null,
-      nftStatus:  (req.query.nft_status  as string) ?? null,
+      status:     (req.query.status      as string) ?? null,
       limit:      Number(req.query.limit  ?? 20),
       offset:     Number(req.query.offset ?? 0),
       sortBy:     (req.query.sort_by     as string) ?? null,
@@ -26,6 +26,14 @@ router.post("/", async (req, res, next) => {
     requirePermission(req, "orders.create");
     const order = await ordersService.createOrder(req.body ?? {});
     res.status(201).json({ order });
+  } catch (e) { next(e); }
+});
+
+router.get("/next-number", async (req, res, next) => {
+  try {
+    requirePermission(req, "orders.view");
+    const nextNumber = await ordersService.getNextOrderNumber();
+    res.json({ nextNumber });
   } catch (e) { next(e); }
 });
 

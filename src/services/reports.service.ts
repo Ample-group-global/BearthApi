@@ -117,10 +117,11 @@ const CUSTOMER_SORT_COLS: Record<string, string> = {
   user_code:  "u.user_code",
   name:       "u.first_name",
   email:      "u.email",
-  orders:     "COUNT(DISTINCT o.id)",
-  nfts:       "COUNT(DISTINCT oni.id)",
-  is_active:  "u.is_active",
-  created_at: "u.created_at",
+  orders:    "COUNT(DISTINCT o.id)",
+  nfts:      "COUNT(DISTINCT oni.id)",
+  products:  "COUNT(DISTINCT opi.id)",
+  is_active: "u.is_active",
+  created_at:"u.created_at",
 };
 
 export async function getCustomerReport(params: {
@@ -139,11 +140,13 @@ export async function getCustomerReport(params: {
       u.created_at, u.is_active,
       COUNT(DISTINCT o.id)   AS order_count,
       COUNT(DISTINCT oni.id) AS nft_count,
+      COUNT(DISTINCT opi.id) AS product_count,
       COUNT(*) OVER()        AS total_count
     FROM users u
     JOIN roles r ON r.id = u.role_id AND r.code = 'customer'
-    LEFT JOIN orders          o   ON o.customer_id = u.id
-    LEFT JOIN order_nft_items oni ON oni.order_id  = o.id
+    LEFT JOIN orders              o   ON o.customer_id = u.id
+    LEFT JOIN order_nft_items     oni ON oni.order_id  = o.id
+    LEFT JOIN order_product_items opi ON opi.order_id  = o.id
     WHERE ($1::text IS NULL
       OR u.email      ILIKE $1
       OR u.first_name ILIKE $1

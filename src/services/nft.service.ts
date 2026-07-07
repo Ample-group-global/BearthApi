@@ -63,7 +63,25 @@ export async function listNft(params: {
      LIMIT $6 OFFSET $7`,
     [search, deliveryStatusCode, stageCode, revealed, waveId, limit, offset]
   );
-  return { nftRecords: toCamel(rows), total: Number(rows[0]?.total_count ?? 0), limit, offset };
+  const { rows: statsRows } = await pool.query(`
+    SELECT
+      COUNT(*) FILTER (WHERE NOT nr.is_revealed)    AS blind_count,
+      COUNT(*) FILTER (WHERE nr.is_revealed)         AS revealed_count,
+      COUNT(*) FILTER (WHERE ds.code = 'delivered')  AS delivered_count
+    FROM nft_records nr
+    LEFT JOIN delivery_statuses ds ON nr.delivery_status_id = ds.id
+  `);
+  const st = statsRows[0] ?? {};
+
+  return {
+    nftRecords:    toCamel(rows),
+    total:         Number(rows[0]?.total_count ?? 0),
+    blindCount:    Number(st.blind_count     ?? 0),
+    revealedCount: Number(st.revealed_count  ?? 0),
+    deliveredCount:Number(st.delivered_count ?? 0),
+    limit,
+    offset,
+  };
 }
 
 export async function getNft(id: string) {

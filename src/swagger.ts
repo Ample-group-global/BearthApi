@@ -173,6 +173,29 @@ const options: swaggerJsdoc.Options = {
           responses: { "200": { description: "Verification result" } },
         },
       },
+      "/api/auth/admin/forgot-password": {
+        post: {
+          tags: ["Auth"],
+          summary: "Send password reset email",
+          requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["email"], properties: { email: { type: "string", format: "email", example: "admin@bearth.local" } } } } } },
+          responses: {
+            "200": { description: "Reset email sent (always returns success to prevent user enumeration)" },
+            "400": { description: "Email is required" },
+            "500": { description: "Email delivery failed" },
+          },
+        },
+      },
+      "/api/auth/admin/reset-password": {
+        post: {
+          tags: ["Auth"],
+          summary: "Reset password using token from email",
+          requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["token", "password"], properties: { token: { type: "string" }, password: { type: "string", minLength: 8 } } } } } },
+          responses: {
+            "200": { description: "Password reset successfully" },
+            "400": { description: "Invalid or expired token" },
+          },
+        },
+      },
 
       // ── Admin: Roles ──────────────────────────────────────────────────────
       "/api/admin/roles": {
@@ -511,6 +534,129 @@ const options: swaggerJsdoc.Options = {
           summary: "Create admin user (presale context)",
           security: [{ bearerAuth: [] }],
           responses: { "201": { description: "User created" } },
+        },
+      },
+
+      // ── Presale: Waves ───────────────────────────────────────────────────
+      "/api/presale/waves": {
+        get: {
+          tags: ["Presale - Waves"],
+          summary: "List NFT waves",
+          security: [{ bearerAuth: [] }],
+          responses: { "200": { description: "Waves list" } },
+        },
+        post: {
+          tags: ["Presale - Waves"],
+          summary: "Create an NFT wave",
+          security: [{ bearerAuth: [] }],
+          requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["waveNumber", "name", "quantity"], properties: { waveNumber: { type: "integer" }, name: { type: "string" }, quantity: { type: "integer" }, defaultPriceEth: { type: "number" }, saleMethod: { type: "string", enum: ["fixed_price", "dutch_auction", "english_auction", "free_mint"] }, scheduledStart: { type: "string", format: "date-time" }, scheduledEnd: { type: "string", format: "date-time" }, status: { type: "string", enum: ["upcoming", "active", "paused", "completed", "cancelled"] } } } } } },
+          responses: { "201": { description: "Wave created" } },
+        },
+      },
+      "/api/presale/waves/{id}": {
+        get: {
+          tags: ["Presale - Waves"],
+          summary: "Get wave by ID",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: { "200": { description: "Wave detail" }, "404": { description: "Not found" } },
+        },
+        put: {
+          tags: ["Presale - Waves"],
+          summary: "Update a wave",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: { "200": { description: "Wave updated" } },
+        },
+        delete: {
+          tags: ["Presale - Waves"],
+          summary: "Delete a wave",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: { "200": { description: "Wave deleted" } },
+        },
+      },
+
+      // ── NFT Generator ─────────────────────────────────────────────────────
+      "/api/nft-gen/collections": {
+        get: {
+          tags: ["NFT Generator"],
+          summary: "List NFT collections",
+          security: [{ bearerAuth: [] }],
+          responses: { "200": { description: "Collections list" } },
+        },
+        post: {
+          tags: ["NFT Generator"],
+          summary: "Create a collection",
+          security: [{ bearerAuth: [] }],
+          responses: { "201": { description: "Collection created" } },
+        },
+      },
+      "/api/nft-gen/collections/{id}": {
+        get: {
+          tags: ["NFT Generator"],
+          summary: "Get collection by ID",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: { "200": { description: "Collection detail" } },
+        },
+        put: {
+          tags: ["NFT Generator"],
+          summary: "Update a collection",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: { "200": { description: "Collection updated" } },
+        },
+      },
+      "/api/nft-gen/collections/{id}/layers": {
+        get: {
+          tags: ["NFT Generator"],
+          summary: "List layers for a collection",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: { "200": { description: "Layers list" } },
+        },
+        post: {
+          tags: ["NFT Generator"],
+          summary: "Create a layer",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: { "201": { description: "Layer created" } },
+        },
+      },
+      "/api/nft-gen/layers/{id}/traits": {
+        get: {
+          tags: ["NFT Generator"],
+          summary: "List traits for a layer",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: { "200": { description: "Traits list" } },
+        },
+        post: {
+          tags: ["NFT Generator"],
+          summary: "Create a trait",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: { "201": { description: "Trait created" } },
+        },
+      },
+      "/api/nft-gen/collections/{id}/generate": {
+        post: {
+          tags: ["NFT Generator"],
+          summary: "Start async generation job",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: { size: { type: "integer", description: "Number of NFTs to generate" } } } } } },
+          responses: { "202": { description: "Job started", content: { "application/json": { schema: { type: "object", properties: { jobId: { type: "string", format: "uuid" } } } } } } },
+        },
+      },
+      "/api/nft-gen/jobs/{id}": {
+        get: {
+          tags: ["NFT Generator"],
+          summary: "Poll generation job status",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }],
+          responses: { "200": { description: "Job status with progress 0–100" } },
         },
       },
 
