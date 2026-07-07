@@ -1,6 +1,18 @@
 import pool from "../pool";
 import { toCamel } from "../utils/camel";
 
+const SORT_COLS: Record<string, string> = {
+  serial_number:   "nr.serial_number",
+  token_id:        "nr.token_id",
+  wave:            "w.wave_number",
+  price_eth:       "COALESCE(nr.price_eth, w.default_price_eth)",
+  stage:           "ns.name",
+  type:            "nt.name",
+  is_revealed:     "nr.is_revealed",
+  delivery_status: "ds.code",
+  delivered_at:    "nr.delivered_at",
+};
+
 export async function listNft(params: {
   search?: string | null;
   deliveryStatusCode?: string | null;
@@ -9,10 +21,46 @@ export async function listNft(params: {
   waveId?: string | null;
   limit?: number;
   offset?: number;
+  sortBy?: string | null;
+  sortDir?: "asc" | "desc" | null;
 }) {
-  const { search = null, deliveryStatusCode = null, stageCode = null, revealed = null, waveId = null, limit = 20, offset = 0 } = params;
+  const {
+    search = null, deliveryStatusCode = null, stageCode = null,
+    revealed = null, waveId = null, limit = 20, offset = 0,
+    sortBy = null, sortDir = null,
+  } = params;
+
+  const sortCol = sortBy && SORT_COLS[sortBy] ? SORT_COLS[sortBy] : null;
+  const dir     = sortDir === "desc" ? "DESC" : "ASC";
+  const orderBy = sortCol
+    ? `${sortCol} ${dir} NULLS LAST`
+    : "nr.token_id ASC NULLS LAST, nr.serial_number ASC";
+
   const { rows } = await pool.query(
-    "SELECT * FROM nft_list($1, $2, $3, $4, $5, $6, $7)",
+    `SELECT
+       nr.id, nr.serial_number, nr.token_id,
+       nr.image_ipfs_hash, nr.metadata_uri, nr.blind_box_uri,
+       nr.is_revealed, nr.revealed_at,
+       nr.notes, nr.delivered_at, nr.created_at, nr.updated_at,
+       nr.stage_id, ns.name AS stage_name,
+       nr.nft_type_id, nt.name AS type_name,
+       nr.delivery_status_id, ds.code AS delivery_status_code, ds.name AS delivery_status_name,
+       nr.wave_id, w.wave_number, w.name AS wave_name,
+       nr.price_eth,
+       COALESCE(nr.price_eth, w.default_price_eth) AS effective_price_eth,
+       COUNT(*) OVER() AS total_count
+     FROM nft_records nr
+     LEFT JOIN nft_stages        ns ON nr.stage_id           = ns.id
+     LEFT JOIN nft_types         nt ON nr.nft_type_id        = nt.id
+     LEFT JOIN delivery_statuses ds ON nr.delivery_status_id = ds.id
+     LEFT JOIN nft_waves          w ON nr.wave_id             = w.id
+     WHERE ($1::TEXT    IS NULL OR nr.serial_number ILIKE '%' || $1 || '%' OR nr.token_id::TEXT = $1)
+       AND ($2::VARCHAR IS NULL OR ds.code = $2)
+       AND ($3::VARCHAR IS NULL OR ns.code = $3)
+       AND ($4::BOOLEAN IS NULL OR nr.is_revealed = $4)
+       AND ($5::UUID    IS NULL OR nr.wave_id = $5::UUID)
+     ORDER BY ${orderBy}
+     LIMIT $6 OFFSET $7`,
     [search, deliveryStatusCode, stageCode, revealed, waveId, limit, offset]
   );
   return { nftRecords: toCamel(rows), total: Number(rows[0]?.total_count ?? 0), limit, offset };
