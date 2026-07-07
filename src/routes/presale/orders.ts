@@ -7,12 +7,15 @@ const router = Router();
 router.get("/", async (req, res, next) => {
   try {
     requirePermission(req, "orders.view");
+    const sdRaw = req.query.sort_dir as string | undefined;
     const result = await ordersService.listOrders({
       search:     (req.query.search      as string) ?? null,
       customerId: (req.query.customer_id as string) ?? null,
       nftStatus:  (req.query.nft_status  as string) ?? null,
-      limit:      Number(req.query.limit  ?? 50),
+      limit:      Number(req.query.limit  ?? 20),
       offset:     Number(req.query.offset ?? 0),
+      sortBy:     (req.query.sort_by     as string) ?? null,
+      sortDir:    sdRaw === "asc" ? "asc" : sdRaw === "desc" ? "desc" : null,
     });
     res.json(result);
   } catch (e) { next(e); }

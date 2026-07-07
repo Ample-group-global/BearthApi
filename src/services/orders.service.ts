@@ -1,18 +1,54 @@
 import pool from "../pool";
 import { toCamel } from "../utils/camel";
 
+const ORDER_SORT_COLS: Record<string, string> = {
+  order_number:    "o.order_number",
+  purchase_date:   "o.purchase_date",
+  customer:        "u.first_name",
+  nft_amount_twd:  "o.nft_amount_twd",
+  nft_amount_eth:  "o.nft_amount_eth",
+  nft_status:      "nps.code",
+  merch_amount_twd:"o.merch_amount_twd",
+  created_at:      "o.created_at",
+};
+
 export async function listOrders(params: {
   search?: string | null;
   customerId?: string | null;
   nftStatus?: string | null;
   limit?: number;
   offset?: number;
+  sortBy?: string | null;
+  sortDir?: "asc" | "desc" | null;
 }) {
-  const { search = null, customerId = null, nftStatus = null, limit = 50, offset = 0 } = params;
-  const { rows } = await pool.query(
-    "SELECT * FROM orders_list($1, $2, $3, $4, $5)",
-    [search, customerId, nftStatus, limit, offset]
-  );
+  const { search = null, customerId = null, nftStatus = null, limit = 20, offset = 0, sortBy = null, sortDir = null } = params;
+  const sortCol = sortBy && ORDER_SORT_COLS[sortBy] ? ORDER_SORT_COLS[sortBy] : null;
+  const dir     = sortDir === "asc" ? "ASC" : "DESC";
+  const orderBy = sortCol ? `${sortCol} ${dir} NULLS LAST` : "o.created_at DESC";
+  const { rows } = await pool.query(`
+    SELECT
+      o.id, o.order_number, o.purchase_date, o.payment_notes, o.notes,
+      o.nft_amount_twd, o.nft_amount_eth, o.nft_confirmed_at,
+      o.merch_amount_twd, o.merch_confirmed_at,
+      o.created_at, o.updated_at,
+      o.customer_id,
+      u.first_name || ' ' || u.last_name AS customer_name,
+      u.phone AS customer_phone,
+      o.nft_payment_status_id,  nps.code AS nft_payment_status_code, nps.name AS nft_payment_status_name,
+      o.merch_payment_status_id, mps.code AS merch_payment_status_code,
+      COUNT(*) OVER() AS total_count
+    FROM orders o
+    LEFT JOIN users            u   ON o.customer_id            = u.id
+    LEFT JOIN payment_statuses nps ON o.nft_payment_status_id  = nps.id
+    LEFT JOIN payment_statuses mps ON o.merch_payment_status_id = mps.id
+    WHERE ($1::text IS NULL OR o.customer_id = $1::uuid)
+      AND ($2::text IS NULL OR nps.code = $2)
+      AND ($3::text IS NULL
+           OR o.order_number                     ILIKE '%' || $3 || '%'
+           OR u.first_name || ' ' || u.last_name ILIKE '%' || $3 || '%')
+    ORDER BY ${orderBy}
+    LIMIT $4 OFFSET $5
+  `, [customerId, nftStatus, search, limit, offset]);
   return { orders: toCamel(rows), total: Number(rows[0]?.total_count ?? 0), limit, offset };
 }
 
