@@ -1,7 +1,6 @@
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
-import swaggerUi from "swagger-ui-express";
 import { swaggerSpec } from "./swagger";
 import authRouter from "./routes/auth";
 import whitelistRouter from "./routes/whitelist";
@@ -27,9 +26,43 @@ app.use(express.json());
 app.use(rateLimit({ windowMs: 60_000, limit: 500, standardHeaders: "draft-7", legacyHeaders: false }));
 
 // ── Swagger UI ────────────────────────────────────────────────────────────────
+// swagger-ui-express uses express.static() which doesn't work on Vercel serverless
+// (asset requests return HTML). Serve assets from CDN instead.
 
-app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-app.get("/api/docs.json", (_req, res) => { res.setHeader("Content-Type", "application/json"); res.send(swaggerSpec); });
+app.get("/api/docs.json", (_req, res) => {
+  res.setHeader("Content-Type", "application/json");
+  res.send(swaggerSpec);
+});
+
+app.get("/api/docs", (_req, res) => {
+  const specUrl = "/api/docs.json";
+  res.setHeader("Content-Type", "text/html");
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BearthApi — API Docs</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
+  <script>
+    window.onload = function () {
+      SwaggerUIBundle({
+        url: "${specUrl}",
+        dom_id: "#swagger-ui",
+        presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+        layout: "StandaloneLayout",
+        deepLinking: true,
+      });
+    };
+  </script>
+</body>
+</html>`);
+});
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
