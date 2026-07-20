@@ -8,10 +8,7 @@ export async function listFulfillments(params: {
   offset?: number;
 }) {
   const { status = null, type = null, limit = 20, offset = 0 } = params;
-  const { rows } = await pool.query(
-    "SELECT * FROM fulfillment_list($1, $2, $3, $4)",
-    [status, type, limit, offset]
-  );
+  const { rows } = await pool.query("SELECT * FROM fulfillment_list($1,$2,$3,$4)", [status, type, limit, offset]);
   return {
     fulfillments: toCamel(rows),
     total:        Number(rows[0]?.total_count ?? 0),
@@ -78,20 +75,17 @@ export async function upsertFulfillment(params: {
     await client.query("BEGIN");
 
     // Check previous status before updating
-    const prev = await client.query(
-      "SELECT status FROM order_fulfillment WHERE order_id = $1::uuid", [orderId]
-    );
+    const prev = await client.query("SELECT status FROM order_fulfillment WHERE order_id = $1::uuid", [orderId]);
     const prevStatus = prev.rows[0]?.status ?? null;
 
     const { rows } = await client.query(
-      "SELECT * FROM fulfillment_upsert($1::uuid, $2, $3, $4, $5, $6, $7)",
-      [orderId, status ?? null, fulfillmentType ?? null, trackingNumber ?? null,
-       carrier ?? null, notes ?? null, assignedTo ?? null]
+      "SELECT * FROM fulfillment_upsert($1::uuid,$2,$3,$4,$5,$6,$7)",
+      [orderId, status ?? null, fulfillmentType ?? null, trackingNumber ?? null, carrier ?? null, notes ?? null, assignedTo ?? null]
     );
 
     // Deduct stock when transitioning to shipped
     if (status === "shipped" && prevStatus !== "shipped") {
-      await client.query("SELECT products_ship_order($1::uuid, $2)", [orderId, userId ?? null]);
+      await client.query("SELECT products_ship_order($1::uuid,$2)", [orderId, userId ?? null]);
     }
 
     await client.query("COMMIT");

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requirePermission } from "../../presaleAuth";
+import { requirePermission } from "../../adminAuth";
 import * as catalogService from "../../services/catalog.service";
 
 const router = Router();

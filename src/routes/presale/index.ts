@@ -13,7 +13,7 @@ import inventoryRouter      from "./inventory";
 import fulfillmentRouter    from "./fulfillment";
 import catalogRouter         from "./catalog";
 import paymentMethodsRouter  from "./payment-methods";
-import { requireRole }       from "../../presaleAuth";
+import { requireRole }       from "../../adminAuth";
 
 const router = Router();
 

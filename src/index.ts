@@ -11,6 +11,29 @@ import adminPermissionsRouter from "./routes/admin/permissions";
 import adminMenusRouter from "./routes/admin/menus";
 import adminUsersRouter from "./routes/admin/users";
 import nftGenRouter from "./routes/nft-gen/index";
+import openSeaRouter from "./routes/opensea";
+import nftSellWavesRouter       from "./routes/nft-sell/waves";
+import nftSellRoyaltyRouter     from "./routes/nft-sell/royalty";
+import nftSellCustomersRouter   from "./routes/nft-sell/customers";
+import nftSellCollectionRouter  from "./routes/nft-sell/collection";
+import nftSellAdminSalesRouter  from "./routes/nft-sell/admin-sales";
+import nftSellLookupsRouter     from "./routes/nft-sell/lookups";
+import nftSellStakingRouter         from "./routes/nft-sell/staking";
+import nftSellStrategiesRouter       from "./routes/nft-sell/strategies";
+import nftSellAuctionsRouter         from "./routes/nft-sell/auctions";
+import nftSellMembershipRouter       from "./routes/nft-sell/membership";
+import nftSellEventsRouter           from "./routes/nft-sell/events";
+import nftSellSeasonsRouter          from "./routes/nft-sell/seasons";
+import nftSellPacksRouter            from "./routes/nft-sell/packs";
+import nftSellBurnRouter             from "./routes/nft-sell/burn";
+import nftSellCollaborationsRouter   from "./routes/nft-sell/collaborations";
+import nftSellDutchRouter           from "./routes/nft-sell/dutch";
+import nftSellOtcRouter             from "./routes/nft-sell/otc";
+import nftSellBulkRouter            from "./routes/nft-sell/bulk";
+import nftSellGiftsRouter           from "./routes/nft-sell/gifts";
+import nftSellAirdropRouter         from "./routes/nft-sell/airdrop";
+import nftSellUpgradeRouter         from "./routes/nft-sell/upgrade";
+import { startEventListeners } from "./services/contract.service";
 import pool from "./pool";
 import { buildMerkleTree } from "./merkle";
 import { errorHandler } from "./errorHandler";
@@ -69,12 +92,34 @@ app.get("/api/docs", (_req, res) => {
 app.use("/api/auth", authRouter);
 app.use("/api/whitelist", whitelistRouter);
 app.use("/api/proof", proofRouter);
-app.use("/api/presale", presaleRouter);
+app.use("/api", presaleRouter);
 app.use("/api/admin/roles",       adminRolesRouter);
 app.use("/api/admin/permissions", adminPermissionsRouter);
 app.use("/api/admin/menus",       adminMenusRouter);
 app.use("/api/admin/users",       adminUsersRouter);
 app.use("/api/nft-gen",           nftGenRouter);
+app.use("/api/opensea",           openSeaRouter);
+app.use("/api/nft-sell/waves",       nftSellWavesRouter);
+app.use("/api/nft-sell/royalty",     nftSellRoyaltyRouter);
+app.use("/api/nft-sell/customers",   nftSellCustomersRouter);
+app.use("/api/nft-sell/collection",  nftSellCollectionRouter);
+app.use("/api/nft-sell/admin-sales", nftSellAdminSalesRouter);
+app.use("/api/nft-sell/lookups",     nftSellLookupsRouter);
+app.use("/api/nft-sell/staking",         nftSellStakingRouter);
+app.use("/api/nft-sell/strategies",      nftSellStrategiesRouter);
+app.use("/api/nft-sell/auctions",        nftSellAuctionsRouter);
+app.use("/api/nft-sell/membership",      nftSellMembershipRouter);
+app.use("/api/nft-sell/events",          nftSellEventsRouter);
+app.use("/api/nft-sell/seasons",         nftSellSeasonsRouter);
+app.use("/api/nft-sell/packs",           nftSellPacksRouter);
+app.use("/api/nft-sell/burn",            nftSellBurnRouter);
+app.use("/api/nft-sell/collaborations",  nftSellCollaborationsRouter);
+app.use("/api/nft-sell/dutch",           nftSellDutchRouter);
+app.use("/api/nft-sell/otc",             nftSellOtcRouter);
+app.use("/api/nft-sell/bulk",            nftSellBulkRouter);
+app.use("/api/nft-sell/gifts",           nftSellGiftsRouter);
+app.use("/api/nft-sell/airdrop",         nftSellAirdropRouter);
+app.use("/api/nft-sell/upgrade",         nftSellUpgradeRouter);
 app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
 
 // ── Error handler (must be last) ──────────────────────────────────────────────
@@ -110,6 +155,9 @@ if (!process.env.VERCEL) {
   app.listen(PORT, () => {
     console.log(`BearthApi listening on port ${PORT}`);
     recalcMerkleOnStartup().catch(e => console.warn("Startup Merkle recalc failed:", e));
+    if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL) {
+      startEventListeners();
+    }
   });
 }
 

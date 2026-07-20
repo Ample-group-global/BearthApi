@@ -7,7 +7,7 @@ export async function listCollections(params: { limit?: number; offset?: number 
   const { limit = 50, offset = 0 } = params;
   const { rows } = await pool.query(
     "SELECT * FROM nft_gen_collections_list($1, $2)",
-    [limit, offset]
+    [limit, offset],
   );
   return { collections: toCamel(rows), total: Number(rows[0]?.total_count ?? 0), limit, offset };
 }
@@ -29,16 +29,8 @@ export async function createCollection(params: {
     shuffleOutput, dnaTolerance, createdBy,
   } = params;
   const { rows } = await pool.query(
-    `SELECT * FROM nft_gen_collection_create(
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
-    )`,
-    [
-      name, description ?? null, symbol ?? null, network ?? "eth",
-      royaltyBps ?? 0, creatorWallet ?? null,
-      formatWidth ?? 512, formatHeight ?? 512,
-      smoothing ?? false, bgGenerate ?? false, bgStaticColor ?? null,
-      shuffleOutput ?? true, dnaTolerance ?? 10000, createdBy ?? null,
-    ]
+    "SELECT * FROM nft_gen_collection_create($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+    [name, description ?? null, symbol ?? null, network ?? "eth", royaltyBps ?? 0, creatorWallet ?? null, formatWidth ?? 512, formatHeight ?? 512, smoothing ?? false, bgGenerate ?? false, bgStaticColor ?? null, shuffleOutput ?? true, dnaTolerance ?? 10000, createdBy ?? null],
   );
   return rows[0] ?? null;
 }
@@ -55,16 +47,8 @@ export async function updateCollection(id: string, params: {
     shuffleOutput, dnaTolerance, baseUri, status,
   } = params;
   const { rows } = await pool.query(
-    `SELECT * FROM nft_gen_collection_update(
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
-    )`,
-    [
-      id, name ?? null, description ?? null, symbol ?? null, network ?? null,
-      royaltyBps ?? null, creatorWallet ?? null,
-      formatWidth ?? null, formatHeight ?? null,
-      smoothing ?? null, bgGenerate ?? null, bgStaticColor ?? null,
-      shuffleOutput ?? null, dnaTolerance ?? null, baseUri ?? null, status ?? null,
-    ]
+    "SELECT * FROM nft_gen_collection_update($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+    [id, name ?? null, description ?? null, symbol ?? null, network ?? null, royaltyBps ?? null, creatorWallet ?? null, formatWidth ?? null, formatHeight ?? null, smoothing ?? null, bgGenerate ?? null, bgStaticColor ?? null, shuffleOutput ?? null, dnaTolerance ?? null, baseUri ?? null, status ?? null],
   );
   return rows[0] ?? null;
 }
@@ -78,7 +62,8 @@ export async function deleteCollection(id: string) {
 
 export async function listLayers(collectionId: string) {
   const { rows } = await pool.query(
-    "SELECT * FROM nft_gen_layers_list($1::uuid)", [collectionId]
+    "SELECT * FROM nft_gen_layers_list($1::uuid)",
+    [collectionId],
   );
   return toCamel(rows);
 }
@@ -96,11 +81,7 @@ export async function createLayer(params: {
   const { collectionId, name, displayName, blendMode, opacity, bypassDna, sortOrder, layerRarityPct } = params;
   const { rows } = await pool.query(
     "SELECT * FROM nft_gen_layer_create($1, $2, $3, $4, $5, $6, $7, $8)",
-    [
-      collectionId, name, displayName ?? null,
-      blendMode ?? "source-over", opacity ?? 1.0,
-      bypassDna ?? false, sortOrder ?? null, layerRarityPct ?? 100,
-    ]
+    [collectionId, name, displayName ?? null, blendMode ?? "source-over", opacity ?? 1.0, bypassDna ?? false, sortOrder ?? null, layerRarityPct ?? 100],
   );
   return rows[0] ?? null;
 }
@@ -112,11 +93,7 @@ export async function updateLayer(id: string, params: {
   const { name, displayName, blendMode, opacity, bypassDna, sortOrder, layerRarityPct, isActive } = params;
   const { rows } = await pool.query(
     "SELECT * FROM nft_gen_layer_update($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-    [
-      id, name ?? null, displayName ?? null, blendMode ?? null,
-      opacity ?? null, bypassDna ?? null, sortOrder ?? null,
-      layerRarityPct ?? null, isActive ?? null,
-    ]
+    [id, name ?? null, displayName ?? null, blendMode ?? null, opacity ?? null, bypassDna ?? null, sortOrder ?? null, layerRarityPct ?? null, isActive ?? null],
   );
   return rows[0] ?? null;
 }
@@ -131,7 +108,7 @@ export async function reorderLayers(collectionId: string, items: { id: string; s
   const orders = items.map(i => i.sortOrder);
   const { rows } = await pool.query(
     "SELECT * FROM nft_gen_layers_reorder($1::uuid, $2::uuid[], $3::int[])",
-    [collectionId, ids, orders]
+    [collectionId, ids, orders],
   );
   return rows[0] ?? null;
 }
@@ -140,7 +117,8 @@ export async function reorderLayers(collectionId: string, items: { id: string; s
 
 export async function listTraits(layerId: string) {
   const { rows } = await pool.query(
-    "SELECT * FROM nft_gen_traits_list($1::uuid)", [layerId]
+    "SELECT * FROM nft_gen_traits_list($1::uuid)",
+    [layerId],
   );
   return toCamel(rows);
 }
@@ -152,7 +130,7 @@ export async function createTrait(params: {
   const { layerId, name, filePath, rarityTier, storageProvider } = params;
   const { rows } = await pool.query(
     "SELECT * FROM nft_gen_trait_create($1, $2, $3, $4, $5)",
-    [layerId, name, filePath, rarityTier ?? "common", storageProvider ?? "filebase"]
+    [layerId, name, filePath, rarityTier ?? "common", storageProvider ?? "filebase"],
   );
   return rows[0] ?? null;
 }
@@ -164,7 +142,7 @@ export async function updateTrait(id: string, params: {
   const { name, filePath, storageProvider, rarityTier, isActive } = params;
   const { rows } = await pool.query(
     "SELECT * FROM nft_gen_trait_update($1, $2, $3, $4, $5, $6)",
-    [id, name ?? null, filePath ?? null, storageProvider ?? null, rarityTier ?? null, isActive ?? null]
+    [id, name ?? null, filePath ?? null, storageProvider ?? null, rarityTier ?? null, isActive ?? null],
   );
   return rows[0] ?? null;
 }
@@ -180,7 +158,7 @@ export async function createJob(params: { collectionId: string; editionSize: num
   const { collectionId, editionSize, createdBy } = params;
   const { rows } = await pool.query(
     "SELECT * FROM nft_gen_job_create($1::uuid, $2, $3)",
-    [collectionId, editionSize, createdBy ?? null]
+    [collectionId, editionSize, createdBy ?? null],
   );
   return rows[0] ?? null;
 }
@@ -219,7 +197,7 @@ export async function insertItem(params: {
   const { jobId, editionNumber, dnaHash, imagePath, metadataJson } = params;
   const { rows } = await pool.query(
     "SELECT * FROM nft_gen_item_insert($1::uuid, $2, $3, $4, $5)",
-    [jobId, editionNumber, dnaHash, imagePath ?? null, metadataJson ? JSON.stringify(metadataJson) : null]
+    [jobId, editionNumber, dnaHash, imagePath ?? null, metadataJson ? JSON.stringify(metadataJson) : null],
   );
   return rows[0] ?? null;
 }
@@ -230,7 +208,7 @@ export async function insertItemTrait(params: {
   const { itemId, traitId, traitType, traitValue, rarityTier } = params;
   const { rows } = await pool.query(
     "SELECT * FROM nft_gen_item_trait_insert($1::uuid, $2::uuid, $3, $4, $5)",
-    [itemId, traitId, traitType, traitValue, rarityTier ?? null]
+    [itemId, traitId, traitType, traitValue, rarityTier ?? null],
   );
   return rows[0] ?? null;
 }
@@ -239,7 +217,7 @@ export async function listItems(params: { jobId: string; limit?: number; offset?
   const { jobId, limit = 50, offset = 0 } = params;
   const { rows } = await pool.query(
     "SELECT * FROM nft_gen_items_list($1::uuid, $2, $3)",
-    [jobId, limit, offset]
+    [jobId, limit, offset],
   );
   return { items: toCamel(rows), total: Number(rows[0]?.total_count ?? 0), limit, offset };
 }
@@ -248,7 +226,7 @@ export async function updateItemIpfs(id: string, params: { ipfsImageCid: string;
   const { ipfsImageCid, ipfsMetadataCid } = params;
   const { rows } = await pool.query(
     "SELECT * FROM nft_gen_item_update_ipfs($1::uuid, $2, $3)",
-    [id, ipfsImageCid, ipfsMetadataCid]
+    [id, ipfsImageCid, ipfsMetadataCid],
   );
   return rows[0] ?? null;
 }
@@ -266,7 +244,7 @@ export async function createUploadBatch(params: {
   const { jobId, provider, batchType, totalItems } = params;
   const { rows } = await pool.query(
     "SELECT * FROM nft_gen_upload_batch_create($1::uuid, $2, $3, $4)",
-    [jobId, provider, batchType, totalItems]
+    [jobId, provider, batchType, totalItems],
   );
   return rows[0] ?? null;
 }
@@ -284,7 +262,7 @@ export async function startUploadBatch(id: string) {
 export async function progressUploadBatch(id: string, uploadedItems: number) {
   const { rows } = await pool.query(
     "SELECT * FROM nft_gen_upload_batch_progress($1::uuid, $2)",
-    [id, uploadedItems]
+    [id, uploadedItems],
   );
   return rows[0] ?? null;
 }

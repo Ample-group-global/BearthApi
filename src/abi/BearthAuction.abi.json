@@ -1,0 +1,159 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        { "name": "bearthNFT_", "type": "address" },
+        { "name": "treasury_",  "type": "address" },
+        { "name": "adminWallet","type": "address" }
+      ]
+    },
+    {
+      "type": "function", "name": "createWaveAuction",
+      "inputs": [
+        { "name": "waveNum",      "type": "uint32" },
+        { "name": "startTime",    "type": "uint64" },
+        { "name": "endTime",      "type": "uint64" },
+        { "name": "reservePrice", "type": "uint96" },
+        { "name": "title",        "type": "string" }
+      ],
+      "outputs": [{ "name": "id", "type": "uint256" }],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function", "name": "createTokenAuction",
+      "inputs": [
+        { "name": "tokenId_",     "type": "uint256" },
+        { "name": "startTime",    "type": "uint64" },
+        { "name": "endTime",      "type": "uint64" },
+        { "name": "reservePrice", "type": "uint96" },
+        { "name": "title",        "type": "string" }
+      ],
+      "outputs": [{ "name": "id", "type": "uint256" }],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function", "name": "placeBid",
+      "inputs": [{ "name": "id", "type": "uint256" }],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function", "name": "settle",
+      "inputs": [{ "name": "id", "type": "uint256" }],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function", "name": "cancelAuction",
+      "inputs": [{ "name": "id", "type": "uint256" }],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function", "name": "withdrawPending",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function", "name": "getAuction",
+      "inputs": [{ "name": "id", "type": "uint256" }],
+      "outputs": [
+        {
+          "name": "", "type": "tuple",
+          "components": [
+            { "name": "highBidder",     "type": "address" },
+            { "name": "highBid",        "type": "uint96"  },
+            { "name": "endTime",        "type": "uint64"  },
+            { "name": "startTime",      "type": "uint64"  },
+            { "name": "extensionCount", "type": "uint32"  },
+            { "name": "waveNum",        "type": "uint32"  },
+            { "name": "tokenId",        "type": "uint256" },
+            { "name": "reservePrice",   "type": "uint96"  },
+            { "name": "mode",           "type": "uint8"   },
+            { "name": "status",         "type": "uint8"   },
+            { "name": "title",          "type": "string"  }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function", "name": "timeRemaining",
+      "inputs": [{ "name": "id", "type": "uint256" }],
+      "outputs": [{ "name": "", "type": "uint256" }],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function", "name": "setTreasury",
+      "inputs": [{ "name": "treasury_", "type": "address" }],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function", "name": "pause",   "inputs": [], "outputs": [], "stateMutability": "nonpayable" },
+    { "type": "function", "name": "unpause", "inputs": [], "outputs": [], "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function", "name": "auctionCount",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "uint256" }],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function", "name": "treasury",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "address" }],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function", "name": "pendingWithdrawals",
+      "inputs": [{ "name": "", "type": "address" }],
+      "outputs": [{ "name": "", "type": "uint256" }],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function", "name": "paused",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "bool" }],
+      "stateMutability": "view"
+    },
+    {
+      "type": "event", "name": "AuctionCreated",
+      "inputs": [
+        { "name": "id",        "type": "uint256", "indexed": true  },
+        { "name": "mode",      "type": "uint8",   "indexed": false },
+        { "name": "startTime", "type": "uint256", "indexed": false },
+        { "name": "endTime",   "type": "uint256", "indexed": false },
+        { "name": "title",     "type": "string",  "indexed": false }
+      ]
+    },
+    {
+      "type": "event", "name": "BidPlaced",
+      "inputs": [
+        { "name": "id",         "type": "uint256", "indexed": true  },
+        { "name": "bidder",     "type": "address", "indexed": true  },
+        { "name": "amount",     "type": "uint256", "indexed": false },
+        { "name": "newEndTime", "type": "uint256", "indexed": false }
+      ]
+    },
+    {
+      "type": "event", "name": "AuctionSettled",
+      "inputs": [
+        { "name": "id",     "type": "uint256", "indexed": true  },
+        { "name": "winner", "type": "address", "indexed": true  },
+        { "name": "amount", "type": "uint256", "indexed": false },
+        { "name": "nftId",  "type": "uint256", "indexed": false }
+      ]
+    },
+    {
+      "type": "event", "name": "AuctionCancelled",
+      "inputs": [{ "name": "id", "type": "uint256", "indexed": true }]
+    },
+    {
+      "type": "event", "name": "TreasuryUpdated",
+      "inputs": [{ "name": "treasury", "type": "address", "indexed": false }]
+    }
+  ]
+}

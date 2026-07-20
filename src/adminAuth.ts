@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "crypto";
-import { Request } from "express";
+import { Request, Response, NextFunction } from "express";
 import { HttpError } from "./errors";
 
 const SECRET = process.env.AUTH_SECRET ?? "";
@@ -95,4 +95,15 @@ export function requirePermission(req: Request, permission: string): { role: Adm
     throw new HttpError(403, "Forbidden — insufficient permissions");
   }
   return result;
+}
+
+// Express middleware: verifies any valid admin token (admin / ops / tech).
+// Use on write endpoints across all nft-sell routes.
+export function requireAdmin(req: Request, _res: Response, next: NextFunction): void {
+  try {
+    requireRole(req);
+    next();
+  } catch (err) {
+    next(err);
+  }
 }

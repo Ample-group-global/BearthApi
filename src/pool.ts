@@ -6,14 +6,16 @@ function getPool(): Pool {
   if (_pool) return _pool;
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
-  const parsed = new URL(url);
   _pool = new Pool({
-    host:     parsed.hostname,
-    port:     Number(parsed.port) || 5432,
-    user:     decodeURIComponent(parsed.username),
-    password: decodeURIComponent(parsed.password),
-    database: parsed.pathname.slice(1),
-    ssl:      { rejectUnauthorized: false },
+    connectionString:        url,
+    ssl:                     { rejectUnauthorized: false },
+    max:                     5,
+    min:                     0,
+    idleTimeoutMillis:       10_000,
+    connectionTimeoutMillis: 30_000,
+  });
+  _pool.on("error", (err) => {
+    console.warn("[pool] idle client error:", err.message);
   });
   return _pool;
 }

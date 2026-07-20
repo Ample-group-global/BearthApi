@@ -25,6 +25,10 @@ env/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+coverage/
+test-results/
+playwright-report/
+blob-report/
 
 # OS / editor
 .DS_Store

@@ -9,28 +9,27 @@ export async function getReportsSummary() {
 export async function getSalesByStage() {
   const { rows } = await pool.query(`
     SELECT
-      s.id   AS stage_id,
-      s.name AS stage_name,
-      s.code AS stage_code,
-      COUNT(nr.id)                                                     AS total,
-      COUNT(CASE WHEN ds.code = 'delivered'  THEN 1 END)              AS delivered,
-      COUNT(CASE WHEN ds.code = 'pending'    THEN 1 END)              AS pending,
-      COUNT(CASE WHEN ds.code IN ('cancelled','canceled') THEN 1 END) AS cancelled
-    FROM nft_stages s
-    LEFT JOIN nft_records nr ON nr.stage_id = s.id
-    LEFT JOIN delivery_statuses ds ON ds.id = nr.delivery_status_id
-    WHERE s.is_active = true
-    GROUP BY s.id, s.name, s.code, s.sort_order
-    ORDER BY s.sort_order, s.name
+      s.id    AS stage_id,
+      s.label AS stage_name,
+      s.code  AS stage_code,
+      COUNT(nr.id)                                                                  AS total,
+      COUNT(CASE WHEN nr.delivery_status_code = 'delivered'                THEN 1 END) AS delivered,
+      COUNT(CASE WHEN nr.delivery_status_code = 'pending'                  THEN 1 END) AS pending,
+      COUNT(CASE WHEN nr.delivery_status_code IN ('cancelled','canceled')  THEN 1 END) AS cancelled
+    FROM lookup_values s
+    LEFT JOIN v_nft_records nr ON nr.stage_id = s.id
+    WHERE s.category = 'nft_stage' AND s.is_active = true
+    GROUP BY s.id, s.label, s.code, s.sort_order
+    ORDER BY s.sort_order, s.label
   `);
   return toCamel(rows);
 }
 
 const DELIVERY_SORT_COLS: Record<string, string> = {
   serial_number:   "nr.serial_number",
-  stage:           "s.name",
-  type:            "t.name",
-  delivery_status: "ds.code",
+  stage:           "nr.stage_name",
+  type:            "nr.type_name",
+  delivery_status: "nr.delivery_status_code",
   delivered_at:    "nr.delivered_at",
   created_at:      "nr.created_at",
 };
@@ -46,17 +45,14 @@ export async function getDeliveryReport(params: {
   const { rows } = await pool.query(`
     SELECT
       nr.id, nr.serial_number,
-      s.name  AS stage_name,
-      t.name  AS type_name,
-      ds.name AS delivery_status_name,
-      ds.code AS delivery_status_code,
+      nr.stage_name,
+      nr.type_name,
+      nr.delivery_status_name,
+      nr.delivery_status_code,
       nr.delivered_at, nr.notes, nr.created_at,
       COUNT(*) OVER() AS total_count
-    FROM nft_records nr
-    LEFT JOIN nft_stages         s  ON s.id  = nr.stage_id
-    LEFT JOIN nft_types          t  ON t.id  = nr.nft_type_id
-    LEFT JOIN delivery_statuses  ds ON ds.id = nr.delivery_status_id
-    WHERE ($1::text IS NULL OR ds.code = $1)
+    FROM v_nft_records nr
+    WHERE ($1::text IS NULL OR nr.delivery_status_code = $1)
     ORDER BY ${orderBy}
     LIMIT $2 OFFSET $3
   `, [statusCode, limit, offset]);

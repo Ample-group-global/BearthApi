@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requirePermission } from "../../presaleAuth";
+import { requirePermission } from "../../adminAuth";
 import pool from "../../pool";
 import { toCamel } from "../../utils/camel";
 
@@ -24,12 +24,13 @@ router.post("/", async (req, res, next) => {
     }
     const validCategories = ["crypto", "bank", "local"];
     const cat = validCategories.includes(category) ? category : "local";
+    const codeNorm = (code as string).toLowerCase().replace(/\s+/g, "_");
     const { rows } = await pool.query(
       `INSERT INTO payment_methods (code, name, is_active, sort_order, category)
        VALUES ($1, $2, true, $3, $4)
        ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, sort_order = EXCLUDED.sort_order, category = EXCLUDED.category
        RETURNING *`,
-      [code.toLowerCase().replace(/\s+/g, "_"), name, sortOrder ?? 99, cat]
+      [codeNorm, name, sortOrder ?? 99, cat]
     );
     res.status(201).json({ paymentMethod: toCamel([rows[0]])[0] });
   } catch (e) { next(e); }
@@ -43,13 +44,13 @@ router.put("/:id", async (req, res, next) => {
     const cat = validCategories.includes(category) ? category : null;
     const { rows } = await pool.query(
       `UPDATE payment_methods
-       SET name       = COALESCE($2, name),
-           is_active  = COALESCE($3, is_active),
-           sort_order = COALESCE($4, sort_order),
-           category   = COALESCE($5, category)
-       WHERE id = $1::uuid
+       SET name       = COALESCE($1, name),
+           is_active  = COALESCE($2, is_active),
+           sort_order = COALESCE($3, sort_order),
+           category   = COALESCE($4, category)
+       WHERE id = $5::uuid
        RETURNING *`,
-      [req.params.id, name ?? null, isActive ?? null, sortOrder ?? null, cat]
+      [name ?? null, isActive ?? null, sortOrder ?? null, cat, req.params.id]
     );
     if (!rows[0]) { res.status(404).json({ error: "Not found" }); return; }
     res.json({ paymentMethod: toCamel([rows[0]])[0] });

@@ -5,7 +5,7 @@ export interface UserContext {
   roleCode: string;
   roleName: string;
   permissions: string[];
-  menus: Array<{ label: string; href: string; icon?: string | null; module?: string | null; sortOrder: number }>;
+  menus: Array<{ label: string; href: string; icon?: string | null; module?: string | null; moduleLabel?: string | null; sortOrder: number }>;
 }
 
 export async function getUserContext(userId: string): Promise<UserContext | null> {
@@ -43,7 +43,7 @@ export async function getUserContext(userId: string): Promise<UserContext | null
 
   // Get menus for this role
   const { rows: menuRows } = await pool.query(
-    `SELECT m.label, m.href, m.icon, m.module, rm.sort_order
+    `SELECT m.label, m.href, m.icon, m.module, m.module_label, rm.sort_order
      FROM menus m
      JOIN role_menus rm ON rm.menu_id = m.id
      JOIN roles r ON rm.role_id = r.id
@@ -52,24 +52,20 @@ export async function getUserContext(userId: string): Promise<UserContext | null
      ORDER BY rm.sort_order ASC`,
     [userId]
   );
-  const menus = menuRows.map((r: { label: string; href: string; icon: string | null; module: string | null; sort_order: number }) => ({
-    label: r.label, href: r.href, icon: r.icon, module: r.module, sortOrder: r.sort_order,
+  const menus = menuRows.map((r: { label: string; href: string; icon: string | null; module: string | null; module_label: string | null; sort_order: number }) => ({
+    label: r.label, href: r.href, icon: r.icon, module: r.module, moduleLabel: r.module_label, sortOrder: r.sort_order,
   }));
 
   return { userId: user.id, roleCode: user.role_code, roleName: user.role_name, permissions, menus };
 }
 
 export async function listRoles() {
-  const { rows } = await pool.query(
-    "SELECT id, code, name, home_url, is_active FROM roles WHERE code != 'customer' ORDER BY name"
-  );
+  const { rows } = await pool.query("SELECT id, code, name, home_url, is_active FROM roles WHERE code != 'customer' ORDER BY name");
   return rows;
 }
 
 export async function listPermissions() {
-  const { rows } = await pool.query(
-    "SELECT id, key, label, module, sort_order FROM permissions ORDER BY sort_order, module, key"
-  );
+  const { rows } = await pool.query("SELECT id, key, label, module, sort_order FROM permissions ORDER BY sort_order, module, key");
   return rows;
 }
 
@@ -94,15 +90,13 @@ export async function setRolePermission(roleId: string, permissionId: string, is
 }
 
 export async function listMenus() {
-  const { rows } = await pool.query(
-    "SELECT id, label, href, icon, module, sort_order, is_active FROM menus ORDER BY sort_order"
-  );
+  const { rows } = await pool.query("SELECT id, label, href, icon, module, module_label, sort_order, is_active FROM menus ORDER BY sort_order");
   return rows;
 }
 
 export async function getRoleMenus(roleId: string) {
   const { rows } = await pool.query(
-    `SELECT m.id, m.label, m.href, m.icon, m.module, m.is_active, rm.sort_order
+    `SELECT m.id, m.label, m.href, m.icon, m.module, m.module_label, m.is_active, rm.sort_order
      FROM menus m
      LEFT JOIN role_menus rm ON rm.menu_id = m.id AND rm.role_id = $1::uuid
      ORDER BY COALESCE(rm.sort_order, m.sort_order)`,

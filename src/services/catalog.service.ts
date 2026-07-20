@@ -6,7 +6,7 @@ import { toCamel } from "../utils/camel";
 export async function listCategories(parentId?: string | null) {
   const { rows } = await pool.query(
     "SELECT * FROM catalog_category_tree($1::uuid)",
-    [parentId ?? null]
+    [parentId ?? null],
   );
   return toCamel(rows);
 }
@@ -29,9 +29,7 @@ export async function upsertCategory(params: {
           sortOrder, isActive, isVisible, metaTitle, metaDescription } = params;
   const { rows } = await pool.query(
     "SELECT * FROM catalog_category_upsert($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
-    [id ?? null, parentId ?? null, code ?? null, name ?? null, slug ?? null,
-     description ?? null, imageUrl ?? null, sortOrder ?? 0,
-     isActive ?? true, isVisible ?? true, metaTitle ?? null, metaDescription ?? null]
+    [id ?? null, parentId ?? null, code ?? null, name ?? null, slug ?? null, description ?? null, imageUrl ?? null, sortOrder ?? 0, isActive ?? true, isVisible ?? true, metaTitle ?? null, metaDescription ?? null],
   );
   return rows[0] ? toCamel([rows[0]])[0] : null;
 }
@@ -39,7 +37,7 @@ export async function upsertCategory(params: {
 export async function deleteCategory(id: string) {
   const { rowCount } = await pool.query(
     "UPDATE product_categories SET is_active = FALSE, updated_at = NOW() WHERE id = $1::uuid",
-    [id]
+    [id],
   );
   return { deleted: (rowCount ?? 0) > 0 };
 }
@@ -54,7 +52,7 @@ export async function listBrands(params: {
   const { search = null, limit = 50, offset = 0 } = params;
   const { rows } = await pool.query(
     "SELECT * FROM brands_list($1, $2, $3)",
-    [search, limit, offset]
+    [search, limit, offset],
   );
   return {
     brands:      toCamel(rows),
@@ -67,7 +65,7 @@ export async function listBrands(params: {
 export async function getBrand(id: string) {
   const { rows } = await pool.query(
     "SELECT b.*, COUNT(DISTINCT p.id) AS product_count, COUNT(DISTINCT c.id) AS collection_count FROM brands b LEFT JOIN products p ON p.brand_id = b.id AND p.deleted_at IS NULL LEFT JOIN collections c ON c.brand_id = b.id WHERE b.id = $1::uuid GROUP BY b.id",
-    [id]
+    [id],
   );
   return rows[0] ? toCamel([rows[0]])[0] : null;
 }
@@ -85,8 +83,7 @@ export async function upsertBrand(params: {
   const { id, name, code, slug, description, logoUrl, websiteUrl, isActive } = params;
   const { rows } = await pool.query(
     "SELECT * FROM catalog_brand_upsert($1,$2,$3,$4,$5,$6,$7,$8)",
-    [id ?? null, name ?? null, code ?? null, slug ?? null,
-     description ?? null, logoUrl ?? null, websiteUrl ?? null, isActive ?? true]
+    [id ?? null, name ?? null, code ?? null, slug ?? null, description ?? null, logoUrl ?? null, websiteUrl ?? null, isActive ?? true],
   );
   return rows[0] ? toCamel([rows[0]])[0] : null;
 }
@@ -102,7 +99,7 @@ export async function listCollections(params: {
   const { brandId = null, search = null, limit = 50, offset = 0 } = params;
   const { rows } = await pool.query(
     "SELECT * FROM collections_list($1::uuid, $2, $3, $4)",
-    [brandId, search, limit, offset]
+    [brandId, search, limit, offset],
   );
   return {
     collections: toCamel(rows),
@@ -131,9 +128,7 @@ export async function upsertCollection(params: {
           year, launchDate, coverUrl, isActive, isFeatured } = params;
   const { rows } = await pool.query(
     "SELECT * FROM catalog_collection_upsert($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
-    [id ?? null, brandId ?? null, name ?? null, code ?? null, slug ?? null,
-     description ?? null, theme ?? null, season ?? null, year ?? null,
-     launchDate ?? null, coverUrl ?? null, isActive ?? true, isFeatured ?? false]
+    [id ?? null, brandId ?? null, name ?? null, code ?? null, slug ?? null, description ?? null, theme ?? null, season ?? null, year ?? null, launchDate ?? null, coverUrl ?? null, isActive ?? true, isFeatured ?? false],
   );
   return rows[0] ? toCamel([rows[0]])[0] : null;
 }
@@ -154,7 +149,7 @@ export async function listVariants(productId: string) {
      WHERE pv.product_id = $1::uuid AND pv.deleted_at IS NULL
      GROUP BY pv.id
      ORDER BY pv.display_order, pv.created_at`,
-    [productId]
+    [productId],
   );
   return toCamel(rows);
 }
@@ -174,11 +169,7 @@ export async function upsertVariant(productId: string, params: {
           option3Name, option3Value, displayOrder, isDefault, isActive, imageUrl } = params;
   const { rows } = await pool.query(
     "SELECT * FROM product_variant_upsert($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
-    [productId, id ?? null, variantName ?? null,
-     option1Name ?? null, option1Value ?? null,
-     option2Name ?? null, option2Value ?? null,
-     option3Name ?? null, option3Value ?? null,
-     displayOrder ?? 0, isDefault ?? false, isActive ?? true, imageUrl ?? null]
+    [productId, id ?? null, variantName ?? null, option1Name ?? null, option1Value ?? null, option2Name ?? null, option2Value ?? null, option3Name ?? null, option3Value ?? null, displayOrder ?? 0, isDefault ?? false, isActive ?? true, imageUrl ?? null],
   );
   return rows[0] ? toCamel([rows[0]])[0] : null;
 }
@@ -186,7 +177,7 @@ export async function upsertVariant(productId: string, params: {
 export async function deleteVariant(productId: string, variantId: string) {
   const { rowCount } = await pool.query(
     "UPDATE product_variants SET deleted_at = NOW(), is_active = FALSE WHERE id = $1::uuid AND product_id = $2::uuid",
-    [variantId, productId]
+    [variantId, productId],
   );
   return { deleted: (rowCount ?? 0) > 0 };
 }
@@ -201,7 +192,7 @@ export async function generateSku(params: {
   const { productId, variantId, colorCode, sizeCode, customCode } = params;
   const { rows } = await pool.query(
     "SELECT * FROM product_sku_generate($1::uuid, $2::uuid, $3, $4, $5)",
-    [productId, variantId ?? null, colorCode ?? null, sizeCode ?? null, customCode ?? null]
+    [productId, variantId ?? null, colorCode ?? null, sizeCode ?? null, customCode ?? null],
   );
   return rows[0] ? toCamel([rows[0]])[0] : null;
 }
@@ -216,15 +207,15 @@ export async function updateSku(skuId: string, params: {
   const { skuCode, barcode, upc, ean, isActive } = params;
   const { rows } = await pool.query(
     `UPDATE product_skus SET
-       sku_code   = COALESCE($2, sku_code),
-       barcode    = COALESCE($3, barcode),
-       upc        = COALESCE($4, upc),
-       ean        = COALESCE($5, ean),
-       is_active  = COALESCE($6, is_active),
+       sku_code   = COALESCE($1, sku_code),
+       barcode    = COALESCE($2, barcode),
+       upc        = COALESCE($3, upc),
+       ean        = COALESCE($4, ean),
+       is_active  = COALESCE($5, is_active),
        updated_at = NOW()
-     WHERE id = $1::uuid
+     WHERE id = $6::uuid
      RETURNING *`,
-    [skuId, skuCode ?? null, barcode ?? null, upc ?? null, ean ?? null, isActive ?? null]
+    [skuCode ?? null, barcode ?? null, upc ?? null, ean ?? null, isActive ?? null, skuId],
   );
   return rows[0] ? toCamel([rows[0]])[0] : null;
 }
@@ -240,7 +231,7 @@ export async function getInventorySummary(params: {
   const { skuId = null, warehouseId = null, limit = 50, offset = 0 } = params;
   const { rows } = await pool.query(
     "SELECT * FROM inventory_summary($1::uuid, $2::uuid, $3, $4)",
-    [skuId, warehouseId, limit, offset]
+    [skuId, warehouseId, limit, offset],
   );
   return {
     items:  toCamel(rows),
@@ -266,15 +257,14 @@ export async function adjustInventory(params: {
           referenceId, referenceType, referenceNumber, userId } = params;
   const { rows } = await pool.query(
     "SELECT * FROM inventory_adjust($1::uuid,$2::uuid,$3,$4,$5,$6,$7::uuid,$8,$9,$10::uuid)",
-    [skuId, warehouseId, qtyChange, type, notes ?? null, reasonCode ?? null,
-     referenceId ?? null, referenceType ?? null, referenceNumber ?? null, userId ?? null]
+    [skuId, warehouseId, qtyChange, type, notes ?? null, reasonCode ?? null, referenceId ?? null, referenceType ?? null, referenceNumber ?? null, userId ?? null],
   );
   return rows[0] ? toCamel([rows[0]])[0] : null;
 }
 
 export async function listWarehouses() {
   const { rows } = await pool.query(
-    "SELECT * FROM warehouses WHERE is_active = TRUE ORDER BY is_default DESC, name"
+    "SELECT * FROM warehouses WHERE is_active = TRUE ORDER BY is_default DESC, name",
   );
   return toCamel(rows);
 }
@@ -284,7 +274,7 @@ export async function listWarehouses() {
 export async function getProductDetail(productId: string) {
   const { rows } = await pool.query(
     "SELECT catalog_product_detail($1::uuid) AS data",
-    [productId]
+    [productId],
   );
   return rows[0]?.data ?? null;
 }
@@ -305,7 +295,7 @@ export async function listProductsCatalog(params: {
           isFeatured = null, limit = 20, offset = 0 } = params;
   const { rows } = await pool.query(
     "SELECT * FROM catalog_product_list($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9)",
-    [categoryId, brandId, collectionId, productType, statusCode, search, isFeatured, limit, offset]
+    [categoryId, brandId, collectionId, productType, statusCode, search, isFeatured, limit, offset],
   );
   return {
     products: toCamel(rows),

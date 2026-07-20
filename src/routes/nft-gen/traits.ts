@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requirePermission } from "../../presaleAuth";
+import { requirePermission } from "../../adminAuth";
 import * as svc from "../../services/nft-gen.service";
 
 const VALID_TIERS = ["legendary", "epic", "rare", "common"];
