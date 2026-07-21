@@ -1,0 +1,37 @@
+{
+  "abi": [
+    { "type": "function", "name": "getStatus", "inputs": [], "outputs": [
+      { "name": "_autoPhaseEnabled",    "type": "bool" },
+      { "name": "_autoRevealEnabled",   "type": "bool" },
+      { "name": "_currentPhase",        "type": "uint8" },
+      { "name": "_paidMintScheduledAt", "type": "uint256" },
+      { "name": "_paidMintReady",       "type": "bool" },
+      { "name": "_revealedScheduledAt", "type": "uint256" },
+      { "name": "_revealedReady",       "type": "bool" },
+      { "name": "_revealAt",            "type": "uint256" },
+      { "name": "_revealURI",           "type": "string" },
+      { "name": "_revealReady",         "type": "bool" }
+    ], "stateMutability": "view" },
+    { "type": "function", "name": "setAutoPhaseEnabled",  "inputs": [{ "name": "enabled", "type": "bool" }], "outputs": [], "stateMutability": "nonpayable" },
+    { "type": "function", "name": "setAutoRevealEnabled", "inputs": [{ "name": "enabled", "type": "bool" }], "outputs": [], "stateMutability": "nonpayable" },
+    { "type": "function", "name": "schedulePhaseTransition", "inputs": [{ "name": "phase", "type": "uint8" }, { "name": "at", "type": "uint256" }], "outputs": [], "stateMutability": "nonpayable" },
+    { "type": "function", "name": "cancelScheduledPhase",    "inputs": [{ "name": "phase", "type": "uint8" }], "outputs": [], "stateMutability": "nonpayable" },
+    { "type": "function", "name": "triggerScheduledPhase",   "inputs": [{ "name": "phase", "type": "uint8" }], "outputs": [], "stateMutability": "nonpayable" },
+    { "type": "function", "name": "scheduleReveal",       "inputs": [{ "name": "uri", "type": "string" }, { "name": "at", "type": "uint256" }], "outputs": [], "stateMutability": "nonpayable" },
+    { "type": "function", "name": "cancelScheduledReveal","inputs": [], "outputs": [], "stateMutability": "nonpayable" },
+    { "type": "function", "name": "triggerScheduledReveal","inputs": [], "outputs": [], "stateMutability": "nonpayable" },
+    { "type": "function", "name": "manualSetPhase",       "inputs": [{ "name": "phase", "type": "uint8" }], "outputs": [], "stateMutability": "nonpayable" },
+    { "type": "function", "name": "manualReveal",         "inputs": [{ "name": "uri",   "type": "string" }], "outputs": [], "stateMutability": "nonpayable" },
+    { "type": "function", "name": "pause",   "inputs": [], "outputs": [], "stateMutability": "nonpayable" },
+    { "type": "function", "name": "unpause", "inputs": [], "outputs": [], "stateMutability": "nonpayable" },
+    { "type": "function", "name": "paused",  "inputs": [], "outputs": [{ "name": "", "type": "bool" }], "stateMutability": "view" },
+    { "type": "event", "name": "AutoPhaseToggled",      "inputs": [{ "name": "enabled", "type": "bool", "indexed": false }] },
+    { "type": "event", "name": "AutoRevealToggled",     "inputs": [{ "name": "enabled", "type": "bool", "indexed": false }] },
+    { "type": "event", "name": "PhaseTransitionScheduled", "inputs": [{ "name": "phase", "type": "uint8", "indexed": true }, { "name": "scheduledAt", "type": "uint256", "indexed": false }] },
+    { "type": "event", "name": "PhaseTransitionCancelled", "inputs": [{ "name": "phase", "type": "uint8", "indexed": true }] },
+    { "type": "event", "name": "PhaseTransitionExecuted",  "inputs": [{ "name": "phase", "type": "uint8", "indexed": true }, { "name": "executedAt", "type": "uint256", "indexed": false }, { "name": "triggeredBy", "type": "address", "indexed": true }] },
+    { "type": "event", "name": "RevealScheduled",  "inputs": [{ "name": "uri", "type": "string", "indexed": false }, { "name": "scheduledAt", "type": "uint256", "indexed": false }] },
+    { "type": "event", "name": "RevealCancelled", "inputs": [] },
+    { "type": "event", "name": "RevealExecuted",  "inputs": [{ "name": "uri", "type": "string", "indexed": false }, { "name": "executedAt", "type": "uint256", "indexed": false }, { "name": "triggeredBy", "type": "address", "indexed": true }] }
+  ]
+}
