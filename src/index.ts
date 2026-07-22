@@ -33,7 +33,10 @@ import nftSellBulkRouter            from "./routes/nft-sell/bulk";
 import nftSellGiftsRouter           from "./routes/nft-sell/gifts";
 import nftSellAirdropRouter         from "./routes/nft-sell/airdrop";
 import nftSellUpgradeRouter         from "./routes/nft-sell/upgrade";
+import nftSellUpgradeNFTRouter      from "./routes/nft-sell/upgrade-nft";
 import nftSellSchedulerRouter       from "./routes/nft-sell/scheduler";
+import nftSellRewardTokenRouter     from "./routes/nft-sell/reward-token";
+import nftsRouter from "./routes/nfts";
 import { startEventListeners } from "./services/contract.service";
 import pool from "./pool";
 import { buildMerkleTree } from "./merkle";
@@ -98,6 +101,7 @@ app.use("/api/admin/roles",       adminRolesRouter);
 app.use("/api/admin/permissions", adminPermissionsRouter);
 app.use("/api/admin/menus",       adminMenusRouter);
 app.use("/api/admin/users",       adminUsersRouter);
+app.use("/api/nfts",              nftsRouter);
 app.use("/api/nft-gen",           nftGenRouter);
 app.use("/api/opensea",           openSeaRouter);
 app.use("/api/nft-sell/waves",       nftSellWavesRouter);
@@ -121,7 +125,9 @@ app.use("/api/nft-sell/bulk",            nftSellBulkRouter);
 app.use("/api/nft-sell/gifts",           nftSellGiftsRouter);
 app.use("/api/nft-sell/airdrop",         nftSellAirdropRouter);
 app.use("/api/nft-sell/upgrade",         nftSellUpgradeRouter);
+app.use("/api/nft-sell/upgrade-nft",    nftSellUpgradeNFTRouter);
 app.use("/api/nft-sell/scheduler",       nftSellSchedulerRouter);
+app.use("/api/nft-sell/reward-token",    nftSellRewardTokenRouter);
 app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
 
 // ── Error handler (must be last) ──────────────────────────────────────────────

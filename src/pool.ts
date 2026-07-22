@@ -9,14 +9,20 @@ function getPool(): Pool {
   _pool = new Pool({
     connectionString:        url,
     ssl:                     { rejectUnauthorized: false },
-    max:                     5,
-    min:                     0,
-    idleTimeoutMillis:       10_000,
+    max:                     10,
+    min:                     1,
+    idleTimeoutMillis:       600_000,
     connectionTimeoutMillis: 30_000,
+    keepAlive:               true,
+    keepAliveInitialDelayMillis: 10_000,
   });
   _pool.on("error", (err) => {
     console.warn("[pool] idle client error:", err.message);
   });
+  // Keep at least one connection warm with a periodic ping
+  setInterval(async () => {
+    try { await _pool!.query("SELECT 1"); } catch { /* ignore — pool reconnects */ }
+  }, 60_000);
   return _pool;
 }
 
