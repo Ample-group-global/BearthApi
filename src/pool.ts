@@ -12,7 +12,7 @@ function getPool(): Pool {
     max:                     10,
     min:                     1,
     idleTimeoutMillis:       600_000,
-    connectionTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 8_000,
     keepAlive:               true,
     keepAliveInitialDelayMillis: 10_000,
   });
