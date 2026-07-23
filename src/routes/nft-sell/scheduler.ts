@@ -40,17 +40,31 @@ router.get("/status", async (_req, res, next) => {
     const c = getSchedulerRO();
     const s = await c.getStatus();
     res.json({
-      autoPhaseEnabled:    s._autoPhaseEnabled,
-      autoRevealEnabled:   s._autoRevealEnabled,
-      currentPhase:        Number(s._currentPhase),
-      paidMintScheduledAt: Number(s._paidMintScheduledAt),
-      paidMintReady:       s._paidMintReady,
-      revealedScheduledAt: Number(s._revealedScheduledAt),
-      revealedReady:       s._revealedReady,
-      revealAt:            Number(s._revealAt),
-      revealURI:           s._revealURI,
-      revealReady:         s._revealReady,
+      autoPhaseEnabled:       s._autoPhaseEnabled,
+      autoRevealEnabled:      s._autoRevealEnabled,
+      autoWaveRevealEnabled:  s._autoWaveRevealEnabled,
+      currentPhase:           Number(s._currentPhase),
+      paidMintScheduledAt:    Number(s._paidMintScheduledAt),
+      paidMintReady:          s._paidMintReady,
+      revealedScheduledAt:    Number(s._revealedScheduledAt),
+      revealedReady:          s._revealedReady,
+      revealAt:               Number(s._revealAt),
+      revealURI:              s._revealURI,
+      revealReady:            s._revealReady,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/nft-sell/scheduler/auto-wave-reveal — toggle auto wave reveal mode
+// Body: { enabled: boolean }
+router.post("/auto-wave-reveal", requireAdmin, async (req, res, next) => {
+  try {
+    const { enabled } = req.body as { enabled: boolean };
+    if (typeof enabled !== "boolean") return res.status(400).json({ error: "enabled (boolean) required" });
+    const receipt = await callScheduler("setAutoWaveRevealEnabled", [enabled]);
+    res.json({ ok: true, txHash: receipt.hash });
   } catch (err) {
     next(err);
   }
@@ -176,6 +190,78 @@ router.post("/manual-reveal", requireAdmin, async (req, res, next) => {
     const { uri } = req.body as { uri: string };
     if (!uri?.startsWith("ipfs://")) return res.status(400).json({ error: "uri must start with ipfs://" });
     const receipt = await callScheduler("manualReveal", [uri]);
+    res.json({ ok: true, txHash: receipt.hash });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/nft-sell/scheduler/wave-reveal-status/:waveNum — per-wave reveal schedule
+router.get("/wave-reveal-status/:waveNum", async (req, res, next) => {
+  try {
+    const waveNum = parseInt(req.params.waveNum);
+    if (waveNum < 1 || waveNum > 7) return res.status(400).json({ error: "waveNum must be 1–7" });
+    const c = getSchedulerRO();
+    const s = await c.getWaveRevealStatus(waveNum);
+    res.json({
+      waveNum,
+      scheduledAt: Number(s.scheduledAt),
+      uri:         s.uri,
+      ready:       s.ready,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/nft-sell/scheduler/schedule-wave-reveal — schedule a per-wave reveal
+// Body: { waveNum: 1-7, uri: string, timestamp: number }
+router.post("/schedule-wave-reveal", requireAdmin, async (req, res, next) => {
+  try {
+    const { waveNum, uri, timestamp } = req.body as { waveNum: number; uri: string; timestamp: number };
+    if (!waveNum || waveNum < 1 || waveNum > 7) return res.status(400).json({ error: "waveNum must be 1–7" });
+    if (!uri?.startsWith("ipfs://")) return res.status(400).json({ error: "uri must start with ipfs://" });
+    if (!timestamp || timestamp <= Math.floor(Date.now() / 1000))
+      return res.status(400).json({ error: "timestamp must be in the future (unix seconds)" });
+    const receipt = await callScheduler("scheduleWaveReveal", [waveNum, uri, timestamp]);
+    res.json({ ok: true, txHash: receipt.hash });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/nft-sell/scheduler/schedule-wave-reveal/:waveNum — cancel wave reveal schedule
+router.delete("/schedule-wave-reveal/:waveNum", requireAdmin, async (req, res, next) => {
+  try {
+    const waveNum = parseInt(req.params.waveNum);
+    if (waveNum < 1 || waveNum > 7) return res.status(400).json({ error: "waveNum must be 1–7" });
+    const receipt = await callScheduler("cancelScheduledWaveReveal", [waveNum]);
+    res.json({ ok: true, txHash: receipt.hash });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/nft-sell/scheduler/trigger-wave-reveal/:waveNum — public trigger (auto wave reveal mode must be on)
+router.post("/trigger-wave-reveal/:waveNum", async (req, res, next) => {
+  try {
+    const waveNum = parseInt(req.params.waveNum);
+    if (waveNum < 1 || waveNum > 7) return res.status(400).json({ error: "waveNum must be 1–7" });
+    const receipt = await callScheduler("triggerScheduledWaveReveal", [waveNum]);
+    res.json({ ok: true, txHash: receipt.hash });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/nft-sell/scheduler/manual-wave-reveal — immediate per-wave reveal
+// Body: { waveNum: 1-7, uri: string }
+router.post("/manual-wave-reveal", requireAdmin, async (req, res, next) => {
+  try {
+    const { waveNum, uri } = req.body as { waveNum: number; uri: string };
+    if (!waveNum || waveNum < 1 || waveNum > 7) return res.status(400).json({ error: "waveNum must be 1–7" });
+    if (!uri?.startsWith("ipfs://")) return res.status(400).json({ error: "uri must start with ipfs://" });
+    const receipt = await callScheduler("manualWaveReveal", [waveNum, uri]);
     res.json({ ok: true, txHash: receipt.hash });
   } catch (err) {
     next(err);
