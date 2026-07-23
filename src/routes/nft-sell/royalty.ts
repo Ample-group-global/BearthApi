@@ -2,8 +2,7 @@ import { Router } from "express";
 import pool from "../../pool";
 import {
   contractSetRoyalty,
-  contractSetRoyaltyEnforced,
-  contractSetAllowedMarketplace,
+  contractSetTransferValidator,
 } from "../../services/contract.service";
 import { requireAdmin } from "../../adminAuth";
 
@@ -39,18 +38,9 @@ router.put("/", requireAdmin, async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/royalty/enforcement — toggle royalty enforcement
-// Body: { enforced: boolean }
-router.put("/enforcement", requireAdmin, async (req, res, next) => {
-  try {
-    const { enforced } = req.body as { enforced: boolean };
-    if (typeof enforced !== "boolean")
-      return res.status(400).json({ error: "enforced (boolean) required" });
-    const receipt = await contractSetRoyaltyEnforced(enforced);
-    res.json({ ok: true, txHash: receipt.hash });
-  } catch (err) {
-    next(err);
-  }
+// PUT /api/nft-sell/royalty/enforcement — not supported; use transfer validator instead
+router.put("/enforcement", requireAdmin, (_req, res) => {
+  res.status(501).json({ error: "Royalty enforcement toggling is not supported. Use PUT /api/nft-sell/royalty/transfer-validator to set the ERC721C transfer validator." });
 });
 
 // GET /api/nft-sell/royalty/marketplaces — list allowed marketplaces
@@ -63,7 +53,20 @@ router.get("/marketplaces", async (_req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/royalty/marketplaces — add/update a marketplace
+// PUT /api/nft-sell/royalty/transfer-validator — set ERC721C transfer validator contract
+// Body: { validatorAddress: string }
+router.put("/transfer-validator", requireAdmin, async (req, res, next) => {
+  try {
+    const { validatorAddress } = req.body as { validatorAddress: string };
+    if (!validatorAddress) return res.status(400).json({ error: "validatorAddress required" });
+    const receipt = await contractSetTransferValidator(validatorAddress);
+    res.json({ ok: true, txHash: receipt.hash });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/nft-sell/royalty/marketplaces — record marketplace in DB (off-chain metadata only)
 // Body: { address: string, name: string, allowed: boolean }
 router.put("/marketplaces", requireAdmin, async (req, res, next) => {
   try {
@@ -73,10 +76,8 @@ router.put("/marketplaces", requireAdmin, async (req, res, next) => {
     if (!address)                    return res.status(400).json({ error: "address required" });
     if (typeof allowed !== "boolean") return res.status(400).json({ error: "allowed (boolean) required" });
 
-    const receipt = await contractSetAllowedMarketplace(address, allowed);
-    // Update the name in DB (not on-chain — name is off-chain metadata only)
-    await pool.query("SELECT nft_marketplace_upsert($1,$2,$3,$4)", [address.toLowerCase(), name ?? null, allowed, receipt.hash]);
-    res.json({ ok: true, txHash: receipt.hash });
+    await pool.query("SELECT nft_marketplace_upsert($1,$2,$3,$4)", [address.toLowerCase(), name ?? null, allowed, null]);
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

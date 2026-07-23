@@ -4,8 +4,6 @@ import {
   contractSetVIP,
   contractSetPurchaseLimitConfig,
   contractGetWalletInfo,
-  contractPauseAccount,
-  contractUnpauseAccount,
 } from "../../services/contract.service";
 import { requireAdmin } from "../../adminAuth";
 
@@ -59,27 +57,14 @@ router.get("/limits", async (_req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/customers/:address/pause-account — freeze a wallet from minting/transferring
-// Body: {} (address from param)
-router.post("/:address/pause-account", requireAdmin, async (req, res, next) => {
-  try {
-    const address = req.params.address;
-    const receipt = await contractPauseAccount(address);
-    res.json({ ok: true, txHash: receipt.hash });
-  } catch (err) {
-    next(err);
-  }
+// POST /api/nft-sell/customers/:address/pause-account — not supported in current contract
+router.post("/:address/pause-account", requireAdmin, (_req, res) => {
+  res.status(501).json({ error: "Individual account pausing is not supported in BearthGenesisNFT. Use contract-level pause() instead." });
 });
 
-// POST /api/nft-sell/customers/:address/unpause-account — unfreeze a wallet
-router.post("/:address/unpause-account", requireAdmin, async (req, res, next) => {
-  try {
-    const address = req.params.address;
-    const receipt = await contractUnpauseAccount(address);
-    res.json({ ok: true, txHash: receipt.hash });
-  } catch (err) {
-    next(err);
-  }
+// POST /api/nft-sell/customers/:address/unpause-account — not supported in current contract
+router.post("/:address/unpause-account", requireAdmin, (_req, res) => {
+  res.status(501).json({ error: "Individual account pausing is not supported in BearthGenesisNFT. Use contract-level unpause() instead." });
 });
 
 // PUT /api/nft-sell/customers/limits — update purchase limits on-chain

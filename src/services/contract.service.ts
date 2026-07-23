@@ -39,9 +39,6 @@ export function getContractWithSigner(): Contract {
 }
 
 // ── Transaction helper ────────────────────────────────────────────────────────
-// Submits a tx, waits for 1 confirmation, returns the receipt.
-// Also syncs DB from every log in the receipt so the DB mirror is updated
-// immediately — critical on Vercel where there is no persistent event listener.
 
 export async function callContract(
   methodName: string,
@@ -54,7 +51,6 @@ export async function callContract(
   );
   const receipt = await tx.wait(1);
   if (!receipt) throw new Error(`No receipt for ${methodName} tx`);
-  // Sync DB from receipt logs (idempotent — ON CONFLICT DO NOTHING in nft_event_log)
   await syncReceiptLogs(receipt);
   return receipt;
 }
@@ -69,29 +65,20 @@ async function syncEvent(
   logIndex: number
 ): Promise<void> {
   try {
-    // Log every event for audit / resync (idempotent)
     await pool.query(
       "SELECT nft_event_log($1,$2,$3,$4,$5,$6,$7)",
       [eventName, txHash, blockNumber, logIndex, null, null, JSON.stringify(argsToPayload(args))]
     );
 
     switch (eventName) {
-      case "Minted": {
-        const [to, tokenId, waveNum] = args as [string, bigint, bigint];
-        const waveNumN = Number(waveNum);
-        const tokenIdN = Number(tokenId);
-        const isWl     = waveNumN === 1;
-        await pool.query("SELECT nft_record_sync_mint($1,$2,$3,$4)", [tokenIdN, to.toLowerCase(), waveNumN, txHash]);
-        await pool.query("SELECT nft_wallet_sync_mint($1,$2,$3,$4)", [to.toLowerCase(), 1, isWl || null, txHash]);
-        break;
-      }
-
       case "WaveSold": {
-        const [waveNum] = args as [bigint, string, bigint];
-        const waveNumN  = Number(waveNum);
-        // Read authoritative on-chain sold count (source of truth)
+        // WaveSold(waveNum indexed, buyer indexed, qty)
+        const [waveNum, buyer, qty] = args as [bigint, string, bigint];
+        const waveNumN = Number(waveNum);
+        const isWl     = waveNumN === 1;
         const onChainCount: bigint = await getContractReadOnly().waveSoldCount(waveNum);
         await pool.query("SELECT nft_wave_sync_sold($1,$2,$3)", [waveNumN, Number(onChainCount), txHash]);
+        await pool.query("SELECT nft_wallet_sync_mint($1,$2,$3,$4)", [buyer.toLowerCase(), Number(qty), isWl || null, txHash]);
         break;
       }
 
@@ -117,15 +104,17 @@ async function syncEvent(
         break;
       }
 
-      case "WaveClosedTreasury": {
-        const [waveNum] = args as [bigint, bigint, string];
-        await pool.query("SELECT nft_wave_sync_closed($1,$2,$3)", [Number(waveNum), "treasury", txHash]);
+      case "WaveRolledOver": {
+        // WaveRolledOver(fromWave indexed, toWave indexed, qty)
+        const [fromWave] = args as [bigint, bigint, bigint];
+        await pool.query("SELECT nft_wave_sync_closed($1,$2,$3)", [Number(fromWave), "rollover", txHash]);
         break;
       }
 
-      case "WaveClosedBurn": {
+      case "WaveClosedForfeit": {
+        // WaveClosedForfeit(waveNum indexed, skippedQty)
         const [waveNum] = args as [bigint, bigint];
-        await pool.query("SELECT nft_wave_sync_closed($1,$2,$3)", [Number(waveNum), "burn", txHash]);
+        await pool.query("SELECT nft_wave_sync_closed($1,$2,$3)", [Number(waveNum), "forfeit", txHash]);
         break;
       }
 
@@ -137,9 +126,17 @@ async function syncEvent(
       }
 
       case "Revealed": {
-        const [uri] = args as [string];
-        await pool.query("SELECT nft_collection_config_update(NULL,$1,NULL,NULL,$2)", [null, uri]);
+        // Revealed(uri, timestamp)
+        const [uri] = args as [string, bigint];
+        await pool.query("SELECT nft_collection_config_update($1,$2,$3,$4,$5)", [null, null, null, null, uri]);
         await pool.query("SELECT nft_record_sync_reveal(TRUE)");
+        break;
+      }
+
+      case "WaveRevealed": {
+        // WaveRevealed(waveNum indexed, uri, timestamp)
+        const [waveNum, uri] = args as [bigint, string, bigint];
+        await pool.query("SELECT nft_wave_sync_reveal($1,$2,$3)", [Number(waveNum), uri, txHash]);
         break;
       }
 
@@ -157,40 +154,11 @@ async function syncEvent(
 
       case "RoyaltyUpdated": {
         const [receiver, feeBasisPoints] = args as [string, bigint];
-        // Read current enforce flag from DB (it's not in this event)
         const { rows } = await pool.query("SELECT nft_royalty_config_get()");
         const current = rows[0]?.nft_royalty_config_get ?? {};
         await pool.query("SELECT nft_royalty_config_upsert($1,$2,$3,$4)", [
           Number(feeBasisPoints), receiver.toLowerCase(), current.enforce_royalty ?? true, txHash,
         ]);
-        break;
-      }
-
-      case "RoyaltyEnforcementChanged": {
-        const [enforced] = args as [boolean];
-        const { rows } = await pool.query("SELECT nft_royalty_config_get()");
-        const current = rows[0]?.nft_royalty_config_get ?? {};
-        await pool.query("SELECT nft_royalty_config_upsert($1,$2,$3,$4)", [
-          current.royalty_pct_bps ?? 500, current.receiver_address ?? "", enforced, txHash,
-        ]);
-        break;
-      }
-
-      case "MarketplaceAllowlistChanged": {
-        const [marketplace, allowed] = args as [string, boolean];
-        await pool.query("SELECT nft_marketplace_upsert($1,$2,$3,$4)", [marketplace.toLowerCase(), null, allowed, txHash]);
-        break;
-      }
-
-      case "TreasuryWalletChanged": {
-        const [wallet] = args as [string];
-        await pool.query("SELECT nft_collection_config_update($1)", [null, null, null, null, null, null, null, wallet.toLowerCase()]);
-        break;
-      }
-
-      case "ProvenanceSet": {
-        const [hash] = args as [string];
-        await pool.query("SELECT nft_collection_config_update(NULL,NULL,$1)", [hash]);
         break;
       }
 
@@ -202,27 +170,27 @@ async function syncEvent(
 
       case "Transfer": {
         const [from, to, tokenId] = args as [string, string, bigint];
-        // Skip mint transfers (from = zero address) — Minted event handles those
-        if (from === ethers.ZeroAddress) break;
-        // Burn transfers (to = zero address) handled by Burned event
-        if (to === ethers.ZeroAddress) break;
+        if (from === ethers.ZeroAddress) {
+          // Mint: look up the token's wave on-chain and create the DB record
+          const waveNum: bigint = await getContractReadOnly().tokenWave(tokenId);
+          const waveNumN = Number(waveNum);
+          await pool.query("SELECT nft_record_sync_mint($1,$2,$3,$4)", [Number(tokenId), to.toLowerCase(), waveNumN, txHash]);
+          break;
+        }
+        if (to === ethers.ZeroAddress) break; // burn — token deleted, no action needed
         await pool.query("SELECT nft_record_sync_transfer($1,$2,$3,$4)", [Number(tokenId), to.toLowerCase(), null, txHash]);
         break;
       }
 
-      case "Burned": {
-        const [, tokenId] = args as [string, bigint];
-        await pool.query("UPDATE nft_records SET owner_address=NULL, synced_at=NOW() WHERE token_id=$1", [Number(tokenId)]);
-        break;
-      }
-
       // Log-only events (no DB state change needed)
+      case "Bred":
+      case "TokenPriceSet":
+      case "TransferValidatorUpdated":
       case "Paused":
       case "Unpaused":
-      case "AccountPaused":
-      case "AccountUnpaused":
       case "Emergency":
       case "ContractURIUpdated":
+      case "Upgraded":
         break;
 
       default:
@@ -230,7 +198,6 @@ async function syncEvent(
     }
   } catch (err) {
     console.error(`[contract.service] Failed to sync event ${eventName}:`, err);
-    // Do not rethrow — event listener must not crash on sync errors
   }
 }
 
@@ -257,21 +224,18 @@ async function syncReceiptLogs(receipt: ethers.TransactionReceipt): Promise<void
 }
 
 // ── Event listener (local dev / persistent server only) ──────────────────────
-// On Vercel (serverless), syncReceiptLogs() handles DB sync after each tx.
-// This listener is bonus coverage for: transfers by users, external watchers, etc.
 
 export function startEventListeners(): void {
-  if (process.env.VERCEL) return; // no persistent process on Vercel
+  if (process.env.VERCEL) return;
 
   const contract = getContractReadOnly();
 
   const watchedEvents = [
-    "Minted", "WaveSold", "WaveScheduleUpdated", "WavePriceUpdated",
-    "WaveClosedTreasury", "WaveClosedBurn", "PhaseChanged", "Revealed",
-    "VIPStatusChanged", "PurchaseLimitChanged", "RoyaltyUpdated",
-    "RoyaltyEnforcementChanged", "MarketplaceAllowlistChanged",
-    "TreasuryWalletChanged", "ProvenanceSet", "SBTChanged",
-    "Transfer", "Burned", "Paused", "Unpaused",
+    "WaveSold", "WaveScheduleUpdated", "WavePriceUpdated",
+    "WaveRolledOver", "WaveClosedForfeit", "WaveRevealed",
+    "PhaseChanged", "Revealed", "PurchaseLimitChanged",
+    "RoyaltyUpdated", "SBTChanged", "Transfer", "Bred", "TokenPriceSet",
+    "TransferValidatorUpdated", "Paused", "Unpaused",
   ];
 
   for (const eventName of watchedEvents) {
@@ -291,8 +255,6 @@ export function startEventListeners(): void {
 }
 
 // ── Full resync from block history ────────────────────────────────────────────
-// Replays all events from fromBlock to 'latest', rebuilding the DB mirror.
-// Use after deploying a new contract or recovering from missed events.
 
 export async function resyncFromBlock(fromBlock = 0): Promise<{ synced: number }> {
   const contract = getContractReadOnly();
@@ -318,8 +280,6 @@ export async function resyncFromBlock(fromBlock = 0): Promise<{ synced: number }
 }
 
 // ── Admin write functions ─────────────────────────────────────────────────────
-// Each function pre-validates off-chain then submits the on-chain tx.
-// The contract enforces the same rules on-chain as a second layer.
 
 export async function contractSetWaveSchedule(
   waveNum: number,
@@ -336,31 +296,30 @@ export async function contractSetWavePrice(
   priceWei: bigint
 ): Promise<ethers.TransactionReceipt> {
   if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1–7");
-  // Off-chain: check price lock before spending gas
   const { rows } = await pool.query("SELECT price_locked FROM nft_waves WHERE wave_number=$1", [waveNum]);
   if (rows[0]?.price_locked) throw new Error(`Wave ${waveNum} price is locked — first sale has occurred`);
   return callContract("setWavePrice", [waveNum, priceWei]);
 }
 
-export async function contractMintToTreasury(
+export async function contractRolloverToNextWave(
   waveNum: number
 ): Promise<ethers.TransactionReceipt> {
   if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1–7");
-  return callContract("mintToTreasury", [waveNum]);
+  return callContract("rolloverToNextWave", [waveNum]);
 }
 
-export async function contractBurnUnsold(
+export async function contractForfeitUnsold(
   waveNum: number
 ): Promise<ethers.TransactionReceipt> {
   if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1–7");
-  return callContract("burnUnsold", [waveNum]);
+  return callContract("forfeitUnsold", [waveNum]);
 }
 
-export async function contractReveal(
+export async function contractRevealAll(
   revealUri: string
 ): Promise<ethers.TransactionReceipt> {
   if (!revealUri?.startsWith("ipfs://")) throw new Error("Reveal URI must start with ipfs://");
-  return callContract("reveal", [revealUri]);
+  return callContract("revealAll", [revealUri]);
 }
 
 export async function contractSetRoyalty(
@@ -372,18 +331,11 @@ export async function contractSetRoyalty(
   return callContract("setRoyalty", [receiverAddress, feeBps]);
 }
 
-export async function contractSetRoyaltyEnforced(
-  enforced: boolean
+export async function contractSetTransferValidator(
+  validatorAddress: string
 ): Promise<ethers.TransactionReceipt> {
-  return callContract("setRoyaltyEnforced", [enforced]);
-}
-
-export async function contractSetAllowedMarketplace(
-  marketplaceAddress: string,
-  allowed: boolean
-): Promise<ethers.TransactionReceipt> {
-  if (!ethers.isAddress(marketplaceAddress)) throw new Error("Invalid marketplace address");
-  return callContract("setAllowedMarketplace", [marketplaceAddress, allowed]);
+  if (!ethers.isAddress(validatorAddress)) throw new Error("Invalid validator address");
+  return callContract("setTransferValidator", [validatorAddress]);
 }
 
 export async function contractSetVIP(
@@ -402,26 +354,21 @@ export async function contractSetPurchaseLimitConfig(
   return callContract("setPurchaseLimitConfig", [enabled, normalMaxPerWallet]);
 }
 
-export async function contractSetProvenance(
-  sha256Hex: string
-): Promise<ethers.TransactionReceipt> {
-  if (!/^0x[0-9a-fA-F]{64}$/.test(sha256Hex)) {
-    throw new Error("Provenance hash must be a 32-byte hex string (0x...)");
-  }
-  return callContract("setProvenanceHash", [sha256Hex]);
-}
-
 export async function contractSetPhase(
   phase: 0 | 1 | 2
 ): Promise<ethers.TransactionReceipt> {
   return callContract("setPhase", [phase]);
 }
 
-export async function contractSetMerkleRoot(
+export async function contractSetAllowlistRoot(
   root: string
 ): Promise<ethers.TransactionReceipt> {
-  return callContract("setMerkleRoot", [root]);
+  if (!/^0x[0-9a-fA-F]{64}$/.test(root)) throw new Error("root must be a 32-byte hex string (0x...)");
+  return callContract("setAllowlistRoot", [root]);
 }
+
+// Backward-compat alias used by whitelist route
+export const contractSetMerkleRoot = contractSetAllowlistRoot;
 
 export async function contractSetTreasuryWallet(
   wallet: string
@@ -434,45 +381,44 @@ export async function contractWithdraw(): Promise<ethers.TransactionReceipt> {
   return callContract("withdraw", []);
 }
 
-export async function contractMintAndTransfer(
+export async function contractAuctionMint(
   to: string,
   waveNum: number,
   qty: number
 ): Promise<ethers.TransactionReceipt> {
   if (!ethers.isAddress(to))       throw new Error("Invalid recipient address");
-  if (waveNum < 3 || waveNum > 7)  throw new Error("mintAndTransfer is for Waves 3–7 only");
+  if (waveNum < 1 || waveNum > 7)  throw new Error("Wave number must be 1–7");
   if (qty < 1)                     throw new Error("Quantity must be at least 1");
-  return callContract("mintAndTransfer", [to, waveNum, qty]);
+  return callContract("auctionMint", [to, waveNum, qty]);
 }
 
-export async function contractSetTokenRarityPrice(
+export async function contractSetTokenPrice(
   tokenId: number,
   priceWei: bigint
 ): Promise<ethers.TransactionReceipt> {
-  // Off-chain: check rarity price lock before spending gas
   const { rows } = await pool.query("SELECT rarity_price_locked FROM nft_records WHERE token_id=$1", [tokenId]);
   if (rows[0]?.rarity_price_locked) {
     throw new Error(`Token ${tokenId} rarity price is locked — already sold to a customer`);
   }
-  return callContract("setTokenRarityPrice", [tokenId, priceWei]);
+  return callContract("setTokenPrice", [tokenId, priceWei]);
 }
 
-export async function contractSetTokenRarityBatch(
+export async function contractSetRarityBatch(
   tokenIds: number[],
   rarities: number[]
 ): Promise<ethers.TransactionReceipt> {
   if (tokenIds.length !== rarities.length) throw new Error("tokenIds and rarities length mismatch");
   if (rarities.some(r => r < 1 || r > 4))  throw new Error("Rarity must be 1–4 (Common/Rare/Epic/Legendary)");
-  return callContract("setTokenRarityBatch", [tokenIds, rarities]);
+  return callContract("setRarityBatch", [tokenIds, rarities]);
 }
 
-export async function contractAdminMint(
+export async function contractReserveMint(
   to: string,
   qty: number
 ): Promise<ethers.TransactionReceipt> {
   if (!ethers.isAddress(to)) throw new Error("Invalid recipient address");
   if (qty < 1)               throw new Error("Quantity must be at least 1");
-  return callContract("adminMint", [to, qty]);
+  return callContract("reserveMint", [to, qty]);
 }
 
 export async function contractSetSBT(
@@ -508,18 +454,15 @@ export async function contractEmergencyTransfer(
   return callContract("emergencyTransfer", [id, from, to, reason]);
 }
 
-export async function contractPauseAccount(
-  account: string
+export async function contractBreedMint(
+  to: string,
+  outputRarity: number,
+  burnIds: number[]
 ): Promise<ethers.TransactionReceipt> {
-  if (!ethers.isAddress(account)) throw new Error("Invalid account address");
-  return callContract("pauseAccount", [account]);
-}
-
-export async function contractUnpauseAccount(
-  account: string
-): Promise<ethers.TransactionReceipt> {
-  if (!ethers.isAddress(account)) throw new Error("Invalid account address");
-  return callContract("unpauseAccount", [account]);
+  if (!ethers.isAddress(to))            throw new Error("Invalid recipient address");
+  if (!burnIds.length)                  throw new Error("burnIds must not be empty");
+  if (outputRarity < 1 || outputRarity > 4) throw new Error("outputRarity must be 1–4");
+  return callContract("breedMint", [to, outputRarity, burnIds]);
 }
 
 // ── Read helpers ──────────────────────────────────────────────────────────────
@@ -528,22 +471,26 @@ export async function contractGetCollectionInfo(): Promise<{
   currentPhase: number;
   maxSupply: bigint;
   totalMinted: bigint;
-  revealCount: bigint;
   sbt: boolean;
-  royaltyEnforced: boolean;
   purchaseLimitEnabled: boolean;
   normalMaxPerWallet: bigint;
 }> {
-  const r = await getContractReadOnly().getCollectionInfo();
+  const c = getContractReadOnly();
+  const [currentPhase, maxSupply, totalMinted, sbt, purchaseLimitEnabled, normalMaxPerWallet] = await Promise.all([
+    c.currentPhase() as Promise<bigint>,
+    c.MAX_SUPPLY()   as Promise<bigint>,
+    c.totalSupply()  as Promise<bigint>,
+    c.sbt()          as Promise<boolean>,
+    c.purchaseLimitEnabled()  as Promise<boolean>,
+    c.normalMaxPerWallet()    as Promise<bigint>,
+  ]);
   return {
-    currentPhase:         r.phase_,
-    maxSupply:            r.maxSupply_,
-    totalMinted:          r.totalMinted_,
-    revealCount:          r.revealCount_,
-    sbt:                  r.sbt_,
-    royaltyEnforced:      r.royaltyEnforced_,
-    purchaseLimitEnabled: r.purchaseLimitEnabled_,
-    normalMaxPerWallet:   r.normalMaxPerWallet_,
+    currentPhase: Number(currentPhase),
+    maxSupply,
+    totalMinted,
+    sbt,
+    purchaseLimitEnabled,
+    normalMaxPerWallet,
   };
 }
 
@@ -565,30 +512,19 @@ export async function contractGetWaveInfo(waveNum: number): Promise<{
   active: boolean;
   revealed: boolean;
 }> {
-  const [price, qty, soldCount, startTime, endTime, closed, active, revealed] =
-    await getContractReadOnly().getWaveInfo(waveNum);
+  const c = getContractReadOnly();
+  const [price, qty, soldCount, startTime, endTime, closed, revealed] = await Promise.all([
+    c.wavePrice(waveNum)     as Promise<bigint>,
+    c.waveQty(waveNum)       as Promise<bigint>,
+    c.waveSoldCount(waveNum) as Promise<bigint>,
+    c.waveStartTime(waveNum) as Promise<bigint>,
+    c.waveEndTime(waveNum)   as Promise<bigint>,
+    c.waveClosed(waveNum)    as Promise<boolean>,
+    c.waveRevealed(waveNum)  as Promise<boolean>,
+  ]);
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  const active = !closed && startTime > 0n && now >= startTime && (endTime === 0n || now <= endTime);
   return { price, qty, soldCount, startTime, endTime, closed, active, revealed };
-}
-
-export async function contractSetDutchAuction(
-  waveNum: number,
-  startPriceWei: bigint,
-  floorPriceWei: bigint,
-  decrementWei: bigint,
-  intervalSecs: number
-): Promise<ethers.TransactionReceipt> {
-  if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1–7");
-  return callContract("setDutchAuction", [waveNum, startPriceWei, floorPriceWei, decrementWei, intervalSecs]);
-}
-
-export async function contractGetCurrentDutchPrice(waveNum: number): Promise<{
-  currentPrice: bigint;
-  isFloor: boolean;
-  auctionStarted: boolean;
-}> {
-  const [currentPrice, isFloor, auctionStarted] =
-    await getContractReadOnly().getCurrentDutchPrice(waveNum);
-  return { currentPrice, isFloor, auctionStarted };
 }
 
 export async function contractRevealWave(
@@ -600,40 +536,20 @@ export async function contractRevealWave(
   return callContract("revealWave", [waveNum, uri]);
 }
 
-export async function contractSetWaveMerkleRoot(
-  waveNum: number,
-  root: string
-): Promise<ethers.TransactionReceipt> {
-  if (waveNum < 1 || waveNum > 7)          throw new Error("Wave number must be 1–7");
-  if (!/^0x[0-9a-fA-F]{64}$/.test(root))  throw new Error("root must be a 32-byte hex string (0x...)");
-  return callContract("setWaveMerkleRoot", [waveNum, root]);
-}
-
-export async function contractBurnAndUpgrade(
-  burnIds: number[],
-  to: string
-): Promise<ethers.TransactionReceipt> {
-  if (!burnIds.length)        throw new Error("burnIds must not be empty");
-  if (!ethers.isAddress(to)) throw new Error("Invalid recipient address");
-  return callContract("burnAndUpgrade", [burnIds, to]);
-}
-
-export async function contractMintSeasonPass(
-  to: string,
-  season: number
-): Promise<ethers.TransactionReceipt> {
-  if (!ethers.isAddress(to)) throw new Error("Invalid recipient address");
-  if (season < 1)            throw new Error("season must be >= 1");
-  return callContract("mintSeasonPass", [to, season]);
-}
-
 export async function contractGetWalletInfo(address: string): Promise<{
   totalMinted: bigint;
   isVip: boolean;
   wlClaimed: boolean;
   balance: bigint;
 }> {
-  return getContractReadOnly().getWalletInfo(address);
+  const c = getContractReadOnly();
+  const [balance, isVip, wlClaimed, totalMinted] = await Promise.all([
+    c.balanceOf(address)         as Promise<bigint>,
+    c.isVIP(address)             as Promise<boolean>,
+    c.allowlistClaimed(address)  as Promise<boolean>,
+    c.walletTotalMinted(address) as Promise<bigint>,
+  ]);
+  return { totalMinted, isVip, wlClaimed, balance };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

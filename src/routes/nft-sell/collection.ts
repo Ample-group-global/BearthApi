@@ -2,19 +2,18 @@ import { Router } from "express";
 import { ethers } from "ethers";
 import pool from "../../pool";
 import {
-  contractReveal,
+  contractRevealAll,
   contractRevealWave,
   contractSetPhase,
-  contractSetProvenance,
   contractSetMerkleRoot,
   contractSetTreasuryWallet,
   contractWithdraw,
-  contractAdminMint,
+  contractReserveMint,
   contractSetSBT,
   contractPause,
   contractUnpause,
-  contractSetTokenRarityPrice,
-  contractSetTokenRarityBatch,
+  contractSetTokenPrice,
+  contractSetRarityBatch,
   contractGetCollectionInfo,
   contractSetContractURI,
   contractEmergencyTransfer,
@@ -35,9 +34,7 @@ router.get("/", async (_req, res, next) => {
           currentPhase:         Number(info.currentPhase),
           maxSupply:            Number(info.maxSupply),
           totalMinted:          Number(info.totalMinted),
-          revealCount:          Number(info.revealCount),
           sbt:                  info.sbt,
-          royaltyEnforced:      info.royaltyEnforced,
           purchaseLimitEnabled: info.purchaseLimitEnabled,
           normalMaxPerWallet:   Number(info.normalMaxPerWallet),
         };
@@ -51,17 +48,9 @@ router.get("/", async (_req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/collection/provenance — set provenance hash (once, before first mint)
-// Body: { hash: string }  — bytes32 hex, 0x + 64 hex chars
-router.post("/provenance", requireAdmin, async (req, res, next) => {
-  try {
-    const { hash } = req.body as { hash: string };
-    if (!hash) return res.status(400).json({ error: "hash required (bytes32 hex)" });
-    const receipt = await contractSetProvenance(hash);
-    res.json({ ok: true, txHash: receipt.hash });
-  } catch (err) {
-    next(err);
-  }
+// POST /api/nft-sell/collection/provenance — not supported; provenance is set via contractURI
+router.post("/provenance", requireAdmin, (_req, res) => {
+  res.status(501).json({ error: "setProvenanceHash was removed from BearthGenesisNFT. Use PUT /api/nft-sell/collection/contract-uri instead." });
 });
 
 // POST /api/nft-sell/collection/phase — advance phase
@@ -85,7 +74,7 @@ router.post("/reveal", requireAdmin, async (req, res, next) => {
   try {
     const { revealUri } = req.body as { revealUri: string };
     if (!revealUri) return res.status(400).json({ error: "revealUri required" });
-    const receipt = await contractReveal(revealUri);
+    const receipt = await contractRevealAll(revealUri);
     res.json({ ok: true, txHash: receipt.hash });
   } catch (err) {
     next(err);
@@ -188,7 +177,7 @@ router.post("/admin-mint", requireAdmin, async (req, res, next) => {
     const { to, qty } = req.body as { to: string; qty: number };
     if (!to || !qty || qty < 1)
       return res.status(400).json({ error: "to (address) and qty (>=1) required" });
-    const receipt = await contractAdminMint(to, qty);
+    const receipt = await contractReserveMint(to, qty);
     res.json({ ok: true, txHash: receipt.hash });
   } catch (err) {
     next(err);
@@ -209,7 +198,7 @@ router.put("/tokens/:id/rarity-price", requireAdmin, async (req, res, next) => {
       return res.status(400).json({ error: "priceEth (string) required, e.g. '0.5'" });
 
     const priceWei = ethers.parseEther(priceStr);
-    const receipt  = await contractSetTokenRarityPrice(tokenId, priceWei);
+    const receipt  = await contractSetTokenPrice(tokenId, priceWei);
     res.json({ ok: true, txHash: receipt.hash });
   } catch (err) {
     next(err);
@@ -230,7 +219,7 @@ router.post("/tokens/rarity-batch", requireAdmin, async (req, res, next) => {
     const tokenIds = items.map(i => i.tokenId);
     const rarities  = items.map(i => i.rarity);
 
-    const receipt = await contractSetTokenRarityBatch(tokenIds, rarities);
+    const receipt = await contractSetRarityBatch(tokenIds, rarities);
     res.json({ ok: true, count: items.length, txHash: receipt.hash });
   } catch (err) {
     next(err);
@@ -243,7 +232,7 @@ router.get("/stats", async (_req, res, next) => {
   try {
     const [configResult, wavesResult, onChainResult, revenueResult] = await Promise.all([
       pool.query("SELECT nft_collection_config_get()", []),
-      pool.query("SELECT nft_wave_get_all()", []),
+      pool.query("SELECT * FROM nft_wave_get_all()", []),
       process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL
         ? contractGetCollectionInfo().catch(() => null)
         : Promise.resolve(null),
@@ -251,7 +240,7 @@ router.get("/stats", async (_req, res, next) => {
     ]);
 
     const cfg   = configResult.rows[0]?.nft_collection_config_get ?? null;
-    const waves: Record<string, unknown>[] = wavesResult.rows[0]?.nft_wave_get_all ?? [];
+    const waves: Record<string, unknown>[] = wavesResult.rows ?? [];
     const onChain = onChainResult;
     const rev   = revenueResult.rows[0] ?? null;
 
@@ -295,7 +284,6 @@ router.get("/stats", async (_req, res, next) => {
         purchaseLimitEnabled: onChain.purchaseLimitEnabled,
         normalMaxPerWallet:   Number(onChain.normalMaxPerWallet),
         sbt:                  onChain.sbt,
-        royaltyEnforced:      onChain.royaltyEnforced,
       } : null,
     });
   } catch (err) {

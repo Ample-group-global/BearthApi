@@ -1,7 +1,7 @@
 import { Router } from "express";
 import pool from "../../pool";
 import { requireAdmin } from "../../adminAuth";
-import { contractAdminMint } from "../../services/contract.service";
+import { contractReserveMint } from "../../services/contract.service";
 
 const router = Router();
 
@@ -102,7 +102,7 @@ router.post("/:id/transfer", requireAdmin, async (req, res, next) => {
 
     const { recipient_wallet } = giftRows[0] as { recipient_wallet: string };
 
-    const receipt = await contractAdminMint(recipient_wallet, 1);
+    const receipt = await contractReserveMint(recipient_wallet, 1);
 
     await pool.query("SELECT nft_gift_order_transfer($1,$2,$3)", [id, null, receipt.hash]);
 

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import pool from "../../pool";
 import { requireAdmin } from "../../adminAuth";
-import { contractAdminMint } from "../../services/contract.service";
+import { contractReserveMint } from "../../services/contract.service";
 
 const router = Router();
 
@@ -104,7 +104,7 @@ router.post("/:id/settle", requireAdmin, async (req, res, next) => {
 
     if (!deal.nft_record_ids?.length) {
       // No existing records — mint 1 NFT to the buyer
-      const receipt = await contractAdminMint(deal.buyer_wallet, 1);
+      const receipt = await contractReserveMint(deal.buyer_wallet, 1);
       finalTxHash = receipt.hash;
     }
 

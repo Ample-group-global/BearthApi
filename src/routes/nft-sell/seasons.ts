@@ -1,6 +1,5 @@
 import { Router } from "express";
 import pool from "../../pool";
-import { contractMintSeasonPass } from "../../services/contract.service";
 import { requireAdmin } from "../../adminAuth";
 
 const router = Router();
@@ -8,8 +7,8 @@ const router = Router();
 // GET /api/nft-sell/seasons — list all seasons
 router.get("/", async (_req, res, next) => {
   try {
-    const { rows } = await pool.query("SELECT nft_seasons_list()", []);
-    res.json({ seasons: rows[0]?.nft_seasons_list ?? [] });
+    const { rows } = await pool.query("SELECT * FROM nft_seasons_list()", []);
+    res.json({ seasons: rows });
   } catch (err) {
     next(err);
   }
@@ -53,8 +52,8 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
 // GET /api/nft-sell/seasons/:id/passes — list pass holders for a season
 router.get("/:id/passes", async (req, res, next) => {
   try {
-    const { rows } = await pool.query("SELECT nft_season_pass_holders_list($1)", [req.params.id]);
-    res.json({ passes: rows[0]?.nft_season_pass_holders_list ?? [] });
+    const { rows } = await pool.query("SELECT * FROM nft_season_pass_holders_list($1)", [req.params.id]);
+    res.json({ passes: rows });
   } catch (err) {
     next(err);
   }
@@ -77,31 +76,11 @@ router.post("/:id/passes", requireAdmin, async (req, res, next) => {
     if (!seasonRows.length)
       return res.status(404).json({ error: "Season not found" });
 
-    const seasonNum = 1; // Season number as uint8 for contract; store seasons sequentially
-
-    // Mint on-chain (ADMIN_ROLE wallet)
-    let txHash: string | undefined;
-    if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL) {
-      try {
-        const receipt = await contractMintSeasonPass(wallet_address, seasonNum);
-        txHash = receipt.hash;
-        // Token ID is the second-to-last Transfer event or SeasonPassMinted event
-        // For now, read from DB sync (nft_record_sync_mint handles Minted event)
-      } catch (e) {
-        return res.status(502).json({ error: `Contract call failed: ${(e as Error).message}` });
-      }
-    }
-
-    // Record in DB
+    // Record in DB (on-chain minting via mintSeasonPass was removed from BearthGenesisNFT)
     const { rows } = await pool.query("SELECT nft_season_pass_issue($1,$2,$3,$4,$5)", [req.params.id, customer_id, wallet_address.toLowerCase(), amount_paid_eth ?? null, amount_paid_twd ?? null]);
     const pass = rows[0]?.nft_season_pass_issue;
 
-    // If we got the tx hash, update the pass record with it
-    if (txHash && pass?.id) {
-      await pool.query("UPDATE nft_season_pass_holders SET mint_tx_hash=$1 WHERE id=$2", [txHash, pass.id]);
-    }
-
-    res.status(201).json({ pass: { ...pass, mint_tx_hash: txHash } });
+    res.status(201).json({ pass });
   } catch (err) {
     next(err);
   }

@@ -2,10 +2,6 @@ import { Router } from "express";
 import { ethers } from "ethers";
 import pool from "../../pool";
 import { requireAdmin } from "../../adminAuth";
-import {
-  contractSetDutchAuction,
-  contractGetCurrentDutchPrice,
-} from "../../services/contract.service";
 
 const router = Router();
 
@@ -13,13 +9,24 @@ const router = Router();
 router.get("/", async (_req, res, next) => {
   try {
     const { rows } = await pool.query("SELECT * FROM nft_waves_dutch_list()", []);
-    res.json({ waves: rows });
+    const waves = rows.map((w: Record<string, unknown>) => ({
+      wave_num:        w.wave_number,
+      name:            w.name,
+      status:          w.status ?? "disabled",
+      start_price_eth: w.dutch_start_price_eth,
+      floor_price_eth: w.dutch_floor_price_eth,
+      decrement_eth:   w.dutch_decrement_eth,
+      interval_secs:   w.dutch_interval_secs,
+      quantity:        w.quantity,
+      sold_count:      w.sold_count,
+    }));
+    res.json({ waves });
   } catch (err) {
     next(err);
   }
 });
 
-// POST /api/nft-sell/dutch — configure Dutch Auction for a wave (admin)
+// POST /api/nft-sell/dutch — configure Dutch Auction for a wave (off-chain only)
 // Body: { wave_num, start_price_eth, floor_price_eth, decrement_eth, interval_secs }
 router.post("/", requireAdmin, async (req, res, next) => {
   try {
@@ -53,27 +60,17 @@ router.post("/", requireAdmin, async (req, res, next) => {
       return res.status(400).json({ error: "Price and interval fields must be numeric" });
     }
 
-    const startWei = ethers.parseEther(start_price_eth.toString());
-    const floorWei = ethers.parseEther(floor_price_eth.toString());
-    const decrementWei = ethers.parseEther(decrement_eth.toString());
-
-    const receipt = await contractSetDutchAuction(
-      wave_num,
-      startWei,
-      floorWei,
-      decrementWei,
-      interval_secs
-    );
-
+    // Dutch auction is off-chain: store config in DB only.
+    // Use PUT /api/nft-sell/waves/:num/price separately to push the start price on-chain.
     await pool.query("SELECT nft_wave_set_dutch_config($1,$2,$3,$4,$5,$6)", [wave_num, start_price_eth, floor_price_eth, decrement_eth, interval_secs, true]);
 
-    res.json({ ok: true, txHash: receipt.hash });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
 });
 
-// GET /api/nft-sell/dutch/:waveNum/price — get current Dutch price from contract
+// GET /api/nft-sell/dutch/:waveNum/price — get current Dutch price (off-chain calculation)
 router.get("/:waveNum/price", async (req, res, next) => {
   try {
     const waveNum = parseInt(req.params.waveNum, 10);
@@ -82,13 +79,36 @@ router.get("/:waveNum/price", async (req, res, next) => {
       return res.status(400).json({ error: "waveNum must be a number" });
     }
 
-    const result = await contractGetCurrentDutchPrice(waveNum);
+    const { rows } = await pool.query("SELECT * FROM nft_waves_dutch_list()", []);
+    const wave = rows.find((r: Record<string, unknown>) => Number(r.wave_number) === waveNum);
+
+    if (!wave?.dutch_start_price_eth) {
+      return res.json({
+        wave_num:          waveNum,
+        current_price_eth: null,
+        is_floor:          false,
+        auction_started:   false,
+      });
+    }
+
+    const start        = parseFloat(wave.dutch_start_price_eth as string);
+    const floor        = parseFloat(wave.dutch_floor_price_eth as string);
+    const decrement    = parseFloat(wave.dutch_decrement_eth as string);
+    const intervalSecs = Number(wave.dutch_interval_secs);
+
+    const startTime = wave.dutch_updated_at
+      ? new Date(wave.dutch_updated_at as string).getTime() / 1000
+      : Date.now() / 1000;
+    const elapsed      = Date.now() / 1000 - startTime;
+    const steps        = Math.max(0, Math.floor(elapsed / intervalSecs));
+    const currentPrice = Math.max(start - steps * decrement, floor);
 
     res.json({
-      wave_num: waveNum,
-      currentPriceEth: ethers.formatEther(result.currentPrice),
-      isFloor: result.isFloor,
-      auctionStarted: result.auctionStarted,
+      wave_num:          waveNum,
+      current_price_eth: currentPrice.toFixed(4),
+      current_price_wei: ethers.parseEther(currentPrice.toFixed(4)).toString(),
+      is_floor:          currentPrice <= floor,
+      auction_started:   true,
     });
   } catch (err) {
     next(err);

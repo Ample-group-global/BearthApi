@@ -36,10 +36,14 @@ async function callScheduler(method: string, args: unknown[] = []): Promise<ethe
 
 // GET /api/nft-sell/scheduler/status — full status snapshot
 router.get("/status", async (_req, res, next) => {
+  if (!process.env.SCHEDULER_CONTRACT_ADDRESS) {
+    return res.json({ configured: false });
+  }
   try {
     const c = getSchedulerRO();
     const s = await c.getStatus();
     res.json({
+      configured:             true,
       autoPhaseEnabled:       s._autoPhaseEnabled,
       autoRevealEnabled:      s._autoRevealEnabled,
       autoWaveRevealEnabled:  s._autoWaveRevealEnabled,
@@ -198,6 +202,10 @@ router.post("/manual-reveal", requireAdmin, async (req, res, next) => {
 
 // GET /api/nft-sell/scheduler/wave-reveal-status/:waveNum — per-wave reveal schedule
 router.get("/wave-reveal-status/:waveNum", async (req, res, next) => {
+  if (!process.env.SCHEDULER_CONTRACT_ADDRESS) {
+    const waveNum = parseInt(req.params.waveNum);
+    return res.json({ waveNum, scheduledAt: 0, uri: "", ready: false });
+  }
   try {
     const waveNum = parseInt(req.params.waveNum);
     if (waveNum < 1 || waveNum > 7) return res.status(400).json({ error: "waveNum must be 1–7" });

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import pool from "../../pool";
 import { buildMerkleTree } from "../../merkle";
-import { contractSetWaveMerkleRoot } from "../../services/contract.service";
+import { contractSetAllowlistRoot } from "../../services/contract.service";
 import { requireAdmin } from "../../adminAuth";
 
 const router = Router();
@@ -9,8 +9,8 @@ const router = Router();
 // GET /api/nft-sell/collaborations — list all collaborations
 router.get("/", async (_req, res, next) => {
   try {
-    const { rows } = await pool.query("SELECT nft_collaborations_list()", []);
-    res.json({ collaborations: rows[0]?.nft_collaborations_list ?? [] });
+    const { rows } = await pool.query("SELECT * FROM nft_collaborations_list()", []);
+    res.json({ collaborations: rows });
   } catch (err) {
     next(err);
   }
@@ -58,8 +58,8 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
 // GET /api/nft-sell/collaborations/:id/wallets — list imported partner wallets
 router.get("/:id/wallets", async (req, res, next) => {
   try {
-    const { rows } = await pool.query("SELECT nft_collaboration_wallets_list($1)", [req.params.id]);
-    res.json({ wallets: rows[0]?.nft_collaboration_wallets_list ?? [] });
+    const { rows } = await pool.query("SELECT * FROM nft_collaboration_wallets_list($1)", [req.params.id]);
+    res.json({ wallets: rows });
   } catch (err) {
     next(err);
   }
@@ -86,7 +86,7 @@ router.post("/:id/wallets", requireAdmin, async (req, res, next) => {
 
 // POST /api/nft-sell/collaborations/:id/generate-merkle
 // Builds Merkle tree from imported wallets + optionally holder wallets,
-// stores root in DB, and calls setWaveMerkleRoot on-chain.
+// stores root in DB, and calls setAllowlistRoot on-chain (single root for all waves).
 // Body: { wave_number: number, include_holders?: boolean }
 router.post("/:id/generate-merkle", requireAdmin, async (req, res, next) => {
   try {
@@ -120,7 +120,7 @@ router.post("/:id/generate-merkle", requireAdmin, async (req, res, next) => {
     let txHash: string | undefined;
     if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL) {
       try {
-        const receipt = await contractSetWaveMerkleRoot(wave_number, root);
+        const receipt = await contractSetAllowlistRoot(root);
         txHash = receipt.hash;
       } catch (e) {
         return res.status(502).json({ error: `Contract call failed: ${(e as Error).message}` });

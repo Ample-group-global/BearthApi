@@ -20,8 +20,8 @@ const router = Router();
 // GET /api/nft-sell/auctions — list all auction sessions
 router.get("/", async (_req, res, next) => {
   try {
-    const { rows } = await pool.query("SELECT nft_auction_sessions_list()", []);
-    res.json({ auctions: rows[0]?.nft_auction_sessions_list ?? [] });
+    const { rows } = await pool.query("SELECT * FROM nft_auction_sessions_list()", []);
+    res.json({ auctions: rows });
   } catch (err) {
     next(err);
   }

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import pool from "../../pool";
 import { requireAdmin } from "../../adminAuth";
-import { contractAdminMint } from "../../services/contract.service";
+import { contractReserveMint } from "../../services/contract.service";
 
 const router = Router();
 
@@ -134,7 +134,7 @@ router.post("/:id/fulfill", requireAdmin, async (req, res, next) => {
 
     const order = orderRows[0] as { buyer_wallet: string; quantity: number };
 
-    const receipt = await contractAdminMint(order.buyer_wallet, order.quantity);
+    const receipt = await contractReserveMint(order.buyer_wallet, order.quantity);
 
     await pool.query("SELECT nft_bulk_order_fulfill($1,$2,$3)", [id, [], receipt.hash]);
 

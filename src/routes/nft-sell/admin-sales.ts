@@ -1,6 +1,6 @@
 import { Router } from "express";
 import pool from "../../pool";
-import { contractAdminMint } from "../../services/contract.service";
+import { contractReserveMint } from "../../services/contract.service";
 import { requireAdmin } from "../../adminAuth";
 
 const router = Router();
@@ -108,7 +108,7 @@ router.post("/", requireAdmin, async (req, res, next) => {
     // Mint on-chain immediately
     let txHash: string;
     try {
-      const receipt = await contractAdminMint(buyerAddress, quantity);
+      const receipt = await contractReserveMint(buyerAddress, quantity);
       txHash = receipt.hash;
     } catch (mintErr) {
       // Mark sale as failed — don't delete so admin can retry
@@ -136,7 +136,7 @@ router.post("/:id/mint", requireAdmin, async (req, res, next) => {
     if (sale.status !== "pending" && sale.status !== "failed")
       return res.status(400).json({ error: `Sale is already ${sale.status}` });
 
-    const receipt = await contractAdminMint(sale.buyer_address as string, sale.quantity as number);
+    const receipt = await contractReserveMint(sale.buyer_address as string, sale.quantity as number);
     await pool.query("SELECT nft_admin_sale_mark_minted($1,$2)", [id, receipt.hash]);
 
     res.json({ ok: true, saleId: id, txHash: receipt.hash, status: "minted" });
