@@ -42,6 +42,8 @@ export interface StakingConfig {
   stakingContractAddress: string | null;
   rewardTokenAddress: string | null;
   rewardTokenRate: number;
+  genesisBonusBps: number;
+  pointsPerDayCommon: number;
   stakingEnabled: boolean;
   syncedAt: string | null;
   updatedAt: string;
@@ -50,6 +52,7 @@ export interface StakingConfig {
 export async function getStakingConfig(): Promise<StakingConfig> {
   const { rows } = await pool.query(
     `SELECT staking_contract_address, reward_token_address, reward_token_rate,
+            genesis_bonus_bps, points_per_day_common,
             staking_enabled, synced_at, updated_at
      FROM nft_staking_config WHERE id = 1`
   );
@@ -59,6 +62,8 @@ export async function getStakingConfig(): Promise<StakingConfig> {
     stakingContractAddress: r.staking_contract_address ?? null,
     rewardTokenAddress:     r.reward_token_address ?? null,
     rewardTokenRate:        r.reward_token_rate,
+    genesisBonusBps:        r.genesis_bonus_bps ?? 5000,
+    pointsPerDayCommon:     r.points_per_day_common ?? 100,
     stakingEnabled:         r.staking_enabled,
     syncedAt:               r.synced_at ?? null,
     updatedAt:              r.updated_at,
@@ -82,6 +87,14 @@ export async function updateStakingConfig(
   if (fields.rewardTokenRate !== undefined) {
     sets.push(`reward_token_rate = $${vals.length + 1}`);
     vals.push(fields.rewardTokenRate);
+  }
+  if (fields.genesisBonusBps !== undefined) {
+    sets.push(`genesis_bonus_bps = $${vals.length + 1}`);
+    vals.push(fields.genesisBonusBps);
+  }
+  if (fields.pointsPerDayCommon !== undefined) {
+    sets.push(`points_per_day_common = $${vals.length + 1}`);
+    vals.push(fields.pointsPerDayCommon);
   }
   if (fields.stakingEnabled !== undefined) {
     sets.push(`staking_enabled = $${vals.length + 1}`);

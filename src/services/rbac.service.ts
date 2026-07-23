@@ -94,6 +94,14 @@ export async function listMenus() {
   return rows;
 }
 
+export async function toggleMenuActive(menuId: string, isActive: boolean) {
+  const { rowCount } = await pool.query(
+    "UPDATE menus SET is_active = $1 WHERE id = $2::uuid",
+    [isActive, menuId]
+  );
+  if (!rowCount) throw Object.assign(new Error("Menu not found"), { status: 404 });
+}
+
 export async function getRoleMenus(roleId: string) {
   const { rows } = await pool.query(
     `SELECT m.id, m.label, m.href, m.icon, m.module, m.module_label, m.is_active, rm.sort_order

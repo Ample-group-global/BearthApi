@@ -17,4 +17,15 @@ router.get("/", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+router.patch("/:id", async (req, res, next) => {
+  try {
+    requireTech(req);
+    const { id } = req.params;
+    const { is_active } = req.body as { is_active: boolean };
+    if (typeof is_active !== "boolean") return res.status(400).json({ error: "is_active (boolean) required" });
+    await rbacService.toggleMenuActive(id, is_active);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
 export default router;

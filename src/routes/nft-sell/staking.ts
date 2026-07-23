@@ -47,16 +47,30 @@ router.get("/config", async (_req, res, next) => {
 });
 
 // PUT /api/nft-sell/staking/config
-// Body: any subset of { stakingContractAddress, rewardTokenAddress, rewardTokenRate, stakingEnabled }
 router.put("/config", requireAdmin, async (req, res, next) => {
   try {
-    const { stakingContractAddress, rewardTokenAddress, rewardTokenRate, stakingEnabled } = req.body as {
+    const { stakingContractAddress, rewardTokenAddress, rewardTokenRate, stakingEnabled, pointsPerDayCommon } = req.body as {
       stakingContractAddress?: string;
       rewardTokenAddress?: string;
       rewardTokenRate?: number;
       stakingEnabled?: boolean;
+      pointsPerDayCommon?: number;
     };
-    await updateStakingConfig({ stakingContractAddress, rewardTokenAddress, rewardTokenRate, stakingEnabled });
+    await updateStakingConfig({ stakingContractAddress, rewardTokenAddress, rewardTokenRate, stakingEnabled, pointsPerDayCommon });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/nft-sell/staking/genesis-bonus — store genesis bonus BPS in DB
+// Body: { bonusBps: number }
+router.put("/genesis-bonus", requireAdmin, async (req, res, next) => {
+  try {
+    const { bonusBps } = req.body as { bonusBps: number };
+    if (bonusBps == null || isNaN(Number(bonusBps))) return res.status(400).json({ error: "bonusBps required" });
+    if (Number(bonusBps) < 0 || Number(bonusBps) > 50000) return res.status(400).json({ error: "bonusBps must be 0–50000" });
+    await updateStakingConfig({ genesisBonusBps: Number(bonusBps) });
     res.json({ ok: true });
   } catch (err) {
     next(err);
