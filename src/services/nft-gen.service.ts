@@ -203,14 +203,57 @@ export async function insertItem(params: {
 }
 
 export async function insertItemTrait(params: {
-  itemId: string; traitId: string; traitType: string; traitValue: string; rarityTier?: string;
+  itemId: string; traitId: string | null; traitType: string; traitValue: string; rarityTier?: string;
 }) {
   const { itemId, traitId, traitType, traitValue, rarityTier } = params;
   const { rows } = await pool.query(
     "SELECT * FROM nft_gen_item_trait_insert($1::uuid, $2::uuid, $3, $4, $5)",
-    [itemId, traitId, traitType, traitValue, rarityTier ?? null],
+    [itemId, traitId ?? null, traitType, traitValue, rarityTier ?? null],
   );
   return rows[0] ?? null;
+}
+
+export async function insertItemsBatch(params: {
+  jobId: string;
+  items: Array<{
+    editionNumber: number;
+    dnaHash: string;
+    score?: number;
+    rank?: number;
+    tier?: string;
+    traits?: Array<{ traitType: string; traitValue: string; rarityTier?: string }>;
+  }>;
+}) {
+  const { jobId, items } = params;
+  const client = await pool.connect();
+  const inserted: { itemId: string; editionNumber: number }[] = [];
+  try {
+    await client.query("BEGIN");
+    for (const item of items) {
+      const { editionNumber, dnaHash, score, rank, tier, traits = [] } = item;
+      const { rows } = await client.query(
+        "SELECT * FROM nft_gen_item_insert($1::uuid, $2, $3, $4, $5)",
+        [jobId, editionNumber, dnaHash, null, JSON.stringify({ score, rank, tier })],
+      );
+      const itemId: string | undefined = rows[0]?.id;
+      if (itemId) {
+        for (const t of traits) {
+          await client.query(
+            "SELECT * FROM nft_gen_item_trait_insert($1::uuid, $2::uuid, $3, $4, $5)",
+            [itemId, null, t.traitType, t.traitValue, t.rarityTier ?? null],
+          );
+        }
+        inserted.push({ itemId, editionNumber });
+      }
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+  return inserted;
 }
 
 export async function listItems(params: { jobId: string; limit?: number; offset?: number }) {

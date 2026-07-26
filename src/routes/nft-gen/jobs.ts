@@ -73,6 +73,21 @@ router.get("/:id/rarity", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+router.post("/:id/items/batch", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.generate");
+    const { items } = req.body ?? {};
+    if (!Array.isArray(items) || items.length === 0) {
+      res.status(422).json({ error: "items must be a non-empty array." }); return;
+    }
+    if (items.length > 200) {
+      res.status(422).json({ error: "Max 200 items per batch." }); return;
+    }
+    const inserted = await svc.insertItemsBatch({ jobId: req.params.id, items });
+    res.json({ inserted: inserted.length, items: inserted });
+  } catch (e) { next(e); }
+});
+
 // ── Upload batches under job ──────────────────────────────────────────────────
 
 router.post("/:id/upload-batches", async (req, res, next) => {

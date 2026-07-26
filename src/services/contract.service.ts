@@ -104,10 +104,12 @@ async function syncEvent(
         break;
       }
 
-      case "WaveRolledOver": {
-        // WaveRolledOver(fromWave indexed, toWave indexed, qty)
-        const [fromWave] = args as [bigint, bigint, bigint];
-        await pool.query("SELECT nft_wave_sync_closed($1,$2,$3)", [Number(fromWave), "rollover", txHash]);
+      case "WaveClosedTreasury": {
+        // WaveClosedTreasury(waveNum indexed, recipient indexed, qty)
+        const [waveNum, recipient, qty] = args as [bigint, string, bigint];
+        await pool.query("SELECT nft_wave_sync_treasury_close($1,$2,$3,$4)", [
+          Number(waveNum), recipient.toLowerCase(), Number(qty), txHash,
+        ]);
         break;
       }
 
@@ -301,11 +303,17 @@ export async function contractSetWavePrice(
   return callContract("setWavePrice", [waveNum, priceWei]);
 }
 
-export async function contractRolloverToNextWave(
-  waveNum: number
+export async function contractTreasuryClose(
+  waveNum:   number,
+  recipient: string | null
 ): Promise<ethers.TransactionReceipt> {
   if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1–7");
-  return callContract("rolloverToNextWave", [waveNum]);
+  let to = recipient;
+  if (!to) {
+    to = await getContractReadOnly().treasuryWallet() as string;
+  }
+  if (!ethers.isAddress(to)) throw new Error("Invalid recipient address");
+  return callContract("treasuryClose", [waveNum, to]);
 }
 
 export async function contractForfeitUnsold(

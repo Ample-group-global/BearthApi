@@ -4,7 +4,7 @@ import pool from "../../pool";
 import {
   contractSetWaveSchedule,
   contractSetWavePrice,
-  contractRolloverToNextWave,
+  contractTreasuryClose,
   contractForfeitUnsold,
   contractAuctionMint,
   contractGetWaveInfo,
@@ -97,20 +97,28 @@ router.put("/:num/price", requireAdmin, async (req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/waves/:num/rollover — roll unsold NFTs to next wave
-router.post("/:num/rollover", requireAdmin, async (req, res, next) => {
+// POST /api/nft-sell/waves/:num/treasury-close
+// Mints all unsold NFTs to recipient wallet (defaults to contract's treasuryWallet).
+// Call after wave end time. Owner can sell these tokens later on any platform.
+// Body: { recipient?: string }  — optional Ethereum address; omit to use contract treasuryWallet
+router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
   try {
     const num = parseInt(req.params.num, 10);
     if (isNaN(num) || num < 1 || num > 7)
       return res.status(400).json({ error: "Wave number must be 1–7" });
-    const receipt = await contractRolloverToNextWave(num);
+
+    const { recipient } = req.body as { recipient?: string };
+    if (recipient && !/^0x[0-9a-fA-F]{40}$/.test(recipient))
+      return res.status(400).json({ error: "recipient must be a valid Ethereum address (0x + 40 hex chars)" });
+
+    const receipt = await contractTreasuryClose(num, recipient ?? null);
     res.json({ ok: true, txHash: receipt.hash });
   } catch (err) {
     next(err);
   }
 });
 
-// POST /api/nft-sell/waves/:num/forfeit — forfeit (burn) unsold NFTs
+// POST /api/nft-sell/waves/:num/forfeit — discard unsold supply (no minting)
 router.post("/:num/forfeit", requireAdmin, async (req, res, next) => {
   try {
     const num = parseInt(req.params.num, 10);
@@ -227,6 +235,17 @@ router.get("/:num/dutch-price", async (req, res, next) => {
       isFloor:         currentPrice <= floor,
       auctionStarted:  true,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/nft-sell/waves/treasury-nfts — list all treasury-held tokens (unsold → owner wallet)
+router.get("/treasury-nfts", async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query("SELECT nft_treasury_nfts_list()", []);
+    const nfts = rows[0]?.nft_treasury_nfts_list ?? [];
+    res.json({ nfts });
   } catch (err) {
     next(err);
   }
