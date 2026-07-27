@@ -44,3 +44,6 @@ mddoc-divakar/
 *.txt
 !requirements.txt
 !app/requirements.txt
+
+# Runtime logs
+*.log
