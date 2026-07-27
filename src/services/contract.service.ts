@@ -1,21 +1,12 @@
 import { ethers, type Contract, type EventLog } from "ethers";
 import pool from "../pool";
 import { abi as BearthNFT_ABI } from "../abi/BearthNFT.abi.json";
+import { getProvider } from "../utils/contract-factory";
 
-// ── Provider / Signer singletons ──────────────────────────────────────────────
+// ── Contract singletons ───────────────────────────────────────────────────────
 
-let _provider: ethers.JsonRpcProvider | null = null;
 let _contractRO: Contract | null = null;
 let _contractSigned: Contract | null = null;
-
-function getProvider(): ethers.JsonRpcProvider {
-  if (!_provider) {
-    const rpcUrl = process.env.ETH_RPC_URL;
-    if (!rpcUrl) throw new Error("ETH_RPC_URL env var is required");
-    _provider = new ethers.JsonRpcProvider(rpcUrl);
-  }
-  return _provider;
-}
 
 export function getContractReadOnly(): Contract {
   if (!_contractRO) {

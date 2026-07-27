@@ -1,20 +1,11 @@
 import { ethers, type Contract } from "ethers";
 import { abi as BearthAirdrop_ABI } from "../abi/BearthAirdrop.abi.json";
+import { getProvider } from "../utils/contract-factory";
 
 // ── Singletons ────────────────────────────────────────────────────────────────
 
-let _provider: ethers.JsonRpcProvider | null = null;
 let _contractSigned: Contract | null = null;
 let _contractRO:     Contract | null = null;
-
-function getProvider(): ethers.JsonRpcProvider {
-  if (!_provider) {
-    const rpcUrl = process.env.ETH_RPC_URL;
-    if (!rpcUrl) throw new Error("ETH_RPC_URL env var is required");
-    _provider = new ethers.JsonRpcProvider(rpcUrl);
-  }
-  return _provider;
-}
 
 function getAirdropContractWithSigner(): Contract {
   if (!_contractSigned) {

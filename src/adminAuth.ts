@@ -1,6 +1,6 @@
-import { createHmac, timingSafeEqual } from "crypto";
 import { Request, Response, NextFunction } from "express";
 import { HttpError } from "./errors";
+import { encodeHmacToken, decodeHmacToken } from "./utils/hmac-token";
 
 const SECRET = process.env.AUTH_SECRET ?? "";
 
@@ -49,30 +49,17 @@ export const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
 };
 
 export function signToken(role: AdminRole, userId: string): string {
-  const payload = `${userId}:${role}:${Date.now()}`;
-  const sig = createHmac("sha256", SECRET).update(payload).digest("hex");
-  return Buffer.from(`${payload}.${sig}`).toString("base64url");
+  return encodeHmacToken(`${userId}:${role}:${Date.now()}`, SECRET);
 }
 
 export function verifyToken(token: string): { role: AdminRole; userId: string } | null {
-  try {
-    const decoded = Buffer.from(token, "base64url").toString("utf8");
-    const lastDot = decoded.lastIndexOf(".");
-    if (lastDot === -1) return null;
-    const payload = decoded.slice(0, lastDot);
-    const sig = decoded.slice(lastDot + 1);
-    const expected = createHmac("sha256", SECRET).update(payload).digest("hex");
-    const sigBuf = Buffer.from(sig, "hex");
-    const expBuf = Buffer.from(expected, "hex");
-    if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) return null;
-    const parts = payload.split(":");
-    if (parts.length < 3) return null;
-    const [userId, role] = parts;
-    if (role !== "admin" && role !== "tech" && role !== "ops") return null;
-    return { role: role as AdminRole, userId };
-  } catch {
-    return null;
-  }
+  const payload = decodeHmacToken(token, SECRET);
+  if (!payload) return null;
+  const parts = payload.split(":");
+  if (parts.length < 3) return null;
+  const [userId, role] = parts;
+  if (role !== "admin" && role !== "tech" && role !== "ops") return null;
+  return { role: role as AdminRole, userId };
 }
 
 export function extractBearer(req: Request): string | null {
@@ -106,4 +93,13 @@ export function requireAdmin(req: Request, _res: Response, next: NextFunction): 
   } catch (err) {
     next(err);
   }
+}
+
+// Inline guard for tech/admin-only routes — throws HttpError on failure.
+export function requireTech(req: Request): { role: AdminRole; userId: string } {
+  const result = requireRole(req);
+  if (result.role !== "tech" && result.role !== "admin") {
+    throw new HttpError(403, "Forbidden — insufficient permissions");
+  }
+  return result;
 }
