@@ -203,6 +203,14 @@ export async function failJob(id: string, errorMessage: string) {
   return rows[0] ?? null;
 }
 
+export async function deleteFailedJob(id: string): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    "DELETE FROM nft_gen_jobs WHERE id = $1::uuid AND status = 'failed'",
+    [id]
+  );
+  return (rowCount ?? 0) > 0;
+}
+
 // ── Generated Items ──────────────────────────────────────────────────────────
 
 export async function insertItem(params: {

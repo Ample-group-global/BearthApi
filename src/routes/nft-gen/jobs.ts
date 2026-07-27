@@ -51,6 +51,15 @@ router.post("/:id/fail", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+router.delete("/:id", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.generate");
+    const result = await svc.deleteFailedJob(req.params.id);
+    if (!result) { res.status(404).json({ error: "Job not found or not in failed state." }); return; }
+    res.json({ deleted: true });
+  } catch (e) { next(e); }
+});
+
 // ── Items under job ───────────────────────────────────────────────────────────
 
 router.get("/:id/items", async (req, res, next) => {
