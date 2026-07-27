@@ -75,25 +75,24 @@ export async function getLayer(id: string) {
 
 export async function createLayer(params: {
   collectionId: string; name: string; displayName?: string;
-  blendMode?: string; opacity?: number; bypassDna?: boolean;
-  sortOrder?: number; layerRarityPct?: number;
+  bypassDna?: boolean; sortOrder?: number; layerRarityPct?: number;
 }) {
-  const { collectionId, name, displayName, blendMode, opacity, bypassDna, sortOrder, layerRarityPct } = params;
+  const { collectionId, name, displayName, bypassDna, sortOrder, layerRarityPct } = params;
   const { rows } = await pool.query(
-    "SELECT * FROM nft_gen_layer_create($1, $2, $3, $4, $5, $6, $7, $8)",
-    [collectionId, name, displayName ?? null, blendMode ?? "source-over", opacity ?? 1.0, bypassDna ?? false, sortOrder ?? null, layerRarityPct ?? 100],
+    "SELECT * FROM nft_gen_layer_create($1, $2, $3, $4, $5, $6)",
+    [collectionId, name, displayName ?? null, bypassDna ?? false, sortOrder ?? null, layerRarityPct ?? 100],
   );
   return rows[0] ?? null;
 }
 
 export async function updateLayer(id: string, params: {
-  name?: string; displayName?: string; blendMode?: string; opacity?: number;
+  name?: string; displayName?: string;
   bypassDna?: boolean; sortOrder?: number; layerRarityPct?: number; isActive?: boolean;
 }) {
-  const { name, displayName, blendMode, opacity, bypassDna, sortOrder, layerRarityPct, isActive } = params;
+  const { name, displayName, bypassDna, sortOrder, layerRarityPct, isActive } = params;
   const { rows } = await pool.query(
-    "SELECT * FROM nft_gen_layer_update($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-    [id, name ?? null, displayName ?? null, blendMode ?? null, opacity ?? null, bypassDna ?? null, sortOrder ?? null, layerRarityPct ?? null, isActive ?? null],
+    "SELECT * FROM nft_gen_layer_update($1, $2, $3, $4, $5, $6, $7)",
+    [id, name ?? null, displayName ?? null, bypassDna ?? null, sortOrder ?? null, layerRarityPct ?? null, isActive ?? null],
   );
   return rows[0] ?? null;
 }
