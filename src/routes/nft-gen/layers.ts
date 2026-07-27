@@ -40,6 +40,18 @@ router.get("/:id/traits", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+router.post("/:id/traits/reconcile", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.manage_layers");
+    const { activeFilePaths } = req.body ?? {};
+    if (!Array.isArray(activeFilePaths)) {
+      res.status(422).json({ error: "activeFilePaths must be an array." }); return;
+    }
+    const result = await svc.reconcileTraits(req.params.id, activeFilePaths);
+    res.json(result);
+  } catch (e) { next(e); }
+});
+
 router.post("/:id/traits", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.manage_layers");

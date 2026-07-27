@@ -71,6 +71,18 @@ router.post("/:id/layers", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+router.post("/:id/layers/reconcile", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.manage_layers");
+    const { activeNames } = req.body ?? {};
+    if (!Array.isArray(activeNames)) {
+      res.status(422).json({ error: "activeNames must be an array." }); return;
+    }
+    const result = await svc.reconcileLayers(req.params.id, activeNames);
+    res.json(result);
+  } catch (e) { next(e); }
+});
+
 router.put("/:id/layers/reorder", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.manage_layers");

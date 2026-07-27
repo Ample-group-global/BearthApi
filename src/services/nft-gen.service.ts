@@ -102,6 +102,14 @@ export async function deleteLayer(id: string) {
   return rows[0] ?? null;
 }
 
+export async function reconcileLayers(collectionId: string, activeNames: string[]) {
+  const { rows } = await pool.query(
+    "SELECT nft_gen_layers_reconcile($1::uuid, $2::text[]) AS deactivated",
+    [collectionId, activeNames],
+  );
+  return { deactivated: Number(rows[0]?.deactivated ?? 0) };
+}
+
 export async function reorderLayers(collectionId: string, items: { id: string; sortOrder: number }[]) {
   const ids = items.map(i => i.id);
   const orders = items.map(i => i.sortOrder);
@@ -149,6 +157,14 @@ export async function updateTrait(id: string, params: {
 export async function deleteTrait(id: string) {
   const { rows } = await pool.query("SELECT * FROM nft_gen_trait_delete($1::uuid)", [id]);
   return rows[0] ?? null;
+}
+
+export async function reconcileTraits(layerId: string, activeFilePaths: string[]) {
+  const { rows } = await pool.query(
+    "SELECT nft_gen_traits_reconcile($1::uuid, $2::text[]) AS deactivated",
+    [layerId, activeFilePaths],
+  );
+  return { deactivated: Number(rows[0]?.deactivated ?? 0) };
 }
 
 // ── Generation Jobs ──────────────────────────────────────────────────────────
