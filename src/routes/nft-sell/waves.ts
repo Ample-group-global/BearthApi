@@ -5,7 +5,6 @@ import {
   contractSetWaveSchedule,
   contractSetWavePrice,
   contractTreasuryClose,
-  contractForfeitUnsold,
   contractAuctionMint,
   contractGetWaveInfo,
   contractSetAllowlistRoot,
@@ -112,19 +111,6 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
       return res.status(400).json({ error: "recipient must be a valid Ethereum address (0x + 40 hex chars)" });
 
     const receipt = await contractTreasuryClose(num, recipient ?? null);
-    res.json({ ok: true, txHash: receipt.hash });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /api/nft-sell/waves/:num/forfeit — discard unsold supply (no minting)
-router.post("/:num/forfeit", requireAdmin, async (req, res, next) => {
-  try {
-    const num = parseInt(req.params.num, 10);
-    if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1–7" });
-    const receipt = await contractForfeitUnsold(num);
     res.json({ ok: true, txHash: receipt.hash });
   } catch (err) {
     next(err);

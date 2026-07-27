@@ -104,13 +104,6 @@ async function syncEvent(
         break;
       }
 
-      case "WaveClosedForfeit": {
-        // WaveClosedForfeit(waveNum indexed, skippedQty)
-        const [waveNum] = args as [bigint, bigint];
-        await pool.query("SELECT nft_wave_sync_closed($1,$2,$3)", [Number(waveNum), "forfeit", txHash]);
-        break;
-      }
-
       case "PhaseChanged": {
         const [newPhase] = args as [number];
         const phaseNames = ["Whitelist", "PaidMint", "Revealed"];
@@ -225,7 +218,7 @@ export function startEventListeners(): void {
 
   const watchedEvents = [
     "WaveSold", "WaveScheduleUpdated", "WavePriceUpdated",
-    "WaveRolledOver", "WaveClosedForfeit", "WaveRevealed",
+    "WaveRevealed",
     "PhaseChanged", "Revealed", "PurchaseLimitChanged",
     "RoyaltyUpdated", "SBTChanged", "Transfer", "Bred", "TokenPriceSet",
     "TransferValidatorUpdated", "Paused", "Unpaused",
@@ -305,13 +298,6 @@ export async function contractTreasuryClose(
   }
   if (!ethers.isAddress(to)) throw new Error("Invalid recipient address");
   return callContract("treasuryClose", [waveNum, to]);
-}
-
-export async function contractForfeitUnsold(
-  waveNum: number
-): Promise<ethers.TransactionReceipt> {
-  if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1–7");
-  return callContract("forfeitUnsold", [waveNum]);
 }
 
 export async function contractRevealAll(
