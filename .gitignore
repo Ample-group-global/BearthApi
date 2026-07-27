@@ -47,3 +47,6 @@ mddoc-divakar/
 
 # Runtime logs
 *.log
+
+# Backup folders
+BearthApi-backup-2026-07-27/
