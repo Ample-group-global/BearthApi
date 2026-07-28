@@ -88,8 +88,8 @@ router.get("/:exportId", (req, res) => {
 
 // ── Background worker ─────────────────────────────────────────────────────────
 
-const BATCH       = 500;
-const CONCURRENCY = 30;
+const BATCH       = 10;
+const CONCURRENCY = 5;
 
 async function pollCid(s3: ReturnType<typeof getS3Client>, bucket: string, key: string, maxMs = 3000): Promise<string> {
   const deadline = Date.now() + maxMs;
