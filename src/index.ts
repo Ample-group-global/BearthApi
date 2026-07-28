@@ -50,7 +50,7 @@ const PORT = Number(process.env.PORT ?? 8000);
 
 const corsOrigins = (process.env.CORS_ORIGINS ?? "http://localhost:3000").split(",").map(s => s.trim());
 app.use(cors({ origin: corsOrigins, credentials: true }));
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 app.use(rateLimit({ windowMs: 60_000, limit: 500, standardHeaders: "draft-7", legacyHeaders: false }));
 
 // ── Swagger UI ────────────────────────────────────────────────────────────────
@@ -130,7 +130,17 @@ app.use("/api/nft-sell/upgrade",         nftSellUpgradeRouter);
 app.use("/api/nft-sell/upgrade-nft",    nftSellUpgradeNFTRouter);
 app.use("/api/nft-sell/scheduler",       nftSellSchedulerRouter);
 app.use("/api/nft-sell/reward-token",    nftSellRewardTokenRouter);
-app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+app.get("/api/health", async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      "SELECT pg_size_pretty(pg_database_size(current_database())) AS db_size, " +
+      "ROUND(pg_database_size(current_database()) / 1024.0 / 1024.0, 1) AS db_size_mb"
+    );
+    res.json({ status: "ok", db_size: rows[0].db_size, db_size_mb: Number(rows[0].db_size_mb) });
+  } catch {
+    res.json({ status: "ok" });
+  }
+});
 
 // ── Error handler (must be last) ──────────────────────────────────────────────
 

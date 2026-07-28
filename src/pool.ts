@@ -9,10 +9,10 @@ function getPool(): Pool {
   _pool = new Pool({
     connectionString:            url,
     ssl:                         { rejectUnauthorized: false },
-    max:                         10,
-    min:                         0,
-    idleTimeoutMillis:           20_000,
-    connectionTimeoutMillis:     8_000,
+    max:                         20,
+    min:                         2,
+    idleTimeoutMillis:           30_000,
+    connectionTimeoutMillis:     30_000,
     keepAlive:                   true,
     keepAliveInitialDelayMillis: 5_000,
   });

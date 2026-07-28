@@ -205,10 +205,15 @@ export async function failJob(id: string, errorMessage: string) {
 
 export async function deleteFailedJob(id: string): Promise<boolean> {
   const { rowCount } = await pool.query(
-    "DELETE FROM nft_gen_jobs WHERE id = $1::uuid AND status = 'failed'",
+    "DELETE FROM nft_generation_jobs WHERE id = $1::uuid AND status = 'failed'",
     [id]
   );
-  return (rowCount ?? 0) > 0;
+  const deleted = (rowCount ?? 0) > 0;
+  if (deleted) {
+    // Reclaim disk space from cascaded deletes — fire-and-forget, non-blocking
+    pool.query("VACUUM nft_generated_items, nft_item_traits").catch(() => {});
+  }
+  return deleted;
 }
 
 // ── Generated Items ──────────────────────────────────────────────────────────
@@ -248,35 +253,84 @@ export async function insertItemsBatch(params: {
   }>;
 }) {
   const { jobId, items } = params;
+  if (!items.length) return [];
+
   const client = await pool.connect();
-  const inserted: { itemId: string; editionNumber: number }[] = [];
   try {
     await client.query("BEGIN");
+
+    // Bulk insert all items in ONE query via UNNEST
+    const { rows: itemRows } = await client.query(
+      `INSERT INTO nft_generated_items (job_id, edition_number, dna_hash, metadata_json)
+       SELECT $1::uuid, t.edition_number, t.dna_hash, t.metadata_json::jsonb
+       FROM UNNEST($2::int[], $3::text[], $4::text[]) AS t(edition_number, dna_hash, metadata_json)
+       RETURNING id, edition_number`,
+      [
+        jobId,
+        items.map(i => i.editionNumber),
+        items.map(i => i.dnaHash),
+        items.map(i => JSON.stringify({ score: i.score, rank: i.rank, tier: i.tier })),
+      ],
+    );
+
+    const editionToId: Record<number, string> = {};
+    for (const row of itemRows) editionToId[row.edition_number] = row.id;
+
+    // Collect all traits then bulk insert in ONE query via UNNEST
+    const itemIds: string[]         = [];
+    const traitTypes: string[]      = [];
+    const traitValues: string[]     = [];
+    const rarityTiers: (string|null)[] = [];
+
     for (const item of items) {
-      const { editionNumber, dnaHash, score, rank, tier, traits = [] } = item;
-      const { rows } = await client.query(
-        "SELECT * FROM nft_gen_item_insert($1::uuid, $2, $3, $4, $5)",
-        [jobId, editionNumber, dnaHash, null, JSON.stringify({ score, rank, tier })],
-      );
-      const itemId: string | undefined = rows[0]?.id;
-      if (itemId) {
-        for (const t of traits) {
-          await client.query(
-            "SELECT * FROM nft_gen_item_trait_insert($1::uuid, $2::uuid, $3, $4, $5)",
-            [itemId, null, t.traitType, t.traitValue, t.rarityTier ?? null],
-          );
-        }
-        inserted.push({ itemId, editionNumber });
+      const itemId = editionToId[item.editionNumber];
+      if (!itemId) continue;
+      for (const t of (item.traits ?? [])) {
+        itemIds.push(itemId);
+        traitTypes.push(t.traitType);
+        traitValues.push(t.traitValue);
+        rarityTiers.push(t.rarityTier ?? null);
       }
     }
+
+    if (itemIds.length > 0) {
+      await client.query(
+        `INSERT INTO nft_item_traits (item_id, trait_type, trait_value, rarity_tier)
+         SELECT t.item_id::uuid, t.trait_type, t.trait_value, t.rarity_tier
+         FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[]) AS t(item_id, trait_type, trait_value, rarity_tier)`,
+        [itemIds, traitTypes, traitValues, rarityTiers],
+      );
+
+      // Backfill trait_id and rarity_tier from nft_traits via layer display_name match
+      const insertedItemUuids = itemRows.map(r => r.id);
+      await client.query(
+        `UPDATE nft_item_traits nit
+         SET trait_id    = nt.id,
+             rarity_tier = nt.rarity_tier
+         FROM nft_generated_items gi,
+              nft_generation_jobs j,
+              nft_layers nl,
+              nft_traits nt
+         WHERE nit.item_id = ANY($1::uuid[])
+           AND gi.id        = nit.item_id
+           AND j.id         = gi.job_id
+           AND nl.collection_id = j.collection_id
+           AND nl.display_name  = nit.trait_type
+           AND nt.layer_id  = nl.id
+           AND nt.name      = nit.trait_value
+           AND nit.trait_id IS NULL`,
+        [insertedItemUuids],
+      );
+    }
+
     await client.query("COMMIT");
+    return itemRows.map(r => ({ itemId: r.id as string, editionNumber: r.edition_number as number }));
   } catch (e) {
-    await client.query("ROLLBACK");
+    await client.query("ROLLBACK").catch(() => {});
     throw e;
   } finally {
     client.release();
   }
-  return inserted;
 }
 
 export async function listItems(params: { jobId: string; limit?: number; offset?: number }) {
@@ -341,4 +395,24 @@ export async function completeUploadBatch(id: string) {
 export async function failUploadBatch(id: string, error: string) {
   const { rows } = await pool.query("SELECT * FROM nft_gen_upload_batch_fail($1::uuid, $2)", [id, error]);
   return rows[0] ?? null;
+}
+
+export async function batchUpdateItemIpfsCids(params: {
+  jobId: string;
+  items: Array<{ editionNumber: number; ipfsImageCid: string; ipfsMetadataCid: string; imagePath?: string }>;
+}) {
+  const { jobId, items } = params;
+  if (!items.length) return 0;
+  const hasImagePaths = items.some(i => i.imagePath);
+  const { rows } = await pool.query(
+    "SELECT nft_gen_items_batch_update_ipfs($1::uuid, $2::int[], $3::text[], $4::text[], $5::text[]) AS updated",
+    [
+      jobId,
+      items.map(i => i.editionNumber),
+      items.map(i => i.ipfsImageCid),
+      items.map(i => i.ipfsMetadataCid),
+      hasImagePaths ? items.map(i => i.imagePath ?? null) : null,
+    ],
+  );
+  return rows[0]?.updated ?? 0;
 }
