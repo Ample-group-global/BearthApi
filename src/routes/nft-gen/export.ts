@@ -89,7 +89,20 @@ router.get("/:exportId", (req, res) => {
 // ── Background worker ─────────────────────────────────────────────────────────
 
 const BATCH       = 500;
-const CONCURRENCY = 5;
+const CONCURRENCY = 30;
+
+async function pollCid(s3: ReturnType<typeof getS3Client>, bucket: string, key: string, maxMs = 3000): Promise<string> {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 80));
+    try {
+      const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+      const cid = head.Metadata?.cid ?? "";
+      if (cid) return cid;
+    } catch { /* not ready yet */ }
+  }
+  return "";
+}
 
 async function runExport(
   exportId: string,
@@ -186,9 +199,7 @@ async function runExport(
         // ── 2. Upload image ───────────────────────────────────────────────────
         const imgKey = `images/${editionNum}.${ext}`;
         await s3.send(new PutObjectCommand({ Bucket: bucket, Key: imgKey, Body: imgBuf, ContentType: mime }));
-        await new Promise(r => setTimeout(r, 500));
-        const imgHead = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: imgKey }));
-        const imgCid  = imgHead.Metadata?.cid ?? "";
+        const imgCid = await pollCid(s3, bucket, imgKey);
 
         // ── 3. Build + upload metadata ────────────────────────────────────────
         const nftName    = applyNameFormat(nameFormat || (collectionName ? `${collectionName} #{{id}}` : "#{{id}}"), editionNum);
@@ -205,9 +216,7 @@ async function runExport(
 
         const metaKey = `metadata/${editionNum}.json`;
         await s3.send(new PutObjectCommand({ Bucket: bucket, Key: metaKey, Body: metaJson, ContentType: "application/json" }));
-        await new Promise(r => setTimeout(r, 300));
-        const metaHead = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: metaKey }));
-        const metaCid  = metaHead.Metadata?.cid ?? "";
+        const metaCid = await pollCid(s3, bucket, metaKey);
 
         ipfsUpdates.push({ editionNumber: editionNum, ipfsImageCid: imgCid, ipfsMetadataCid: metaCid, imagePath: imgKey });
         state.progress++;

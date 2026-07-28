@@ -19,10 +19,10 @@ function getPool(): Pool {
   _pool.on("error", (err) => {
     console.warn("[pool] idle client error:", err.message);
   });
-  // Keep at least one connection warm with a periodic ping
+  // Keep at least one connection warm with a periodic ping (25s — below Railway's NAT drop timeout)
   setInterval(async () => {
     try { await _pool!.query("SELECT 1"); } catch { /* ignore — pool reconnects */ }
-  }, 60_000);
+  }, 25_000);
   return _pool;
 }
 

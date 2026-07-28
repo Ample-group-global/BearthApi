@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requirePermission } from "../../adminAuth";
 import * as svc from "../../services/nft-gen.service";
+import pool from "../../pool";
 
 const router = Router();
 
@@ -71,6 +72,42 @@ router.get("/:id/items", async (req, res, next) => {
       offset: Number(req.query.offset ?? 0),
     });
     res.json(result);
+  } catch (e) { next(e); }
+});
+
+// Returns items with their trait details and rarity data — used by ExportPanel for display grid
+router.get("/:id/display-items", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.view");
+    const limit  = Math.min(Number(req.query.limit  ?? 50), 200);
+    const offset = Number(req.query.offset ?? 0);
+    const { rows } = await pool.query(`
+      SELECT
+        gi.edition_number,
+        (gi.metadata_json->>'score')::numeric    AS rarity_score,
+        (gi.metadata_json->>'rank')::int         AS rarity_rank,
+        gi.metadata_json->>'tier'                AS rarity_tier,
+        json_agg(json_build_object(
+          'traitType',  nit.trait_type,
+          'traitValue', nit.trait_value
+        ) ORDER BY nit.trait_type)               AS traits
+      FROM nft_generated_items gi
+      JOIN nft_item_traits nit ON nit.item_id = gi.id
+      WHERE gi.job_id = $1::uuid
+      GROUP BY gi.id, gi.edition_number, gi.metadata_json
+      ORDER BY gi.edition_number ASC
+      LIMIT $2 OFFSET $3
+    `, [req.params.id, limit, offset]);
+
+    res.json({
+      items: rows.map(r => ({
+        editionNumber: Number(r.edition_number),
+        rarityScore:   r.rarity_score != null ? Number(r.rarity_score) : 0,
+        rarityRank:    r.rarity_rank  != null ? Number(r.rarity_rank)  : Number(r.edition_number),
+        rarityTier:    r.rarity_tier  ?? "Common",
+        traits:        r.traits ?? [],
+      })),
+    });
   } catch (e) { next(e); }
 });
 

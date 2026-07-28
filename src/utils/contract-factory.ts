@@ -6,7 +6,8 @@ export function getProvider(): ethers.JsonRpcProvider {
   if (!_provider) {
     const rpcUrl = process.env.ETH_RPC_URL;
     if (!rpcUrl) throw new Error("ETH_RPC_URL env var is required");
-    _provider = new ethers.JsonRpcProvider(rpcUrl);
+    // Long polling interval to avoid overwhelming public RPC rate limits in development
+    _provider = new ethers.JsonRpcProvider(rpcUrl, undefined, { polling: true, pollingInterval: 60_000 });
   }
   return _provider;
 }
