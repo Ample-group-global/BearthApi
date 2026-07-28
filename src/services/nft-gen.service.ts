@@ -343,10 +343,23 @@ export async function insertItemsBatch(params: {
 
 export async function listItems(params: { jobId: string; limit?: number; offset?: number }) {
   const { jobId, limit = 50, offset = 0 } = params;
-  const { rows } = await pool.query(
-    "SELECT * FROM nft_gen_items_list($1::uuid, $2, $3)",
-    [jobId, limit, offset],
-  );
+  const { rows } = await pool.query(`
+    SELECT
+      gi.id, gi.edition_number, gi.dna_hash, gi.image_path,
+      gi.ipfs_image_cid, gi.ipfs_metadata_cid,
+      (gi.metadata_json->>'rank')::int       AS rank,
+      (gi.metadata_json->>'score')::numeric  AS score,
+      gi.metadata_json->>'tier'              AS tier,
+      COUNT(DISTINCT it.id)                  AS trait_count,
+      gi.created_at,
+      COUNT(*) OVER()                        AS total_count
+    FROM nft_generated_items gi
+    LEFT JOIN nft_item_traits it ON it.item_id = gi.id
+    WHERE gi.job_id = $1::uuid
+    GROUP BY gi.id
+    ORDER BY gi.edition_number ASC
+    LIMIT $2 OFFSET $3
+  `, [jobId, limit, offset]);
   return { items: toCamel(rows), total: Number(rows[0]?.total_count ?? 0), limit, offset };
 }
 

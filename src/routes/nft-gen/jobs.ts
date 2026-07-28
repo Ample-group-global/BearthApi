@@ -5,6 +5,25 @@ import pool from "../../pool";
 
 const router = Router();
 
+// GET /api/nft-gen/jobs?collectionId=<uuid>&status=complete — list jobs for a collection
+router.get("/", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.view");
+    const collectionId = req.query.collectionId as string;
+    const status       = req.query.status       as string | undefined;
+    if (!collectionId) { res.status(422).json({ error: "collectionId is required." }); return; }
+    const params: any[] = [collectionId];
+    let   where = "collection_id = $1::uuid";
+    if (status) { params.push(status); where += ` AND status = $${params.length}`; }
+    const { rows } = await pool.query(
+      `SELECT id, collection_id, edition_size, status, created_at, completed_at
+       FROM nft_generation_jobs WHERE ${where} ORDER BY created_at DESC LIMIT 10`,
+      params,
+    );
+    res.json({ jobs: rows });
+  } catch (e) { next(e); }
+});
+
 router.get("/:id", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.view");
