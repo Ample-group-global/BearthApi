@@ -259,12 +259,12 @@ export async function insertItemsBatch(params: {
   try {
     await client.query("BEGIN");
 
-    // Bulk insert all items in ONE query via UNNEST
-    const { rows: itemRows } = await client.query(
+    // ON CONFLICT DO NOTHING → idempotent: safe to retry the same batch
+    await client.query(
       `INSERT INTO nft_generated_items (job_id, edition_number, dna_hash, metadata_json)
        SELECT $1::uuid, t.edition_number, t.dna_hash, t.metadata_json::jsonb
        FROM UNNEST($2::int[], $3::text[], $4::text[]) AS t(edition_number, dna_hash, metadata_json)
-       RETURNING id, edition_number`,
+       ON CONFLICT (job_id, edition_number) DO NOTHING`,
       [
         jobId,
         items.map(i => i.editionNumber),
@@ -273,13 +273,19 @@ export async function insertItemsBatch(params: {
       ],
     );
 
+    // SELECT all items for this batch — includes rows that conflicted (already existed)
+    const { rows: itemRows } = await client.query(
+      `SELECT id, edition_number FROM nft_generated_items
+       WHERE job_id = $1::uuid AND edition_number = ANY($2::int[])`,
+      [jobId, items.map(i => i.editionNumber)],
+    );
+
     const editionToId: Record<number, string> = {};
     for (const row of itemRows) editionToId[row.edition_number] = row.id;
 
-    // Collect all traits then bulk insert in ONE query via UNNEST
-    const itemIds: string[]         = [];
-    const traitTypes: string[]      = [];
-    const traitValues: string[]     = [];
+    const itemIds: string[]            = [];
+    const traitTypes: string[]         = [];
+    const traitValues: string[]        = [];
     const rarityTiers: (string|null)[] = [];
 
     for (const item of items) {
@@ -294,15 +300,17 @@ export async function insertItemsBatch(params: {
     }
 
     if (itemIds.length > 0) {
+      // ON CONFLICT DO NOTHING → idempotent: uq_nft_item_traits_item_trait (item_id, trait_type)
       await client.query(
         `INSERT INTO nft_item_traits (item_id, trait_type, trait_value, rarity_tier)
          SELECT t.item_id::uuid, t.trait_type, t.trait_value, t.rarity_tier
-         FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[]) AS t(item_id, trait_type, trait_value, rarity_tier)`,
+         FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[]) AS t(item_id, trait_type, trait_value, rarity_tier)
+         ON CONFLICT (item_id, trait_type) DO NOTHING`,
         [itemIds, traitTypes, traitValues, rarityTiers],
       );
 
-      // Backfill trait_id and rarity_tier from nft_traits via layer display_name match
-      const insertedItemUuids = itemRows.map(r => r.id);
+      // Backfill trait_id where still missing — safe to re-run (WHERE trait_id IS NULL)
+      const allItemUuids = itemRows.map(r => r.id);
       await client.query(
         `UPDATE nft_item_traits nit
          SET trait_id    = nt.id,
@@ -319,7 +327,7 @@ export async function insertItemsBatch(params: {
            AND nt.layer_id  = nl.id
            AND nt.name      = nit.trait_value
            AND nit.trait_id IS NULL`,
-        [insertedItemUuids],
+        [allItemUuids],
       );
     }
 
