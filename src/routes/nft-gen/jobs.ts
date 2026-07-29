@@ -1,8 +1,28 @@
 import { Router } from "express";
-import { requirePermission } from "../../presaleAuth";
+import { requirePermission } from "../../adminAuth";
 import * as svc from "../../services/nft-gen.service";
+import pool from "../../pool";
 
 const router = Router();
+
+// GET /api/nft-gen/jobs?collectionId=<uuid>&status=complete — list jobs for a collection
+router.get("/", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.view");
+    const collectionId = req.query.collectionId as string;
+    const status       = req.query.status       as string | undefined;
+    if (!collectionId) { res.status(422).json({ error: "collectionId is required." }); return; }
+    const params: any[] = [collectionId];
+    let   where = "collection_id = $1::uuid";
+    if (status) { params.push(status); where += ` AND status = $${params.length}`; }
+    const { rows } = await pool.query(
+      `SELECT id, collection_id, edition_size, status, created_at, completed_at
+       FROM nft_generation_jobs WHERE ${where} ORDER BY created_at DESC LIMIT 10`,
+      params,
+    );
+    res.json({ jobs: rows });
+  } catch (e) { next(e); }
+});
 
 router.get("/:id", async (req, res, next) => {
   try {
@@ -51,6 +71,15 @@ router.post("/:id/fail", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+router.delete("/:id", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.generate");
+    const result = await svc.deleteFailedJob(req.params.id);
+    if (!result) { res.status(404).json({ error: "Job not found or not in failed state." }); return; }
+    res.json({ deleted: true });
+  } catch (e) { next(e); }
+});
+
 // ── Items under job ───────────────────────────────────────────────────────────
 
 router.get("/:id/items", async (req, res, next) => {
@@ -65,11 +94,77 @@ router.get("/:id/items", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Returns items with their trait details and rarity data — used by ExportPanel for display grid
+router.get("/:id/display-items", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.view");
+    const limit  = Math.min(Number(req.query.limit  ?? 50), 10000);
+    const offset = Number(req.query.offset ?? 0);
+    const { rows } = await pool.query(`
+      SELECT
+        gi.edition_number,
+        (gi.metadata_json->>'score')::numeric    AS rarity_score,
+        (gi.metadata_json->>'rank')::int         AS rarity_rank,
+        gi.metadata_json->>'tier'                AS rarity_tier,
+        json_agg(json_build_object(
+          'traitType',  nit.trait_type,
+          'traitValue', nit.trait_value
+        ) ORDER BY nit.trait_type)               AS traits
+      FROM nft_generated_items gi
+      JOIN nft_item_traits nit ON nit.item_id = gi.id
+      WHERE gi.job_id = $1::uuid
+      GROUP BY gi.id, gi.edition_number, gi.metadata_json
+      ORDER BY gi.edition_number ASC
+      LIMIT $2 OFFSET $3
+    `, [req.params.id, limit, offset]);
+
+    res.json({
+      items: rows.map(r => ({
+        editionNumber: Number(r.edition_number),
+        rarityScore:   r.rarity_score != null ? Number(r.rarity_score) : 0,
+        rarityRank:    r.rarity_rank  != null ? Number(r.rarity_rank)  : Number(r.edition_number),
+        rarityTier:    r.rarity_tier  ?? "Common",
+        traits:        r.traits ?? [],
+      })),
+    });
+  } catch (e) { next(e); }
+});
+
 router.get("/:id/rarity", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.view");
     const data = await svc.getRarityReport(req.params.id);
     res.json(data ?? { totalEditions: 0, traits: [] });
+  } catch (e) { next(e); }
+});
+
+router.post("/:id/items/batch", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.generate");
+    const { items } = req.body ?? {};
+    if (!Array.isArray(items) || items.length === 0) {
+      res.status(422).json({ error: "items must be a non-empty array." }); return;
+    }
+    if (items.length > 1000) {
+      res.status(422).json({ error: "Max 1000 items per batch." }); return;
+    }
+    const inserted = await svc.insertItemsBatch({ jobId: req.params.id, items });
+    res.json({ inserted: inserted.length, items: inserted });
+  } catch (e) { next(e); }
+});
+
+router.post("/:id/items/batch-ipfs", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.upload_ipfs");
+    const { items } = req.body ?? {};
+    if (!Array.isArray(items) || items.length === 0) {
+      res.status(422).json({ error: "items must be a non-empty array." }); return;
+    }
+    if (items.length > 1000) {
+      res.status(422).json({ error: "Max 1000 items per batch." }); return;
+    }
+    const updated = await svc.batchUpdateItemIpfsCids({ jobId: req.params.id, items });
+    res.json({ updated });
   } catch (e) { next(e); }
 });
 

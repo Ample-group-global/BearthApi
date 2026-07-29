@@ -25,6 +25,10 @@ env/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+coverage/
+test-results/
+playwright-report/
+blob-report/
 
 # OS / editor
 .DS_Store
@@ -40,3 +44,9 @@ mddoc-divakar/
 *.txt
 !requirements.txt
 !app/requirements.txt
+
+# Runtime logs
+*.log
+
+# Backup folders
+BearthApi-backup-2026-07-27/

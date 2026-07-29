@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requirePermission } from "../../presaleAuth";
+import { requirePermission } from "../../adminAuth";
 import * as svc from "../../services/nft-gen.service";
 
 const router = Router();
@@ -68,6 +68,18 @@ router.post("/:id/layers", async (req, res, next) => {
     if (!name?.trim()) { res.status(422).json({ error: "Layer name is required." }); return; }
     const layer = await svc.createLayer({ collectionId: req.params.id, ...req.body });
     res.status(201).json({ layer });
+  } catch (e) { next(e); }
+});
+
+router.post("/:id/layers/reconcile", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.manage_layers");
+    const { activeNames } = req.body ?? {};
+    if (!Array.isArray(activeNames)) {
+      res.status(422).json({ error: "activeNames must be an array." }); return;
+    }
+    const result = await svc.reconcileLayers(req.params.id, activeNames);
+    res.json(result);
   } catch (e) { next(e); }
 });
 

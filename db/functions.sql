@@ -165,13 +165,13 @@ BEGIN
   RETURN json_build_object(
     'paymentMethods',         (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM payment_methods   WHERE is_active = TRUE ORDER BY sort_order) t),
     'currencies',             (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM currencies) t),
-    'nftStages',              (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM nft_stages        WHERE is_active = TRUE ORDER BY sort_order) t),
-    'nftTypes',               (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM nft_types) t),
-    'deliveryStatuses',       (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM delivery_statuses) t),
-    'paymentStatuses',        (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM payment_statuses) t),
-    'productStatuses',        (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM product_statuses) t),
+    'nftStages',              (SELECT COALESCE(json_agg(json_build_object('id',id,'code',code,'name',label,'description',description,'is_active',is_active,'sort_order',sort_order) ORDER BY sort_order), '[]') FROM lookup_values WHERE category = 'nft_stage' AND is_active = TRUE),
+    'nftTypes',               (SELECT COALESCE(json_agg(json_build_object('id',id,'code',code,'name',label)), '[]') FROM lookup_values WHERE category = 'nft_type'),
+    'deliveryStatuses',       (SELECT COALESCE(json_agg(json_build_object('id',id,'code',code,'name',label)), '[]') FROM lookup_values WHERE category = 'delivery_status'),
+    'paymentStatuses',        (SELECT COALESCE(json_agg(json_build_object('id',id,'code',code,'name',label)), '[]') FROM lookup_values WHERE category = 'payment_status'),
+    'productStatuses',        (SELECT COALESCE(json_agg(json_build_object('id',id,'code',code,'name',label)), '[]') FROM lookup_values WHERE category = 'product_status'),
     'productCategories',      (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT id, code, name, sort_order FROM product_categories WHERE is_active = TRUE ORDER BY sort_order) t),
-    'stockAdjustmentReasons', (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT id, value, label, sort_order FROM stock_adjustment_reasons WHERE is_active = TRUE ORDER BY sort_order) t),
+    'stockAdjustmentReasons', (SELECT COALESCE(json_agg(json_build_object('id',id,'value',code,'label',label,'sort_order',sort_order) ORDER BY sort_order), '[]') FROM lookup_values WHERE category = 'stock_adjustment_reason' AND is_active = TRUE),
     'roles',                  (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM roles WHERE is_active = TRUE AND code != 'customer' ORDER BY name) t),
     'permissions',            (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM permissions ORDER BY sort_order) t),
     'exchangeRates',          (SELECT COALESCE(json_agg(row_to_json(t)), '[]') FROM (SELECT * FROM exchange_rates ORDER BY effective_date DESC LIMIT 10) t)
@@ -514,15 +514,13 @@ BEGIN
     o.customer_id,
     u.first_name || ' ' || u.last_name AS customer_name,
     u.phone AS customer_phone,
-    o.nft_payment_status_id,  nps.code, nps.name,
-    o.merch_payment_status_id, mps.code,
+    o.nft_payment_status_id,  o.nft_payment_status_code, o.nft_payment_status_name,
+    o.merch_payment_status_id, o.merch_payment_status_code,
     COUNT(*) OVER() AS total_count
-  FROM orders o
-  LEFT JOIN users            u   ON o.customer_id            = u.id
-  LEFT JOIN payment_statuses nps ON o.nft_payment_status_id  = nps.id
-  LEFT JOIN payment_statuses mps ON o.merch_payment_status_id = mps.id
+  FROM v_orders o
+  LEFT JOIN users u ON o.customer_id = u.id
   WHERE (p_customer_id IS NULL OR o.customer_id = p_customer_id)
-    AND (p_nft_status_code IS NULL OR nps.code = p_nft_status_code)
+    AND (p_nft_status_code IS NULL OR o.nft_payment_status_code = p_nft_status_code)
     AND (p_search IS NULL
          OR o.order_number                      ILIKE '%' || p_search || '%'
          OR u.first_name || ' ' || u.last_name  ILIKE '%' || p_search || '%')
@@ -558,16 +556,16 @@ BEGIN
     'nftAmountEth',          o.nft_amount_eth,
     'nftCurrencyId',         o.nft_currency_id,
     'nftPaymentStatusId',    o.nft_payment_status_id,
-    'nftPaymentStatusCode',  nps.code,
-    'nftPaymentStatusName',  nps.name,
+    'nftPaymentStatusCode',  o.nft_payment_status_code,
+    'nftPaymentStatusName',  o.nft_payment_status_name,
     'nftConfirmedAt',        o.nft_confirmed_at,
     'merchPaymentMethodId',  o.merch_payment_method_id,
     'merchPaymentMethodName', mpm.name,
     'merchAmountTwd',        o.merch_amount_twd,
     'merchCurrencyId',       o.merch_currency_id,
     'merchPaymentStatusId',  o.merch_payment_status_id,
-    'merchPaymentStatusCode', mps.code,
-    'merchPaymentStatusName', mps.name,
+    'merchPaymentStatusCode', o.merch_payment_status_code,
+    'merchPaymentStatusName', o.merch_payment_status_name,
     'merchConfirmedAt',      o.merch_confirmed_at,
     'nftItems', COALESCE(
       (SELECT json_agg(json_build_object(
@@ -599,13 +597,11 @@ BEGIN
        FROM (SELECT action, description, created_at FROM order_operation_logs WHERE order_id = o.id) l_row
       ), '[]'::json)
   ) INTO v_result
-  FROM orders o
-  LEFT JOIN users            u   ON o.customer_id              = u.id
-  LEFT JOIN users            ref ON o.referrer_id              = ref.id
-  LEFT JOIN payment_methods  npm ON o.nft_payment_method_id    = npm.id
-  LEFT JOIN payment_methods  mpm ON o.merch_payment_method_id  = mpm.id
-  LEFT JOIN payment_statuses nps ON o.nft_payment_status_id    = nps.id
-  LEFT JOIN payment_statuses mps ON o.merch_payment_status_id  = mps.id
+  FROM v_orders o
+  LEFT JOIN users           u   ON o.customer_id             = u.id
+  LEFT JOIN users           ref ON o.referrer_id             = ref.id
+  LEFT JOIN payment_methods npm ON o.nft_payment_method_id   = npm.id
+  LEFT JOIN payment_methods mpm ON o.merch_payment_method_id = mpm.id
   WHERE o.id = p_id;
   RETURN v_result;
 END;
@@ -797,9 +793,11 @@ $$;
 -- ── Products ─────────────────────────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION products_list(
-  p_search  TEXT DEFAULT NULL,
-  p_limit   INT  DEFAULT 100,
-  p_offset  INT  DEFAULT 0
+  p_search   TEXT DEFAULT NULL,
+  p_category TEXT DEFAULT NULL,
+  p_status   TEXT DEFAULT NULL,
+  p_limit    INT  DEFAULT 20,
+  p_offset   INT  DEFAULT 0
 )
 RETURNS TABLE(
   id UUID, name VARCHAR, retail_price NUMERIC, presale_price NUMERIC,
@@ -813,12 +811,13 @@ BEGIN
   SELECT
     p.id, p.name, p.retail_price, p.presale_price,
     p.description, p.stock_qty, p.sort_order,
-    p.status_id, ps.code, ps.name AS status_name,
+    p.status_id, p.status_code, p.status_name,
     p.created_at, p.updated_at,
     COUNT(*) OVER() AS total_count
-  FROM products p
-  LEFT JOIN product_statuses ps ON p.status_id = ps.id
-  WHERE (p_search IS NULL OR p.name ILIKE '%' || p_search || '%')
+  FROM v_products p
+  WHERE (p_search   IS NULL OR p.name        ILIKE '%' || p_search   || '%')
+    AND (p_category IS NULL OR p.category    ILIKE p_category)
+    AND (p_status   IS NULL OR p.status_code  = p_status)
   ORDER BY p.sort_order ASC, p.created_at DESC
   LIMIT p_limit OFFSET p_offset;
 END;
@@ -839,10 +838,9 @@ BEGIN
   RETURN QUERY
   SELECT p.id, p.name, p.retail_price, p.presale_price,
          p.description, p.stock_qty, p.sort_order,
-         p.status_id, ps.code, ps.name,
+         p.status_id, p.status_code, p.status_name,
          p.created_at, p.updated_at
-  FROM products p
-  LEFT JOIN product_statuses ps ON p.status_id = ps.id
+  FROM v_products p
   WHERE p.id = p_id;
 END;
 $$;
@@ -923,7 +921,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM products WHERE id = p_id) THEN
     RAISE EXCEPTION 'Product not found' USING ERRCODE = 'P0002';
   END IF;
-  SELECT id INTO v_status_id FROM product_statuses WHERE code = 'inactive';
+  SELECT id INTO v_status_id FROM lookup_values WHERE category = 'product_status' AND code = 'inactive';
   UPDATE products SET status_id = v_status_id, updated_at = NOW() WHERE id = p_id;
   RETURN QUERY SELECT TRUE, 'Product deactivated'::TEXT;
 END;
@@ -958,19 +956,16 @@ BEGIN
     nr.image_ipfs_hash, nr.metadata_uri, nr.blind_box_uri,
     nr.is_revealed, nr.revealed_at,
     nr.notes, nr.delivered_at, nr.created_at, nr.updated_at,
-    nr.stage_id, ns.name AS stage_name,
-    nr.nft_type_id, nt.name AS type_name,
-    nr.delivery_status_id, ds.code AS delivery_status_code, ds.name AS delivery_status_name,
+    nr.stage_id, nr.stage_name,
+    nr.nft_type_id, nr.type_name,
+    nr.delivery_status_id, nr.delivery_status_code, nr.delivery_status_name,
     COUNT(*) OVER() AS total_count
-  FROM nft_records nr
-  LEFT JOIN nft_stages        ns ON nr.stage_id            = ns.id
-  LEFT JOIN nft_types         nt ON nr.nft_type_id         = nt.id
-  LEFT JOIN delivery_statuses ds ON nr.delivery_status_id  = ds.id
+  FROM v_nft_records nr
   WHERE (p_search IS NULL OR nr.serial_number ILIKE '%' || p_search || '%'
          OR nr.token_id::TEXT = p_search)
-    AND (p_delivery_status_code IS NULL OR ds.code = p_delivery_status_code)
-    AND (p_stage_code           IS NULL OR ns.code = p_stage_code)
-    AND (p_revealed             IS NULL OR nr.is_revealed = p_revealed)
+    AND (p_delivery_status_code IS NULL OR nr.delivery_status_code = p_delivery_status_code)
+    AND (p_stage_code           IS NULL OR nr.stage_code           = p_stage_code)
+    AND (p_revealed             IS NULL OR nr.is_revealed          = p_revealed)
   ORDER BY nr.token_id ASC NULLS LAST, nr.serial_number ASC
   LIMIT p_limit OFFSET p_offset;
 END;
@@ -1001,13 +996,10 @@ BEGIN
          nr.mint_tx_hash, nr.minted_at, nr.owner_address,
          nr.traits,
          nr.notes, nr.delivered_at, nr.created_at, nr.updated_at,
-         nr.stage_id, ns.name AS stage_name,
-         nr.nft_type_id, nt.name AS type_name,
-         nr.delivery_status_id, ds.code AS delivery_status_code, ds.name AS delivery_status_name
-  FROM nft_records nr
-  LEFT JOIN nft_stages        ns ON nr.stage_id            = ns.id
-  LEFT JOIN nft_types         nt ON nr.nft_type_id         = nt.id
-  LEFT JOIN delivery_statuses ds ON nr.delivery_status_id  = ds.id
+         nr.stage_id, nr.stage_name,
+         nr.nft_type_id, nr.type_name,
+         nr.delivery_status_id, nr.delivery_status_code, nr.delivery_status_name
+  FROM v_nft_records nr
   WHERE nr.id = p_id;
 END;
 $$;
@@ -1112,17 +1104,20 @@ LANGUAGE plpgsql AS $$
 BEGIN
   RETURN QUERY
   SELECT
-    w.id, w.wave_number, w.name, w.stage_id, ns.name AS stage_name,
+    w.id, w.wave_number, w.name, w.stage_id, w.stage_name,
     w.quantity, w.cumulative_start, w.cumulative_end,
     w.default_price_eth, w.sale_method,
     w.scheduled_start, w.scheduled_end,
     w.status, w.notes,
     COUNT(nr.id)::BIGINT AS nft_count,
     w.created_at, w.updated_at
-  FROM nft_waves w
-  LEFT JOIN nft_stages  ns ON ns.id = w.stage_id
+  FROM v_nft_waves w
   LEFT JOIN nft_records nr ON nr.wave_id = w.id
-  GROUP BY w.id, ns.name
+  GROUP BY w.id, w.wave_number, w.name, w.stage_id, w.stage_name,
+           w.quantity, w.cumulative_start, w.cumulative_end,
+           w.default_price_eth, w.sale_method,
+           w.scheduled_start, w.scheduled_end,
+           w.status, w.notes, w.created_at, w.updated_at
   ORDER BY w.wave_number;
 END;
 $$;
@@ -1140,18 +1135,21 @@ LANGUAGE plpgsql AS $$
 BEGIN
   RETURN QUERY
   SELECT
-    w.id, w.wave_number, w.name, w.stage_id, ns.name AS stage_name,
+    w.id, w.wave_number, w.name, w.stage_id, w.stage_name,
     w.quantity, w.cumulative_start, w.cumulative_end,
     w.default_price_eth, w.sale_method,
     w.scheduled_start, w.scheduled_end,
     w.status, w.notes,
     COUNT(nr.id)::BIGINT AS nft_count,
     w.created_at, w.updated_at
-  FROM nft_waves w
-  LEFT JOIN nft_stages  ns ON ns.id = w.stage_id
+  FROM v_nft_waves w
   LEFT JOIN nft_records nr ON nr.wave_id = w.id
   WHERE w.id = p_id
-  GROUP BY w.id, ns.name;
+  GROUP BY w.id, w.wave_number, w.name, w.stage_id, w.stage_name,
+           w.quantity, w.cumulative_start, w.cumulative_end,
+           w.default_price_eth, w.sale_method,
+           w.scheduled_start, w.scheduled_end,
+           w.status, w.notes, w.created_at, w.updated_at;
 END;
 $$;
 
@@ -1229,24 +1227,21 @@ BEGIN
     nr.image_ipfs_hash, nr.metadata_uri, nr.blind_box_uri,
     nr.is_revealed, nr.revealed_at,
     nr.notes, nr.delivered_at, nr.created_at, nr.updated_at,
-    nr.stage_id, ns.name AS stage_name,
-    nr.nft_type_id, nt.name AS type_name,
-    nr.delivery_status_id, ds.code AS delivery_status_code, ds.name AS delivery_status_name,
+    nr.stage_id, nr.stage_name,
+    nr.nft_type_id, nr.type_name,
+    nr.delivery_status_id, nr.delivery_status_code, nr.delivery_status_name,
     nr.wave_id, w.wave_number, w.name AS wave_name,
     nr.price_eth,
     COALESCE(nr.price_eth, w.default_price_eth) AS effective_price_eth,
     COUNT(*) OVER() AS total_count
-  FROM nft_records nr
-  LEFT JOIN nft_stages        ns ON nr.stage_id            = ns.id
-  LEFT JOIN nft_types         nt ON nr.nft_type_id         = nt.id
-  LEFT JOIN delivery_statuses ds ON nr.delivery_status_id  = ds.id
-  LEFT JOIN nft_waves          w ON nr.wave_id              = w.id
+  FROM v_nft_records nr
+  LEFT JOIN nft_waves w ON nr.wave_id = w.id
   WHERE (p_search IS NULL OR nr.serial_number ILIKE '%' || p_search || '%'
          OR nr.token_id::TEXT = p_search)
-    AND (p_delivery_status_code IS NULL OR ds.code = p_delivery_status_code)
-    AND (p_stage_code           IS NULL OR ns.code = p_stage_code)
-    AND (p_revealed             IS NULL OR nr.is_revealed = p_revealed)
-    AND (p_wave_id              IS NULL OR nr.wave_id = p_wave_id)
+    AND (p_delivery_status_code IS NULL OR nr.delivery_status_code = p_delivery_status_code)
+    AND (p_stage_code           IS NULL OR nr.stage_code           = p_stage_code)
+    AND (p_revealed             IS NULL OR nr.is_revealed          = p_revealed)
+    AND (p_wave_id              IS NULL OR nr.wave_id              = p_wave_id)
   ORDER BY nr.token_id ASC NULLS LAST, nr.serial_number ASC
   LIMIT p_limit OFFSET p_offset;
 END;
@@ -1424,18 +1419,18 @@ BEGIN
       'totalMerchTwd',    (SELECT COALESCE(SUM(merch_amount_twd), 0) FROM orders),
       'byNftStatus', (
         SELECT COALESCE(json_agg(row_to_json(t)), '[]')
-        FROM (SELECT ps.code AS "statusCode", ps.name AS "statusName", COUNT(o.id) AS "count"
-              FROM orders o
-              JOIN payment_statuses ps ON o.nft_payment_status_id = ps.id
-              WHERE o.nft_amount_twd > 0 OR o.nft_amount_eth > 0
-              GROUP BY ps.code, ps.name ORDER BY COUNT(o.id) DESC) t),
+        FROM (SELECT o.nft_payment_status_code AS "statusCode", o.nft_payment_status_name AS "statusName", COUNT(o.id) AS "count"
+              FROM v_orders o
+              WHERE (o.nft_amount_twd > 0 OR o.nft_amount_eth > 0)
+                AND o.nft_payment_status_code IS NOT NULL
+              GROUP BY o.nft_payment_status_code, o.nft_payment_status_name ORDER BY COUNT(o.id) DESC) t),
       'byMerchStatus', (
         SELECT COALESCE(json_agg(row_to_json(t)), '[]')
-        FROM (SELECT ps.code AS "statusCode", ps.name AS "statusName", COUNT(o.id) AS "count"
-              FROM orders o
-              JOIN payment_statuses ps ON o.merch_payment_status_id = ps.id
-              WHERE o.merch_amount_twd > 0 OR o.merch_amount_eth > 0
-              GROUP BY ps.code, ps.name ORDER BY COUNT(o.id) DESC) t)
+        FROM (SELECT o.merch_payment_status_code AS "statusCode", o.merch_payment_status_name AS "statusName", COUNT(o.id) AS "count"
+              FROM v_orders o
+              WHERE (o.merch_amount_twd > 0 OR o.merch_amount_eth > 0)
+                AND o.merch_payment_status_code IS NOT NULL
+              GROUP BY o.merch_payment_status_code, o.merch_payment_status_name ORDER BY COUNT(o.id) DESC) t)
     ),
     'customers', json_build_object(
       'total',      (SELECT COUNT(*) FROM users WHERE is_active = TRUE AND role_id = (SELECT id FROM roles WHERE code = 'customer')),
@@ -1446,16 +1441,13 @@ BEGIN
       'orderedCount', (SELECT COUNT(DISTINCT nft_record_id) FROM order_nft_items),
       'byDeliveryStatus', (
         SELECT COALESCE(json_agg(row_to_json(t)), '[]')
-        FROM (SELECT ds.code AS "statusCode", ds.name AS "statusName", COUNT(nr.id) AS "count"
-              FROM nft_records nr
-              LEFT JOIN delivery_statuses ds ON nr.delivery_status_id = ds.id
-              GROUP BY ds.code, ds.name ORDER BY COUNT(nr.id) DESC) t)
+        FROM (SELECT nr.delivery_status_code AS "statusCode", nr.delivery_status_name AS "statusName", COUNT(nr.id) AS "count"
+              FROM v_nft_records nr
+              GROUP BY nr.delivery_status_code, nr.delivery_status_name ORDER BY COUNT(nr.id) DESC) t)
     ),
     'products', json_build_object(
       'total',        (SELECT COUNT(*) FROM products),
-      'active',       (SELECT COUNT(*) FROM products p
-                       LEFT JOIN product_statuses ps ON p.status_id = ps.id
-                       WHERE ps.code = 'active'),
+      'active',       (SELECT COUNT(*) FROM v_products WHERE status_code = 'active'),
       'orderedCount', (SELECT COUNT(DISTINCT product_id) FROM order_product_items)
     ),
     'reconciliation', json_build_object(
@@ -1748,3 +1740,92 @@ BEGIN
   RETURN QUERY SELECT TRUE, 'Wallet removed'::TEXT;
 END;
 $$;
+
+-- ── Lookup CRUD (v12: now backed by lookup_values) ───────────
+
+-- List sale modes (same return shape as before; id is now UUID)
+CREATE OR REPLACE FUNCTION nft_sale_modes_list()
+RETURNS TABLE (id UUID, code VARCHAR, label VARCHAR, category VARCHAR, enabled BOOLEAN, sort_order INT, notes TEXT)
+LANGUAGE sql AS $$
+  SELECT id, code, label, tag, is_active, sort_order, notes
+  FROM lookup_values
+  WHERE category = 'nft_sale_mode'
+  ORDER BY sort_order, id;
+$$;
+
+-- Upsert a sale mode
+CREATE OR REPLACE FUNCTION nft_sale_mode_upsert(
+  p_code     VARCHAR,
+  p_label    VARCHAR,
+  p_category VARCHAR,
+  p_enabled  BOOLEAN DEFAULT TRUE,
+  p_notes    TEXT    DEFAULT NULL
+)
+RETURNS VOID LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO lookup_values (category, code, label, tag, is_active, notes, sort_order)
+  VALUES ('nft_sale_mode', LOWER(p_code), p_label, p_category, p_enabled, p_notes, 200)
+  ON CONFLICT (category, code) DO UPDATE
+    SET label     = EXCLUDED.label,
+        tag       = EXCLUDED.tag,
+        is_active = EXCLUDED.is_active,
+        notes     = EXCLUDED.notes;
+END;
+$$;
+
+-- List payment currencies (same return shape as before; id is now UUID)
+CREATE OR REPLACE FUNCTION nft_currencies_list()
+RETURNS TABLE (id UUID, code VARCHAR, label VARCHAR, symbol VARCHAR, is_crypto BOOLEAN, enabled BOOLEAN, sort_order INT)
+LANGUAGE sql AS $$
+  SELECT id, code, label, symbol, is_crypto, is_active, sort_order
+  FROM lookup_values
+  WHERE category = 'nft_payment_currency'
+  ORDER BY sort_order, id;
+$$;
+
+-- Upsert a currency
+CREATE OR REPLACE FUNCTION nft_currency_upsert(
+  p_code      VARCHAR,
+  p_label     VARCHAR,
+  p_symbol    VARCHAR,
+  p_is_crypto BOOLEAN DEFAULT FALSE,
+  p_enabled   BOOLEAN DEFAULT TRUE
+)
+RETURNS VOID LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO lookup_values (category, code, label, symbol, is_crypto, is_active, sort_order)
+  VALUES ('nft_payment_currency', UPPER(p_code), p_label, p_symbol, p_is_crypto, p_enabled, 500)
+  ON CONFLICT (category, code) DO UPDATE
+    SET label     = EXCLUDED.label,
+        symbol    = EXCLUDED.symbol,
+        is_crypto = EXCLUDED.is_crypto,
+        is_active = EXCLUDED.is_active;
+END;
+$$;
+
+-- List sale statuses
+CREATE OR REPLACE FUNCTION nft_sale_statuses_list()
+RETURNS TABLE (code VARCHAR, label VARCHAR, color_hex VARCHAR, sort_order INT)
+LANGUAGE sql AS $$
+  SELECT code, label, color_hex, sort_order
+  FROM lookup_values
+  WHERE category = 'nft_sale_status'
+  ORDER BY sort_order;
+$$;
+
+-- List wave sale methods
+CREATE OR REPLACE FUNCTION nft_wave_sale_methods_list()
+RETURNS TABLE (id UUID, code VARCHAR, label VARCHAR, is_active BOOLEAN, sort_order INT)
+LANGUAGE sql AS $$
+  SELECT id, code, label, is_active, sort_order
+  FROM lookup_values
+  WHERE category = 'nft_wave_sale_method'
+  ORDER BY sort_order;
+$$;
+
+GRANT EXECUTE ON FUNCTION nft_sale_modes_list        TO PUBLIC;
+GRANT EXECUTE ON FUNCTION nft_sale_mode_upsert       TO PUBLIC;
+GRANT EXECUTE ON FUNCTION nft_currencies_list        TO PUBLIC;
+GRANT EXECUTE ON FUNCTION nft_currency_upsert        TO PUBLIC;
+GRANT EXECUTE ON FUNCTION nft_sale_statuses_list     TO PUBLIC;
+GRANT EXECUTE ON FUNCTION nft_wave_sale_methods_list TO PUBLIC;

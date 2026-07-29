@@ -16,10 +16,7 @@ export async function createUser(params: {
   email: string; firstName?: string; lastName?: string; phone?: string; roleId?: string;
 }) {
   const { email, firstName, lastName, phone, roleId } = params;
-  const { rows } = await pool.query(
-    "SELECT * FROM users_create($1, $2, $3, $4, $5)",
-    [email, firstName ?? null, lastName ?? null, phone ?? null, roleId ?? null]
-  );
+  const { rows } = await pool.query("SELECT * FROM users_create($1, $2, $3, $4, $5)", [email, firstName ?? null, lastName ?? null, phone ?? null, roleId ?? null]);
   return rows[0] ?? null;
 }
 
@@ -28,18 +25,12 @@ export async function updateUser(id: string, params: {
   phone?: string; roleId?: string; isActive?: boolean;
 }) {
   const { email, firstName, lastName, phone, roleId, isActive } = params;
-  const { rows } = await pool.query(
-    "SELECT * FROM users_update($1, $2, $3, $4, $5, $6, $7)",
-    [id, email ?? null, firstName ?? null, lastName ?? null, phone ?? null, roleId ?? null, isActive ?? null]
-  );
+  const { rows } = await pool.query("SELECT * FROM users_update($1, $2, $3, $4, $5, $6, $7)", [id, email ?? null, firstName ?? null, lastName ?? null, phone ?? null, roleId ?? null, isActive ?? null]);
   return rows[0] ?? null;
 }
 
 export async function setPermissionOverride(userId: string, permissionId: string, isGranted: boolean, reason?: string) {
-  const { rows } = await pool.query(
-    "SELECT * FROM users_set_permission_override($1::uuid, $2, $3, $4)",
-    [userId, permissionId, isGranted, reason ?? null]
-  );
+  const { rows } = await pool.query("SELECT * FROM users_set_permission_override($1::uuid, $2, $3, $4)", [userId, permissionId, isGranted, reason ?? null]);
   return rows[0] ?? null;
 }
 
@@ -57,10 +48,7 @@ export async function getPermissionOverrides(userId: string) {
 }
 
 export async function removePermissionOverride(userId: string, permissionId: string) {
-  await pool.query(
-    `DELETE FROM user_permission_overrides WHERE user_id = $1::uuid AND permission_id = $2::uuid`,
-    [userId, permissionId]
-  );
+  await pool.query("DELETE FROM user_permission_overrides WHERE user_id = $1::uuid AND permission_id = $2::uuid", [userId, permissionId]);
 }
 
 export async function deactivateUser(id: string) {

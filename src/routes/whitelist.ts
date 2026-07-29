@@ -10,12 +10,16 @@ const router = Router();
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const MERKLE_ROOT_RE = /^0x[a-fA-F0-9]{64}$/;
 const ADMIN_ADDRESS = (process.env.ADMIN_ADDRESS ?? "").toLowerCase();
+const ADMIN_INTERNAL_KEY = process.env.ADMIN_SECRET ?? "";
 
 const readLimit   = rateLimit({ windowMs: 60_000, limit: 100, standardHeaders: "draft-7", legacyHeaders: false });
 const writeLimit  = rateLimit({ windowMs: 60_000, limit: 10,  standardHeaders: "draft-7", legacyHeaders: false });
 const deleteLimit = rateLimit({ windowMs: 60_000, limit: 5,   standardHeaders: "draft-7", legacyHeaders: false });
 
 function requireAdmin(req: Request): void {
+  // Server-to-server internal auth from BearthAdmin proxy
+  if (ADMIN_INTERNAL_KEY && req.headers["x-admin-key"] === ADMIN_INTERNAL_KEY) return;
+  // Wallet session auth
   const addr = verifySessionCookie(req.headers.cookie);
   if (!addr) throw new HttpError(401, "Unauthorized");
   if (addr.toLowerCase() !== ADMIN_ADDRESS) throw new HttpError(403, "Forbidden");
@@ -44,19 +48,21 @@ async function bulkWrite(res: Response, next: NextFunction, addresses: string[],
   }
   const client = await pool.connect();
   try {
+    let root: string;
+    let toAdd: string[];
     await client.query("BEGIN");
     if (action === "replace") await client.query("SELECT whitelist_clear()");
     const { rows: existingRows } = await client.query("SELECT * FROM whitelist_existing_lowers()");
     const existingSet = new Set(existingRows.map((r: { address_lower: string }) => r.address_lower));
-    const toAdd = addresses.filter(a => !existingSet.has(a.toLowerCase()));
+    toAdd = addresses.filter(a => !existingSet.has(a.toLowerCase()));
     for (const addr of toAdd) {
       await client.query("SELECT whitelist_add($1, $2)", [addr, addr.toLowerCase()]);
     }
-    const root = await recalcMerkle(client);
+    root = await recalcMerkle(client);
     await client.query("COMMIT");
     const { rows: [{ count }] } = await client.query("SELECT whitelist_count() AS count");
-    const skipped = addresses.length - toAdd.length;
-    res.json({ success: true, count: Number(count), added: toAdd.length, skipped, duplicates: skipped, merkle_root: root });
+    const skipped = addresses.length - toAdd!.length;
+    res.json({ success: true, count: Number(count), added: toAdd!.length, skipped, duplicates: skipped, merkle_root: root! });
   } catch (e) {
     await client.query("ROLLBACK");
     next(e);
@@ -184,9 +190,10 @@ router.delete("/merkle-root", writeLimit, async (req: Request, res: Response, ne
   } catch (e) { next(e); return; }
   const client = await pool.connect();
   try {
+    let root: string;
     await client.query("BEGIN");
     await client.query("SELECT whitelist_state_clear_override()");
-    const root = await recalcMerkle(client);
+    root = await recalcMerkle(client);
     await client.query("COMMIT");
     const [stateRes, countRes] = await Promise.all([
       pool.query("SELECT * FROM whitelist_state_get()"),
@@ -194,7 +201,7 @@ router.delete("/merkle-root", writeLimit, async (req: Request, res: Response, ne
     ]);
     const state = stateRes.rows[0];
     res.json({
-      root,
+      root: root!,
       count: Number(countRes.rows[0].count),
       generated_at: state?.last_updated?.toISOString() ?? "",
       manual_override: false,
@@ -229,34 +236,33 @@ router.post("/entry", writeLimit, async (req: Request, res: Response, next: Next
       res.status(422).json({ detail: "invalid address" }); return;
     }
     const whitelisted = is_whitelisted !== false; // default true
+    let added   = 0;
+    let skipped = 0;
+    let root: string;
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
       const { rows: [existing] } = await client.query(
-        "SELECT * FROM whitelist_entry_get($1)",
-        [address.toLowerCase()]
+        "SELECT * FROM whitelist_entry_get($1)", [address.toLowerCase()]
       );
-      let added   = 0;
-      let skipped = 0;
       if (!existing) {
         await client.query(
-          "SELECT whitelist_add($1, $2, $3, $4)",
-          [address, address.toLowerCase(), user_id ?? null, whitelisted]
+          "SELECT whitelist_add($1, $2, $3, $4)", [address, address.toLowerCase(), user_id ?? null, whitelisted]
         );
         added = 1;
       } else {
         skipped = 1;
       }
-      const root = await recalcMerkle(client);
+      root = await recalcMerkle(client);
       await client.query("COMMIT");
-      const { rows: [{ count }] } = await client.query("SELECT whitelist_count() AS count");
-      res.json({ success: true, count: Number(count), added, skipped, duplicates: skipped, merkle_root: root });
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;
     } finally {
       client.release();
     }
+    const { rows: [{ count }] } = await pool.query("SELECT whitelist_count() AS count");
+    res.json({ success: true, count: Number(count), added, skipped, duplicates: skipped, merkle_root: root! });
   } catch (e) { next(e); }
 });
 
@@ -294,13 +300,14 @@ router.delete("/:address", deleteLimit, async (req: Request, res: Response, next
   }
   const client = await pool.connect();
   try {
+    let root: string;
     await client.query("BEGIN");
     // whitelist_remove throws P0002 if not found — errorHandler maps it to 404
     await client.query("SELECT whitelist_remove($1)", [address.toLowerCase()]);
-    const root = await recalcMerkle(client);
+    root = await recalcMerkle(client);
     await client.query("COMMIT");
-    const { rows: [{ count }] } = await client.query("SELECT whitelist_count() AS count");
-    res.json({ success: true, count: Number(count), removed: address, merkle_root: root });
+    const { rows: [{ count }] } = await pool.query("SELECT whitelist_count() AS count");
+    res.json({ success: true, count: Number(count), removed: address, merkle_root: root! });
   } catch (e) {
     await client.query("ROLLBACK");
     next(e);

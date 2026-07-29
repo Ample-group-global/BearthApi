@@ -7,20 +7,19 @@ export async function listProducts(params: {
 }) {
   const { search = null, category = null, status = null, limit = 20, offset = 0 } = params;
   const { rows } = await pool.query(
-    "SELECT * FROM products_list($1, $2, $3, $4, $5)",
+    "SELECT * FROM products_list($1,$2,$3,$4,$5)",
     [search, category, status, limit, offset]
   );
   const { rows: statsRows } = await pool.query(`
     SELECT
       COUNT(*)                                                                            AS global_total,
-      COUNT(*) FILTER (WHERE ps.code = 'active')                                         AS active_count,
+      COUNT(*) FILTER (WHERE p.status_code = 'active')                                    AS active_count,
       COUNT(*) FILTER (WHERE p.stock_qty = 0)                                            AS out_of_stock,
       COUNT(*) FILTER (WHERE p.stock_qty > 0 AND p.stock_qty <= 10)                      AS low_stock,
       COALESCE(SUM(p.presale_price * p.stock_qty), 0)                                    AS total_value,
       COALESCE(SUM(p.reserved_qty), 0)                                                   AS total_reserved,
       COALESCE(SUM(GREATEST(0, p.stock_qty - p.reserved_qty)), 0)                        AS total_available
-    FROM products p
-    LEFT JOIN product_statuses ps ON ps.id = p.status_id
+    FROM v_products p
   `);
   const st = statsRows[0] ?? {};
 
@@ -52,10 +51,8 @@ export async function createProduct(params: {
   const { name, retailPrice, presalePrice, statusId, description,
           stockQty, sortOrder, imageUrl, sku, category } = params;
   const { rows } = await pool.query(
-    "SELECT * FROM products_create($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-    [name, retailPrice ?? null, presalePrice ?? null, statusId ?? null,
-     description ?? null, stockQty ?? 0, sortOrder ?? 0,
-     imageUrl ?? null, sku ?? null, category ?? null]
+    "SELECT * FROM products_create($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+    [name, retailPrice ?? null, presalePrice ?? null, statusId ?? null, description ?? null, stockQty ?? 0, sortOrder ?? 0, imageUrl ?? null, sku ?? null, category ?? null]
   );
   return rows[0] ? toCamel([rows[0]])[0] : null;
 }
@@ -68,10 +65,8 @@ export async function updateProduct(id: string, params: {
   const { name, retailPrice, presalePrice, statusId, description,
           stockQty, sortOrder, imageUrl, sku, category } = params;
   const { rows } = await pool.query(
-    "SELECT * FROM products_update($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
-    [id, name ?? null, retailPrice ?? null, presalePrice ?? null,
-     statusId ?? null, description ?? null, stockQty ?? null, sortOrder ?? null,
-     imageUrl ?? null, sku ?? null, category ?? null]
+    "SELECT * FROM products_update($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+    [id, name ?? null, retailPrice ?? null, presalePrice ?? null, statusId ?? null, description ?? null, stockQty ?? null, sortOrder ?? null, imageUrl ?? null, sku ?? null, category ?? null]
   );
   return rows[0] ? toCamel([rows[0]])[0] : null;
 }
@@ -87,7 +82,7 @@ export async function adjustStock(params: {
 }) {
   const { productId, changeQty, reason = "manual", notes, userId } = params;
   const { rows } = await pool.query(
-    "SELECT * FROM product_stock_adjust($1::uuid, $2, $3, $4, $5)",
+    "SELECT * FROM product_stock_adjust($1::uuid,$2,$3,$4,$5)",
     [productId, changeQty, reason, notes ?? null, userId ?? null]
   );
   return rows[0] ? toCamel([rows[0]])[0] : null;
@@ -113,7 +108,7 @@ export async function bulkCreateProducts(items: Array<{
 
 export async function getStockHistory(productId: string, limit = 50, offset = 0) {
   const { rows } = await pool.query(
-    "SELECT * FROM product_stock_history($1::uuid, $2, $3)",
+    "SELECT * FROM product_stock_history($1::uuid,$2,$3)",
     [productId, limit, offset]
   );
   return {
@@ -147,7 +142,7 @@ export async function addProductImage(
     );
   }
   const { rows } = await pool.query(
-    "INSERT INTO product_images (product_id, url, caption, is_primary, sort_order) VALUES ($1::uuid, $2, $3, $4, $5) RETURNING *",
+    "INSERT INTO product_images (product_id, url, caption, is_primary, sort_order) VALUES ($1::uuid,$2,$3,$4,$5) RETURNING *",
     [productId, url, caption ?? null, isPrimary, sortOrder]
   );
   return rows[0] ? toCamel([rows[0]])[0] : null;
@@ -202,7 +197,7 @@ export async function setProductAttributes(
     for (let i = 0; i < attrs.length; i++) {
       const { key, label, value, sortOrder } = attrs[i];
       await client.query(
-        "INSERT INTO product_attributes (product_id, attr_key, attr_label, attr_value, sort_order) VALUES ($1::uuid, $2, $3, $4, $5)",
+        "INSERT INTO product_attributes (product_id, attr_key, attr_label, attr_value, sort_order) VALUES ($1::uuid,$2,$3,$4,$5)",
         [productId, key, label, value, sortOrder ?? i]
       );
     }

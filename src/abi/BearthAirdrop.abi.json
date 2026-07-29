@@ -1,0 +1,118 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [{ "name": "initialOwner", "type": "address" }]
+    },
+    {
+      "type": "function", "name": "airdropEqual",
+      "inputs": [
+        { "name": "recipients",  "type": "address[]" },
+        { "name": "amountEach",  "type": "uint256"   }
+      ],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function", "name": "airdropEqualSkipFailed",
+      "inputs": [
+        { "name": "recipients",  "type": "address[]" },
+        { "name": "amountEach",  "type": "uint256"   }
+      ],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function", "name": "airdrop",
+      "inputs": [
+        { "name": "recipients", "type": "address[]" },
+        { "name": "amounts",    "type": "uint256[]" }
+      ],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function", "name": "airdropERC20Equal",
+      "inputs": [
+        { "name": "token",       "type": "address"   },
+        { "name": "recipients",  "type": "address[]" },
+        { "name": "amountEach",  "type": "uint256"   }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function", "name": "airdropERC20",
+      "inputs": [
+        { "name": "token",      "type": "address"   },
+        { "name": "recipients", "type": "address[]" },
+        { "name": "amounts",    "type": "uint256[]" }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function", "name": "airdropERC721",
+      "inputs": [
+        { "name": "token",      "type": "address"   },
+        { "name": "recipients", "type": "address[]" },
+        { "name": "tokenIds",   "type": "uint256[]" }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function", "name": "quoteEqual",
+      "inputs": [
+        { "name": "recipientCount", "type": "uint256" },
+        { "name": "amountEach",     "type": "uint256" }
+      ],
+      "outputs": [{ "name": "", "type": "uint256" }],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function", "name": "rescue",
+      "inputs": [{ "name": "to", "type": "address" }],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function", "name": "MAX_RECIPIENTS",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "uint256" }],
+      "stateMutability": "view"
+    },
+    {
+      "type": "event", "name": "AirdropBatch",
+      "inputs": [
+        { "name": "sender",         "type": "address", "indexed": true  },
+        { "name": "recipientCount", "type": "uint256", "indexed": false },
+        { "name": "totalAmount",    "type": "uint256", "indexed": false }
+      ]
+    },
+    {
+      "type": "event", "name": "AirdropERC20Batch",
+      "inputs": [
+        { "name": "token",          "type": "address", "indexed": true  },
+        { "name": "sender",         "type": "address", "indexed": true  },
+        { "name": "recipientCount", "type": "uint256", "indexed": false },
+        { "name": "totalAmount",    "type": "uint256", "indexed": false }
+      ]
+    },
+    {
+      "type": "event", "name": "AirdropERC721Batch",
+      "inputs": [
+        { "name": "token",  "type": "address", "indexed": true  },
+        { "name": "sender", "type": "address", "indexed": true  },
+        { "name": "count",  "type": "uint256", "indexed": false }
+      ]
+    },
+    {
+      "type": "event", "name": "Rescued",
+      "inputs": [
+        { "name": "to",     "type": "address", "indexed": true  },
+        { "name": "amount", "type": "uint256", "indexed": false }
+      ]
+    }
+  ]
+}

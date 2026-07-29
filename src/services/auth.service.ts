@@ -1,6 +1,6 @@
 import pool from "../pool";
 import bcrypt from "bcryptjs";
-import crypto from "crypto";
+import { encodeHmacToken, decodeHmacToken } from "../utils/hmac-token";
 
 const RESET_SECRET = process.env.RESET_SECRET ?? process.env.ADMIN_SECRET ?? "bearth-reset-secret";
 const RESET_EXPIRES_MS = 60 * 60 * 1000; // 1 hour
@@ -46,28 +46,17 @@ export async function updateLastLogin(userId: string): Promise<void> {
 }
 
 export function createResetToken(email: string): string {
-  const expiry  = Date.now() + RESET_EXPIRES_MS;
-  const payload = `${email}:${expiry}`;
-  const sig     = crypto.createHmac("sha256", RESET_SECRET).update(payload).digest("hex");
-  return Buffer.from(`${payload}.${sig}`).toString("base64url");
+  const expiry = Date.now() + RESET_EXPIRES_MS;
+  return encodeHmacToken(`${email}:${expiry}`, RESET_SECRET);
 }
 
 export function verifyResetToken(token: string): { email: string } | null {
-  try {
-    const decoded = Buffer.from(token, "base64url").toString("utf8");
-    const lastDot = decoded.lastIndexOf(".");
-    if (lastDot === -1) return null;
-    const payload = decoded.slice(0, lastDot);
-    const sig     = decoded.slice(lastDot + 1);
-    const expected = crypto.createHmac("sha256", RESET_SECRET).update(payload).digest("hex");
-    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
-    const [email, expiryStr] = payload.split(":");
-    if (!email || !expiryStr) return null;
-    if (Date.now() > Number(expiryStr)) return null;
-    return { email };
-  } catch {
-    return null;
-  }
+  const payload = decodeHmacToken(token, RESET_SECRET);
+  if (!payload) return null;
+  const [email, expiryStr] = payload.split(":");
+  if (!email || !expiryStr) return null;
+  if (Date.now() > Number(expiryStr)) return null;
+  return { email };
 }
 
 export async function updatePassword(email: string, newPassword: string): Promise<boolean> {

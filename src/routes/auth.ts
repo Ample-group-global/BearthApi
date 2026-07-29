@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { createSessionToken, verifySessionCookie, COOKIE_NAME, COOKIE_MAX_AGE } from "../walletAuth";
-import { signToken, verifyToken, AdminRole } from "../presaleAuth";
+import { signToken, verifyToken, AdminRole } from "../adminAuth";
 import * as authService from "../services/auth.service";
 import * as rbacService from "../services/rbac.service";
 import { sendResetPasswordEmail } from "../services/email.service";

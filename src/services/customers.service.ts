@@ -12,7 +12,7 @@ export async function listCustomers(params: {
   const { search = null, activeOnly = true, limit = 20, offset = 0, sortBy = "created_at", sortDir = "desc" } = params;
   const { rows } = await pool.query(
     "SELECT * FROM customers_list($1, $2, $3, $4, $5, $6)",
-    [search, activeOnly, limit, offset, sortBy, sortDir]
+    [search, activeOnly, limit, offset, sortBy, sortDir],
   );
   return { customers: toCamel(rows), total: Number(rows[0]?.total_count ?? 0), limit, offset };
 }
@@ -29,7 +29,7 @@ export async function createCustomer(params: {
   const { firstName, lastName, phone, email, lineId, referrerId, notes } = params;
   const { rows } = await pool.query(
     "SELECT * FROM customers_create($1, $2, $3, $4, $5, $6, $7)",
-    [firstName, lastName, phone ?? null, email ?? null, lineId ?? null, referrerId ?? null, notes ?? null]
+    [firstName, lastName, phone ?? null, email ?? null, lineId ?? null, referrerId ?? null, notes ?? null],
   );
   return rows[0] ?? null;
 }
@@ -41,8 +41,7 @@ export async function updateCustomer(id: string, params: {
   const { firstName, lastName, phone, email, lineId, referrerId, notes, isActive } = params;
   const { rows } = await pool.query(
     "SELECT * FROM customers_update($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-    [id, firstName ?? null, lastName ?? null, phone ?? null, email ?? null,
-     lineId ?? null, referrerId ?? null, notes ?? null, isActive ?? null]
+    [id, firstName ?? null, lastName ?? null, phone ?? null, email ?? null, lineId ?? null, referrerId ?? null, notes ?? null, isActive ?? null],
   );
   return rows[0] ?? null;
 }
@@ -50,7 +49,7 @@ export async function updateCustomer(id: string, params: {
 export async function setCustomerStatus(id: string, isActive: boolean) {
   const { rows } = await pool.query(
     "SELECT * FROM customers_update($1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, $2)",
-    [id, isActive]
+    [id, isActive],
   );
   if (!rows[0]) return null;
   return { id: rows[0].id, isActive: rows[0].is_active };
@@ -63,21 +62,24 @@ export async function deactivateCustomer(id: string) {
 
 export async function listCustomerWallets(customerId: string) {
   const { rows } = await pool.query(
-    "SELECT * FROM customer_wallets_list($1::uuid)", [customerId]
+    "SELECT * FROM customer_wallets_list($1::uuid)",
+    [customerId],
   );
   return toCamel(rows);
 }
 
 export async function addCustomerWallet(customerId: string, address: string) {
   const { rows } = await pool.query(
-    "SELECT * FROM customer_wallets_add($1::uuid, $2)", [customerId, address]
+    "SELECT * FROM customer_wallets_add($1::uuid, $2)",
+    [customerId, address],
   );
   return rows[0] ?? null;
 }
 
 export async function removeCustomerWallet(walletId: string) {
   const { rows } = await pool.query(
-    "SELECT * FROM customer_wallets_remove($1::uuid)", [walletId]
+    "SELECT * FROM customer_wallets_remove($1::uuid)",
+    [walletId],
   );
   return rows[0] ?? null;
 }

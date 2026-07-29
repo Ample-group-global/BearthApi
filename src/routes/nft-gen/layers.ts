@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requirePermission } from "../../presaleAuth";
+import { requirePermission } from "../../adminAuth";
 import * as svc from "../../services/nft-gen.service";
 
 const router = Router();
@@ -37,6 +37,18 @@ router.get("/:id/traits", async (req, res, next) => {
     requirePermission(req, "nft_gen.view");
     const traits = await svc.listTraits(req.params.id);
     res.json({ traits });
+  } catch (e) { next(e); }
+});
+
+router.post("/:id/traits/reconcile", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.manage_layers");
+    const { activeFilePaths } = req.body ?? {};
+    if (!Array.isArray(activeFilePaths)) {
+      res.status(422).json({ error: "activeFilePaths must be an array." }); return;
+    }
+    const result = await svc.reconcileTraits(req.params.id, activeFilePaths);
+    res.json(result);
   } catch (e) { next(e); }
 });
 

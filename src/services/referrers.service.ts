@@ -25,9 +25,6 @@ export async function createReferrer(params: {
   firstName: string; lastName?: string; phone?: string; email?: string;
 }) {
   const { firstName, lastName, phone, email } = params;
-  const { rows } = await pool.query(
-    "SELECT * FROM referrers_create($1, $2, $3, $4)",
-    [firstName, lastName ?? null, phone ?? null, email ?? null]
-  );
+  const { rows } = await pool.query("SELECT * FROM referrers_create($1, $2, $3, $4)", [firstName, lastName ?? null, phone ?? null, email ?? null]);
   return rows[0] ?? null;
 }

@@ -6,7 +6,7 @@ const options: swaggerJsdoc.Options = {
     info: {
       title: "BearthApi",
       version: "2.0.0",
-      description: "Bearth NFT presale & admin API",
+      description: "Bearth NFT admin API",
     },
     servers: [{ url: "http://localhost:8000", description: "Local dev" }],
     components: {
@@ -326,7 +326,7 @@ const options: swaggerJsdoc.Options = {
       },
 
       // ── Presale: Customers ────────────────────────────────────────────────
-      "/api/presale/customers": {
+      "/api/customers": {
         get: {
           tags: ["Presale - Customers"],
           summary: "List customers",
@@ -346,7 +346,7 @@ const options: swaggerJsdoc.Options = {
           responses: { "201": { description: "Customer created" } },
         },
       },
-      "/api/presale/customers/{id}": {
+      "/api/customers/{id}": {
         get: {
           tags: ["Presale - Customers"],
           summary: "Get customer by ID",
@@ -371,7 +371,7 @@ const options: swaggerJsdoc.Options = {
       },
 
       // ── Presale: Orders ───────────────────────────────────────────────────
-      "/api/presale/orders": {
+      "/api/orders": {
         get: {
           tags: ["Presale - Orders"],
           summary: "List orders",
@@ -390,7 +390,7 @@ const options: swaggerJsdoc.Options = {
           responses: { "201": { description: "Order created" } },
         },
       },
-      "/api/presale/orders/{id}": {
+      "/api/orders/{id}": {
         get: {
           tags: ["Presale - Orders"],
           summary: "Get order by ID",
@@ -408,7 +408,7 @@ const options: swaggerJsdoc.Options = {
       },
 
       // ── Presale: Products ─────────────────────────────────────────────────
-      "/api/presale/products": {
+      "/api/products": {
         get: {
           tags: ["Presale - Products"],
           summary: "List products",
@@ -422,7 +422,7 @@ const options: swaggerJsdoc.Options = {
           responses: { "201": { description: "Product created" } },
         },
       },
-      "/api/presale/products/{id}": {
+      "/api/products/{id}": {
         get: {
           tags: ["Presale - Products"],
           summary: "Get product by ID",
@@ -447,7 +447,7 @@ const options: swaggerJsdoc.Options = {
       },
 
       // ── Presale: NFT ──────────────────────────────────────────────────────
-      "/api/presale/nft": {
+      "/api/nft": {
         get: {
           tags: ["Presale - NFT"],
           summary: "List NFT entries",
@@ -455,7 +455,7 @@ const options: swaggerJsdoc.Options = {
           responses: { "200": { description: "NFT entries" } },
         },
       },
-      "/api/presale/nft/{id}/confirm-payment": {
+      "/api/nft/{id}/confirm-payment": {
         post: {
           tags: ["Presale - NFT"],
           summary: "Confirm NFT payment",
@@ -464,7 +464,7 @@ const options: swaggerJsdoc.Options = {
           responses: { "200": { description: "Payment confirmed" } },
         },
       },
-      "/api/presale/nft/{id}/confirm-delivery": {
+      "/api/nft/{id}/confirm-delivery": {
         post: {
           tags: ["Presale - NFT"],
           summary: "Confirm NFT delivery",
@@ -475,7 +475,7 @@ const options: swaggerJsdoc.Options = {
       },
 
       // ── Presale: Referrers ────────────────────────────────────────────────
-      "/api/presale/referrers": {
+      "/api/referrers": {
         get: {
           tags: ["Presale - Referrers"],
           summary: "List referrers",
@@ -491,7 +491,7 @@ const options: swaggerJsdoc.Options = {
       },
 
       // ── Presale: Master ───────────────────────────────────────────────────
-      "/api/presale/master": {
+      "/api/master": {
         get: {
           tags: ["Presale - Master"],
           summary: "Get master/lookup data (countries, payment methods, etc.)",
@@ -501,7 +501,7 @@ const options: swaggerJsdoc.Options = {
       },
 
       // ── Presale: Reconciliation ───────────────────────────────────────────
-      "/api/presale/reconciliation": {
+      "/api/reconciliation": {
         get: {
           tags: ["Presale - Reconciliation"],
           summary: "List reconciliation records",
@@ -511,7 +511,7 @@ const options: swaggerJsdoc.Options = {
       },
 
       // ── Presale: Reports ──────────────────────────────────────────────────
-      "/api/presale/reports": {
+      "/api/reports": {
         get: {
           tags: ["Presale - Reports"],
           summary: "Get report data",
@@ -521,24 +521,24 @@ const options: swaggerJsdoc.Options = {
         },
       },
 
-      // ── Presale: Users (admin users via presale router) ───────────────────
-      "/api/presale/users": {
+      // ── Admin: Users (admin users via core router) ───────────────────
+      "/api/users": {
         get: {
           tags: ["Presale - Users"],
-          summary: "List admin users (presale context)",
+          summary: "List admin users (admin context)",
           security: [{ bearerAuth: [] }],
           responses: { "200": { description: "Users list" } },
         },
         post: {
           tags: ["Presale - Users"],
-          summary: "Create admin user (presale context)",
+          summary: "Create admin user (admin context)",
           security: [{ bearerAuth: [] }],
           responses: { "201": { description: "User created" } },
         },
       },
 
       // ── Presale: Waves ───────────────────────────────────────────────────
-      "/api/presale/waves": {
+      "/api/waves": {
         get: {
           tags: ["Presale - Waves"],
           summary: "List NFT waves",
@@ -553,7 +553,7 @@ const options: swaggerJsdoc.Options = {
           responses: { "201": { description: "Wave created" } },
         },
       },
-      "/api/presale/waves/{id}": {
+      "/api/waves/{id}": {
         get: {
           tags: ["Presale - Waves"],
           summary: "Get wave by ID",

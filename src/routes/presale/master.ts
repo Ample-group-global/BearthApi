@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireRole } from "../../presaleAuth";
+import { requireRole } from "../../adminAuth";
 import * as masterService from "../../services/master.service";
 
 const router = Router();

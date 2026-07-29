@@ -22,17 +22,8 @@ export async function updateWave(id: string, params: {
 }) {
   const { defaultPriceEth, saleMethod, scheduledStart, scheduledEnd, status, notes, clearSchedule } = params;
   const { rows } = await pool.query(
-    `SELECT * FROM wave_upsert($1::uuid, $2, $3, $4, $5, $6, $7, $8)`,
-    [
-      id,
-      defaultPriceEth ?? null,
-      saleMethod      ?? null,
-      scheduledStart  ?? null,
-      scheduledEnd    ?? null,
-      status          ?? null,
-      notes           ?? null,
-      clearSchedule   ?? false,
-    ]
+    "SELECT * FROM wave_upsert($1::uuid, $2, $3, $4, $5, $6, $7, $8)",
+    [id, defaultPriceEth ?? null, saleMethod ?? null, scheduledStart ?? null, scheduledEnd ?? null, status ?? null, notes ?? null, clearSchedule ?? false],
   );
   return rows[0] ? toCamel([rows[0]])[0] : null;
 }

@@ -12,10 +12,7 @@ export async function listPurchaseOrders(params: {
   offset?: number;
 }) {
   const { status = null, limit = 20, offset = 0 } = params;
-  const { rows } = await pool.query(
-    "SELECT * FROM purchase_orders_list($1, $2, $3)",
-    [status, limit, offset]
-  );
+  const { rows } = await pool.query("SELECT * FROM purchase_orders_list($1,$2,$3)", [status, limit, offset]);
   return {
     purchaseOrders: toCamel(rows),
     total:  Number(rows[0]?.total_count ?? 0),
@@ -39,7 +36,7 @@ export async function createPurchaseOrder(params: {
 }) {
   const { poNumber, supplier, notes, expectedDate, createdBy, items = [] } = params;
   const { rows } = await pool.query(
-    "SELECT purchase_order_create($1, $2, $3, $4::date, $5, $6::json) AS data",
+    "SELECT purchase_order_create($1,$2,$3,$4::date,$5,$6::json) AS data",
     [poNumber, supplier ?? null, notes ?? null, expectedDate ?? null, createdBy ?? null, JSON.stringify(items)]
   );
   return rows[0]?.data ?? null;
@@ -47,7 +44,7 @@ export async function createPurchaseOrder(params: {
 
 export async function receivePurchaseOrder(id: string, items: unknown[], userId?: string | null) {
   const { rows } = await pool.query(
-    "SELECT purchase_order_receive($1::uuid, $2::json, $3) AS data",
+    "SELECT purchase_order_receive($1::uuid,$2::json,$3) AS data",
     [id, JSON.stringify(items), userId ?? null]
   );
   return rows[0]?.data ?? null;
@@ -125,12 +122,11 @@ export async function createReturn(params: {
   notes?: string;
 }) {
   const { orderId, productId, quantity = 1, reason, condition = "good", notes } = params;
-  const { rows } = await pool.query(
-    `INSERT INTO order_return_items (order_id, product_id, quantity, reason, condition, notes, status)
-     VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, 'pending')
-     RETURNING *`,
-    [orderId, productId, quantity, reason ?? null, condition, notes ?? null]
-  );
+  const { rows } = await pool.query(`
+    INSERT INTO order_return_items (order_id, product_id, quantity, reason, condition, notes, status)
+    VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, 'pending')
+    RETURNING *
+  `, [orderId, productId, quantity, reason ?? null, condition, notes ?? null]);
   return rows[0] ? toCamel([rows[0]])[0] : null;
 }
 
@@ -138,21 +134,20 @@ export async function processReturn(returnId: string, status: string, processedB
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const { rows } = await client.query(
-      `UPDATE order_return_items
-       SET status = $2, processed_by = $3, updated_at = now()
-       WHERE id = $1::uuid
-       RETURNING *`,
-      [returnId, status, processedBy ?? null]
-    );
+
+    const { rows } = await client.query(`
+      UPDATE order_return_items
+      SET status = $1, processed_by = $2, updated_at = now()
+      WHERE id = $3::uuid
+      RETURNING *
+    `, [status, processedBy ?? null, returnId]);
     const ret = rows[0];
 
     // Auto-restock when return is approved and item is in sellable condition
     if (ret && status === "approved" && ret.condition === "sellable") {
       await client.query(
-        "SELECT product_stock_adjust($1::uuid, $2, $3, $4, $5)",
-        [ret.product_id, ret.quantity, "return_restocked",
-         `Return approved: ${returnId}`, processedBy ?? null]
+        "SELECT product_stock_adjust($1::uuid,$2,$3,$4,$5)",
+        [ret.product_id, ret.quantity, "return_restocked", `Return approved: ${returnId}`, processedBy ?? null]
       );
     }
 
