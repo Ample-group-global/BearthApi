@@ -1,6 +1,8 @@
+import fs   from "fs";
+import path from "path";
 import pool from "../pool";
 import { toCamel } from "../utils/camel";
-import { S3Client, ListObjectsV2Command, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, ListObjectsV2Command, HeadObjectCommand, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 
 const s3 = new S3Client({
   endpoint: "https://s3.filebase.com",
@@ -735,6 +737,18 @@ export async function syncAllGeneratedItemsToNftRecords(): Promise<number> {
 
 export async function fetchLayerImage(rel: string): Promise<Buffer | null> {
   if (!rel || rel.includes('..') || rel.startsWith('/')) return null;
+
+  // 1. Try local disk first (fast, works on Railway with LAYERS_DIR set)
+  const layersDir = process.env.LAYERS_DIR;
+  if (layersDir && fs.existsSync(layersDir)) {
+    const abs   = path.resolve(layersDir, rel);
+    const check = path.relative(path.resolve(layersDir), abs);
+    if (!check.startsWith('..') && !path.isAbsolute(check)) {
+      try { return fs.readFileSync(abs); } catch { }
+    }
+  }
+
+  // 2. Fall back to Filebase S3 (works everywhere once layers are uploaded)
   const bucket = process.env.FILEBASE_LAYERS_BUCKET || 'bearth-layers';
   try {
     const resp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: rel }));
@@ -747,4 +761,14 @@ export async function fetchLayerImage(rel: string): Promise<Buffer | null> {
   } catch {
     return null;
   }
+}
+
+export async function uploadLayerImage(rel: string, buf: Buffer): Promise<void> {
+  const bucket = process.env.FILEBASE_LAYERS_BUCKET || 'bearth-layers';
+  await s3.send(new PutObjectCommand({
+    Bucket:      bucket,
+    Key:         rel,
+    Body:        buf,
+    ContentType: 'image/png',
+  }));
 }

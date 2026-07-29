@@ -1,8 +1,60 @@
+import fs      from "fs";
+import path    from "path";
+import multer  from "multer";
 import { Router } from "express";
 import { requirePermission } from "../../adminAuth";
 import * as svc from "../../services/nft-gen.service";
 
 const router = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+// ── POST /upload — receive layer PNGs from BearthAdmin, save to disk + S3 ────
+router.post("/upload", upload.array("files"), async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.manage_layers");
+
+    const layer    = (req.body?.layer ?? "") as string;
+    const subpaths = ([] as string[]).concat(req.body?.subpaths ?? []);
+    const files    = (req.files ?? []) as Express.Multer.File[];
+
+    const safe = layer.replace(/[^a-zA-Z0-9\-_]/g, "");
+    if (!safe) { res.status(400).json({ error: "layer name required" }); return; }
+
+    const layersDir  = process.env.LAYERS_DIR ?? null;
+    const added:       string[] = [];
+    const s3Uploaded:  string[] = [];
+    const s3Failures:  string[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file    = files[i];
+      const sub     = (subpaths[i] ?? "").replace(/\.\./g, "").replace(/^\//, "");
+      const base    = file.originalname.split(/[\\/]/).pop() ?? file.originalname;
+      const safeName = base.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      if (!safeName.match(/\.(png|webp|jpg|jpeg|gif)$/i)) continue;
+
+      const rel = sub ? `${safe}/${sub}` : `${safe}/${safeName}`;
+
+      // 1. Persist to local disk if LAYERS_DIR is configured (Railway)
+      if (layersDir) {
+        const targetDir = path.join(layersDir, safe, path.dirname(sub || safeName));
+        fs.mkdirSync(targetDir, { recursive: true });
+        fs.writeFileSync(path.join(layersDir, rel), file.buffer);
+      }
+
+      // 2. Upload to Filebase S3 so BearthAdmin (Vercel) can serve thumbnails
+      try {
+        await svc.uploadLayerImage(rel, file.buffer);
+        s3Uploaded.push(rel);
+      } catch {
+        s3Failures.push(rel);
+      }
+
+      added.push(rel);
+    }
+
+    res.json({ ok: true, added, s3Uploaded, s3Failures });
+  } catch (e) { next(e); }
+});
 
 router.get("/image", async (req, res, next) => {
   try {
