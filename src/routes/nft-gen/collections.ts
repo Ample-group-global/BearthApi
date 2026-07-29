@@ -1,5 +1,7 @@
+import path   from "path";
 import { Router } from "express";
 import { requirePermission } from "../../adminAuth";
+import pool    from "../../pool";
 import * as svc from "../../services/nft-gen.service";
 
 const router = Router();
@@ -52,6 +54,47 @@ router.delete("/:id", async (req, res, next) => {
 });
 
 // ── Layers nested under collection ──────────────────────────────────────────
+
+// Full layer+traits structure in scanLayers() format — used by BearthAdmin on Vercel
+// when local filesystem scan is empty (no LAYERS_DIR on Vercel/serverless).
+router.get("/:id/layers-organise", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.view");
+    const { rows: layerRows } = await pool.query(
+      "SELECT * FROM nft_gen_layers_list($1::uuid)", [req.params.id]
+    );
+    const active = layerRows
+      .filter((l: any) => l.is_active)
+      .sort((a: any, b: any) => a.sort_order - b.sort_order);
+
+    if (!active.length) { res.json({ layers: [] }); return; }
+
+    const layerIds = active.map((l: any) => l.id);
+    const { rows: traitRows } = await pool.query(
+      "SELECT * FROM nft_traits WHERE layer_id = ANY($1::uuid[]) AND is_active = true",
+      [layerIds]
+    );
+
+    const layers = active.map((l: any) => {
+      const traits = traitRows.filter((t: any) => t.layer_id === l.id);
+      return {
+        folder:    l.name,
+        label:     l.display_name ?? l.name,
+        count:     traits.length,
+        optional:  l.layer_rarity_pct != null && Number(l.layer_rarity_pct) < 100,
+        bypassDna: l.bypass_dna ?? false,
+        rarityPct: Number(l.layer_rarity_pct ?? 100),
+        assets: traits.map((t: any) => ({
+          stem:          path.basename(t.file_path, path.extname(t.file_path)),
+          name:          t.name,
+          rel:           t.file_path,
+          defaultWeight: Number(t.rarity_weight ?? 1),
+        })),
+      };
+    });
+    res.json({ layers });
+  } catch (e) { next(e); }
+});
 
 router.get("/:id/layers", async (req, res, next) => {
   try {
