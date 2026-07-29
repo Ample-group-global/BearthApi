@@ -437,3 +437,79 @@ export async function batchUpdateItemIpfsCids(params: {
   );
   return rows[0]?.updated ?? 0;
 }
+
+// ── Sync generated items → nft_records ───────────────────────────────────────
+// Called after Filebase export completes. Promotes every item that has both
+// ipfs_image_cid and ipfs_metadata_cid into nft_records so they appear on the
+// NFT Records page and are available for wave selling.
+// Idempotent: ON CONFLICT updates the IPFS fields if re-run.
+
+export async function syncGeneratedItemsToNftRecords(jobId: string): Promise<number> {
+  // Resolve stage and delivery-status IDs once from lookup_values
+  const { rows: lookupRows } = await pool.query(
+    `SELECT id, category, code FROM lookup_values
+     WHERE (category = 'nft_stage'       AND code = 'genesis')
+        OR (category = 'delivery_status' AND code = 'pending')`,
+  );
+  const genesisStageId    = lookupRows.find((r: { category: string; code: string }) => r.category === 'nft_stage'       && r.code === 'genesis')?.id as string | undefined;
+  const pendingStatusId   = lookupRows.find((r: { category: string; code: string }) => r.category === 'delivery_status' && r.code === 'pending')?.id as string | undefined;
+
+  if (!genesisStageId || !pendingStatusId) {
+    throw new Error("Required lookup values (nft_stage:genesis, delivery_status:pending) not found");
+  }
+
+  const { rows: items } = await pool.query(
+    `SELECT edition_number, ipfs_image_cid, ipfs_metadata_cid, metadata_json
+     FROM nft_generated_items
+     WHERE job_id = $1::uuid
+       AND ipfs_image_cid    IS NOT NULL
+       AND ipfs_metadata_cid IS NOT NULL
+     ORDER BY edition_number ASC`,
+    [jobId],
+  );
+
+  if (!items.length) return 0;
+
+  let synced = 0;
+  for (const item of items) {
+    const serialNumber = `#${item.edition_number}`;
+    const meta = typeof item.metadata_json === 'string'
+      ? JSON.parse(item.metadata_json) as Record<string, unknown>
+      : (item.metadata_json as Record<string, unknown>) ?? {};
+
+    // Flatten attributes array → { trait_type: value } object
+    const traits: Record<string, string> = {};
+    if (Array.isArray(meta.attributes)) {
+      for (const attr of meta.attributes as Array<{ trait_type?: string; value?: unknown }>) {
+        if (attr.trait_type && attr.value !== undefined) {
+          traits[attr.trait_type] = String(attr.value);
+        }
+      }
+    }
+
+    await pool.query(
+      `INSERT INTO nft_records (
+         serial_number, stage_id, delivery_status_id,
+         image_ipfs_hash, metadata_ipfs_hash, metadata_uri, traits
+       ) VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7::jsonb)
+       ON CONFLICT (serial_number) DO UPDATE SET
+         image_ipfs_hash    = EXCLUDED.image_ipfs_hash,
+         metadata_ipfs_hash = EXCLUDED.metadata_ipfs_hash,
+         metadata_uri       = EXCLUDED.metadata_uri,
+         traits             = EXCLUDED.traits,
+         updated_at         = NOW()`,
+      [
+        serialNumber,
+        genesisStageId,
+        pendingStatusId,
+        item.ipfs_image_cid,
+        item.ipfs_metadata_cid,
+        `ipfs://${item.ipfs_metadata_cid}`,
+        JSON.stringify(traits),
+      ],
+    );
+    synced++;
+  }
+
+  return synced;
+}

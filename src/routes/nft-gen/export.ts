@@ -9,7 +9,7 @@ import sharp                                                     from "sharp";
 import { requirePermission }                                     from "../../adminAuth";
 import pool                                                      from "../../pool";
 import { getS3Client }                                           from "../../clients/s3";
-import { batchUpdateItemIpfsCids }                               from "../../services/nft-gen.service";
+import { batchUpdateItemIpfsCids, syncGeneratedItemsToNftRecords } from "../../services/nft-gen.service";
 
 const router = Router();
 
@@ -386,8 +386,12 @@ async function runExport(
     }
   }
 
+  // Promote all IPFS-synced items into nft_records for wave selling
+  state.phase = "Syncing to NFT Records…";
+  const synced = await syncGeneratedItemsToNftRecords(jobId);
+
   state.status = "done";
-  state.phase  = `Complete — ${total} NFTs exported to Filebase`;
+  state.phase  = `Complete — ${total} NFTs exported to Filebase, ${synced} synced to NFT Records`;
 }
 
 async function runPreview(
