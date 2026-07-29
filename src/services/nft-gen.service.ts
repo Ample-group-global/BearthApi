@@ -732,3 +732,19 @@ export async function syncAllGeneratedItemsToNftRecords(): Promise<number> {
 
   return rowCount ?? items.length;
 }
+
+export async function fetchLayerImage(rel: string): Promise<Buffer | null> {
+  if (!rel || rel.includes('..') || rel.startsWith('/')) return null;
+  const bucket = process.env.FILEBASE_LAYERS_BUCKET || 'bearth-layers';
+  try {
+    const resp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: rel }));
+    if (!resp.Body) return null;
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of resp.Body as AsyncIterable<Uint8Array>) {
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  } catch {
+    return null;
+  }
+}

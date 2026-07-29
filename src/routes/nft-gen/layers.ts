@@ -4,6 +4,21 @@ import * as svc from "../../services/nft-gen.service";
 
 const router = Router();
 
+router.get("/image", async (req, res, next) => {
+  try {
+    const rel = req.query.rel as string | undefined;
+    if (!rel || rel.includes("..") || rel.startsWith("/")) {
+      res.status(400).json({ error: "Invalid rel path." });
+      return;
+    }
+    const buf = await svc.fetchLayerImage(rel);
+    if (!buf) { res.status(404).json({ error: "Image not found." }); return; }
+    res.set("Content-Type", "image/png");
+    res.set("Cache-Control", "public, max-age=86400");
+    res.send(buf);
+  } catch (e) { next(e); }
+});
+
 router.get("/:id", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.view");
