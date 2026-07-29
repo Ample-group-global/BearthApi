@@ -98,7 +98,7 @@ router.get("/:id/items", async (req, res, next) => {
 router.get("/:id/display-items", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.view");
-    const limit  = Math.min(Number(req.query.limit  ?? 50), 200);
+    const limit  = Math.min(Number(req.query.limit  ?? 50), 10000);
     const offset = Number(req.query.offset ?? 0);
     const { rows } = await pool.query(`
       SELECT
