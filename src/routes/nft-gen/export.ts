@@ -9,7 +9,7 @@ import sharp                                                     from "sharp";
 import { requirePermission }                                     from "../../adminAuth";
 import pool                                                      from "../../pool";
 import { getS3Client }                                           from "../../clients/s3";
-import { batchUpdateItemIpfsCids, syncGeneratedItemsToNftRecords } from "../../services/nft-gen.service";
+import { batchUpdateItemIpfsCids, syncGeneratedItemsToNftRecords, getLocalLayersDir } from "../../services/nft-gen.service";
 
 const router = Router();
 
@@ -84,14 +84,12 @@ function makeLayerFetcher(layersDir: string | null) {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function resolveLayersDir(): string | null {
-  const dir = process.env.LAYERS_DIR || null;
-  if (dir && !fs.existsSync(dir)) return null; // configured but missing on disk
-  return dir;
+  const dir = getLocalLayersDir();
+  return fs.existsSync(dir) ? dir : null;
 }
 
 function hasLayerSource(): boolean {
-  const dir = process.env.LAYERS_DIR;
-  if (dir && fs.existsSync(dir)) return true;
+  if (fs.existsSync(getLocalLayersDir())) return true;
   return !!process.env.LAYERS_BUCKET;
 }
 

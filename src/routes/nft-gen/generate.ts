@@ -29,9 +29,9 @@ router.post("/", async (req, res, next) => {
     if (!collectionId)        { res.status(422).json({ error: "collectionId is required." }); return; }
     if (!editionSize || Number(editionSize) < 1) { res.status(422).json({ error: "editionSize must be >= 1." }); return; }
 
-    const layersDir = process.env.LAYERS_DIR;
-    if (!layersDir || !fs.existsSync(layersDir)) {
-      res.status(500).json({ error: "LAYERS_DIR not configured on server." }); return;
+    const layersDir = svc.getLocalLayersDir();
+    if (!fs.existsSync(layersDir)) {
+      res.status(500).json({ error: "No layers found. Upload a layer folder in NFT Studio → Settings first." }); return;
     }
 
     const generateId = randomUUID();

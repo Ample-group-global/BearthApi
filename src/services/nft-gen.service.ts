@@ -736,9 +736,9 @@ export async function syncAllGeneratedItemsToNftRecords(): Promise<number> {
 }
 
 // Returns the layers root directory.
-// Uses LAYERS_DIR env var on Railway/prod; falls back to a 'layers' sibling
-// folder inside BearthApi for zero-config local development.
-function getLocalLayersDir(): string {
+// Uses LAYERS_DIR env var on Railway/prod; falls back to a 'layers' folder
+// inside BearthApi for zero-config local development.
+export function getLocalLayersDir(): string {
   return process.env.LAYERS_DIR ?? path.resolve(process.cwd(), 'layers');
 }
 
