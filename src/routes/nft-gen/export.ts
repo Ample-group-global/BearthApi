@@ -1,13 +1,15 @@
-import { Router }                           from "express";
-import { PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
-import { randomUUID }                          from "crypto";
-import path                                    from "path";
-import fs                                      from "fs";
-import sharp                                   from "sharp";
-import { requirePermission }                   from "../../adminAuth";
-import pool                                    from "../../pool";
-import { getS3Client }                         from "../../clients/s3";
-import { batchUpdateItemIpfsCids }             from "../../services/nft-gen.service";
+import { Router }                                                from "express";
+import { PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { randomUUID }                                            from "crypto";
+import path                                                      from "path";
+import fs                                                        from "fs";
+import os                                                        from "os";
+import { Readable }                                              from "stream";
+import sharp                                                     from "sharp";
+import { requirePermission }                                     from "../../adminAuth";
+import pool                                                      from "../../pool";
+import { getS3Client }                                           from "../../clients/s3";
+import { batchUpdateItemIpfsCids }                               from "../../services/nft-gen.service";
 
 const router = Router();
 
@@ -33,6 +35,66 @@ interface PreviewState {
 
 const previewJobs = new Map<string, PreviewState & { dir: string }>();
 
+// ── Layer fetcher ─────────────────────────────────────────────────────────────
+// Reads raw PNG buffers from local disk (LAYERS_DIR) or Filebase S3 (LAYERS_BUCKET).
+// LAYERS_BUCKET stores the raw trait PNGs at the same relative key as file_path in DB.
+// Returns an async fetcher with its own per-job in-memory cache.
+
+async function streamToBuffer(body: unknown): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const readable = body as Readable;
+    readable.on("data", (c: Buffer) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+    readable.on("end",  () => resolve(Buffer.concat(chunks)));
+    readable.on("error", reject);
+  });
+}
+
+function makeLayerFetcher(layersDir: string | null) {
+  const cache       = new Map<string, Buffer>();
+  const resolvedDir = layersDir ? path.resolve(layersDir) : null;
+
+  return async function fetchLayerBuf(filePath: string): Promise<Buffer | null> {
+    if (cache.has(filePath)) return cache.get(filePath)!;
+
+    let buf: Buffer | null = null;
+
+    if (resolvedDir) {
+      // Local filesystem — dev / Railway
+      const abs = path.resolve(resolvedDir, filePath);
+      if (abs.startsWith(resolvedDir) && fs.existsSync(abs)) {
+        buf = fs.readFileSync(abs);
+      }
+    } else {
+      // Cloud storage — Vercel / prod without local disk
+      const bucket = process.env.LAYERS_BUCKET;
+      if (bucket) {
+        try {
+          const res = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: filePath }));
+          buf = await streamToBuffer(res.Body);
+        } catch { buf = null; }
+      }
+    }
+
+    if (buf) cache.set(filePath, buf);
+    return buf;
+  };
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function resolveLayersDir(): string | null {
+  const dir = process.env.LAYERS_DIR || null;
+  if (dir && !fs.existsSync(dir)) return null; // configured but missing on disk
+  return dir;
+}
+
+function hasLayerSource(): boolean {
+  const dir = process.env.LAYERS_DIR;
+  if (dir && fs.existsSync(dir)) return true;
+  return !!process.env.LAYERS_BUCKET;
+}
+
 // ── POST / — start server-side export ────────────────────────────────────────
 
 router.post("/", async (req, res, next) => {
@@ -48,9 +110,8 @@ router.post("/", async (req, res, next) => {
     if (!jobId)  { res.status(422).json({ error: "jobId is required."  }); return; }
     if (!bucket) { res.status(422).json({ error: "bucket is required." }); return; }
 
-    const layersDir = process.env.LAYERS_DIR;
-    if (!layersDir || !fs.existsSync(layersDir)) {
-      res.status(500).json({ error: "LAYERS_DIR env var is not configured or path does not exist on this server." });
+    if (!hasLayerSource()) {
+      res.status(500).json({ error: "No layer source configured. Set LAYERS_DIR (local path) or LAYERS_BUCKET (Filebase bucket name)." });
       return;
     }
 
@@ -72,11 +133,11 @@ router.post("/", async (req, res, next) => {
 
     runExport(exportId, jobId, {
       bucket,
-      format: String(format),
-      width:  Number(width),
-      height: Number(height),
+      format:         String(format),
+      width:          Number(width),
+      height:         Number(height),
       total,
-      layersDir,
+      layersDir:      resolveLayersDir(),
       collectionName: String(collectionName),
       description:    String(description),
       nameFormat:     String(nameFormat),
@@ -98,9 +159,8 @@ router.post("/preview", async (req, res, next) => {
     const { jobId, width = 512, height = 512 } = req.body ?? {};
     if (!jobId) { res.status(422).json({ error: "jobId is required." }); return; }
 
-    const layersDir = process.env.LAYERS_DIR;
-    if (!layersDir || !fs.existsSync(layersDir)) {
-      res.status(500).json({ error: "LAYERS_DIR not configured or path does not exist." });
+    if (!hasLayerSource()) {
+      res.status(500).json({ error: "No layer source configured. Set LAYERS_DIR (local path) or LAYERS_BUCKET (Filebase bucket name)." });
       return;
     }
 
@@ -111,8 +171,13 @@ router.post("/preview", async (req, res, next) => {
     const total = Number(countRows[0]?.cnt ?? 0);
     if (total === 0) { res.status(422).json({ error: "No generated items for this job." }); return; }
 
-    const previewId  = randomUUID();
-    const previewDir = path.join(path.dirname(path.resolve(layersDir)), "nft-previews", previewId);
+    const previewId = randomUUID();
+    const layersDir = resolveLayersDir();
+
+    // Use /tmp on Vercel (no local LAYERS_DIR); use sibling folder in dev
+    const previewDir = layersDir
+      ? path.join(path.dirname(path.resolve(layersDir)), "nft-previews", previewId)
+      : path.join(os.tmpdir(), "bearth-previews", previewId);
     fs.mkdirSync(previewDir, { recursive: true });
 
     previewJobs.set(previewId, {
@@ -161,7 +226,7 @@ router.get("/:exportId", (req, res) => {
   res.json(state);
 });
 
-// ── Background worker ─────────────────────────────────────────────────────────
+// ── Background workers ────────────────────────────────────────────────────────
 
 const BATCH               = 10;
 const CONCURRENCY         = 5;
@@ -187,26 +252,15 @@ async function runExport(
   jobId:    string,
   opts: {
     bucket: string; format: string; width: number; height: number; total: number;
-    layersDir: string; collectionName: string; description: string; nameFormat: string; externalUrl: string;
+    layersDir: string | null; collectionName: string; description: string; nameFormat: string; externalUrl: string;
   },
 ) {
   const { bucket, format, width, height, total, layersDir, collectionName, description, nameFormat, externalUrl } = opts;
-  const ext  = format === "webp" ? "webp" : "png";
-  const mime = ext === "webp" ? "image/webp" : "image/png";
-  const state = exportJobs.get(exportId)!;
-  const s3    = getS3Client();
-  const resolvedLayersDir = path.resolve(layersDir);
-
-  const bufCache = new Map<string, Buffer>();
-
-  function readLayerBuf(filePath: string): Buffer | null {
-    if (bufCache.has(filePath)) return bufCache.get(filePath)!;
-    const abs = path.resolve(resolvedLayersDir, filePath);
-    if (!abs.startsWith(resolvedLayersDir) || !fs.existsSync(abs)) return null;
-    const buf = fs.readFileSync(abs);
-    bufCache.set(filePath, buf);
-    return buf;
-  }
+  const ext          = format === "webp" ? "webp" : "png";
+  const mime         = ext === "webp" ? "image/webp" : "image/png";
+  const state        = exportJobs.get(exportId)!;
+  const s3           = getS3Client();
+  const fetchLayerBuf = makeLayerFetcher(layersDir);
 
   for (let offset = 0; offset < total; offset += BATCH) {
     const batchEnd = Math.min(offset + BATCH, total);
@@ -274,7 +328,7 @@ async function runExport(
         const validLayers = layerRows.filter(l => l.file_path);
         const resized: Buffer[] = [];
         for (const layer of validLayers) {
-          const raw = readLayerBuf(layer.file_path!);
+          const raw = await fetchLayerBuf(layer.file_path!);
           if (!raw) continue;
           resized.push(await sharp(raw).resize(width, height).toBuffer());
         }
@@ -339,25 +393,14 @@ async function runExport(
 async function runPreview(
   previewId: string,
   jobId:     string,
-  opts: { width: number; height: number; total: number; layersDir: string; previewDir: string },
+  opts: { width: number; height: number; total: number; layersDir: string | null; previewDir: string },
 ) {
   const { total, layersDir, previewDir } = opts;
-  const state = previewJobs.get(previewId)!;
-  const resolvedLayersDir = path.resolve(layersDir);
+  const state         = previewJobs.get(previewId)!;
+  const fetchLayerBuf = makeLayerFetcher(layersDir);
 
-  // Raw file read cache (avoids repeated disk reads)
-  const rawCache = new Map<string, Buffer>();
-  function readLayerBuf(filePath: string): Buffer | null {
-    if (rawCache.has(filePath)) return rawCache.get(filePath)!;
-    const abs = path.resolve(resolvedLayersDir, filePath);
-    if (!abs.startsWith(resolvedLayersDir) || !fs.existsSync(abs)) return null;
-    const buf = fs.readFileSync(abs);
-    rawCache.set(filePath, buf);
-    return buf;
-  }
-
-  // Resized thumbnail cache — key point: only ~200-300 unique trait PNGs across 9999 NFTs.
-  // Without this cache, Sharp would resize each PNG ~50x on average. With it: resize once, reuse.
+  // Resized thumbnail cache — only ~200-300 unique trait PNGs across 9999 NFTs.
+  // Resize once per unique file_path, reuse the buffer across all editions.
   const resizedCache = new Map<string, Promise<Buffer>>();
   function getResized(filePath: string, raw: Buffer): Promise<Buffer> {
     if (!resizedCache.has(filePath)) {
@@ -406,9 +449,9 @@ async function runPreview(
     // Pre-warm the resized cache for all unique trait PNGs in this batch
     const uniquePaths = new Set<string>();
     for (const row of rows) { if (row.file_path) uniquePaths.add(row.file_path); }
-    await Promise.all([...uniquePaths].map(fp => {
-      const raw = readLayerBuf(fp);
-      return raw ? getResized(fp, raw) : Promise.resolve(null);
+    await Promise.all([...uniquePaths].map(async fp => {
+      const raw = await fetchLayerBuf(fp);
+      return raw ? getResized(fp, raw) : null;
     }));
 
     const editions = [...byEdition.keys()].sort((a, b) => a - b);
@@ -423,7 +466,7 @@ async function runPreview(
         // All resized buffers are already in cache — no expensive decode/resize per NFT
         const resized: Buffer[] = [];
         for (const layer of validLayers) {
-          const raw = readLayerBuf(layer.file_path!);
+          const raw = await fetchLayerBuf(layer.file_path!);
           if (!raw) continue;
           resized.push(await getResized(layer.file_path!, raw));
         }
