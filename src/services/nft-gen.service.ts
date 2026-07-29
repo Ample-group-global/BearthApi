@@ -768,12 +768,18 @@ export async function fetchLayerImage(rel: string): Promise<Buffer | null> {
   }
 }
 
+const MIME_MAP: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+  gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+};
+
 export async function uploadLayerImage(rel: string, buf: Buffer): Promise<void> {
+  const ext = rel.split('.').pop()?.toLowerCase() ?? '';
   const bucket = process.env.FILEBASE_LAYERS_BUCKET || 'bearth-layers';
   await s3.send(new PutObjectCommand({
     Bucket:      bucket,
     Key:         rel,
     Body:        buf,
-    ContentType: 'image/png',
+    ContentType: MIME_MAP[ext] ?? 'image/png',
   }));
 }
