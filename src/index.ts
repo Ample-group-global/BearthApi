@@ -57,9 +57,15 @@ app.use(rateLimit({ windowMs: 60_000, limit: 500, standardHeaders: "draft-7", le
 // swagger-ui-express uses express.static() which doesn't work on Vercel serverless
 // (asset requests return HTML). Serve assets from CDN instead.
 
-app.get("/api/docs.json", (_req, res) => {
+app.get("/api/docs.json", (req, res) => {
+  const proto  = (req.headers["x-forwarded-proto"] as string) || "http";
+  const host   = req.headers.host ?? `localhost:${PORT}`;
+  const spec   = {
+    ...(swaggerSpec as object),
+    servers: [{ url: `${proto}://${host}`, description: "Current server" }],
+  };
   res.setHeader("Content-Type", "application/json");
-  res.send(swaggerSpec);
+  res.send(spec);
 });
 
 app.get("/api/docs", (_req, res) => {
