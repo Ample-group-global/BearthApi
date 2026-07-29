@@ -8,6 +8,7 @@ import {
   contractAuctionMint,
   contractGetWaveInfo,
   contractSetAllowlistRoot,
+  contractRevealWave,
   resyncFromBlock,
 } from "../../services/contract.service";
 import { buildMerkleTree } from "../../merkle";
@@ -101,6 +102,25 @@ router.put("/:num/price", requireAdmin, async (req, res, next) => {
     const priceWei = ethers.parseEther(priceStr);
     const receipt  = await contractSetWavePrice(num, priceWei);
     res.json({ ok: true, txHash: receipt.hash });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/nft-sell/waves/:num/reveal — admin manually reveals a specific wave
+// Body: { uri: string }  e.g. "ipfs://Qm.../collection-metadata.json"
+router.post("/:num/reveal", requireAdmin, async (req, res, next) => {
+  try {
+    const num = parseInt(req.params.num, 10);
+    const { uri } = req.body as { uri: string };
+    if (isNaN(num) || num < 1 || num > 7)
+      return res.status(400).json({ error: "Wave number must be 1–7" });
+    if (!uri?.startsWith("ipfs://"))
+      return res.status(400).json({ error: "uri must start with ipfs://" });
+
+    const receipt = await contractRevealWave(num, uri);
+    await pool.query("SELECT nft_wave_sync_reveal($1,$2,$3)", [num, uri, receipt.hash]).catch(() => null);
+    res.json({ ok: true, txHash: receipt.hash, waveNumber: num });
   } catch (err) {
     next(err);
   }
