@@ -8,12 +8,7 @@ const options: swaggerJsdoc.Options = {
       version: "2.0.0",
       description: "Bearth NFT admin API",
     },
-    servers: [
-      ...(process.env.VERCEL_URL
-        ? [{ url: `https://${process.env.VERCEL_URL}`, description: "Production" }]
-        : []),
-      { url: "http://localhost:8000", description: "Local dev" },
-    ],
+    servers: [{ url: "http://localhost:8000", description: "Local dev" }],
     components: {
       securitySchemes: {
         bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" },
