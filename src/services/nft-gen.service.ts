@@ -1,5 +1,19 @@
 import pool from "../pool";
 import { toCamel } from "../utils/camel";
+import { S3Client, ListObjectsV2Command, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+
+const s3 = new S3Client({
+  endpoint: "https://s3.filebase.com",
+  region:   "us-east-1",
+  credentials: {
+    accessKeyId:     process.env.FILEBASE_ACCESS_KEY!,
+    secretAccessKey: process.env.FILEBASE_SECRET_KEY!,
+  },
+  forcePathStyle: true,
+});
+
+const FILEBASE_GATEWAY = "https://amgbearth.myfilebase.com/ipfs";
+const SYNC_CONCURRENCY = 100;
 
 // ── Collections ──────────────────────────────────────────────────────────────
 
@@ -470,46 +484,251 @@ export async function syncGeneratedItemsToNftRecords(jobId: string): Promise<num
 
   if (!items.length) return 0;
 
-  let synced = 0;
-  for (const item of items) {
-    const serialNumber = `#${item.edition_number}`;
+  const rows = items.map(item => {
     const meta = typeof item.metadata_json === 'string'
       ? JSON.parse(item.metadata_json) as Record<string, unknown>
       : (item.metadata_json as Record<string, unknown>) ?? {};
-
-    // Flatten attributes array → { trait_type: value } object
     const traits: Record<string, string> = {};
     if (Array.isArray(meta.attributes)) {
       for (const attr of meta.attributes as Array<{ trait_type?: string; value?: unknown }>) {
-        if (attr.trait_type && attr.value !== undefined) {
-          traits[attr.trait_type] = String(attr.value);
-        }
+        if (attr.trait_type && attr.value !== undefined) traits[attr.trait_type] = String(attr.value);
       }
     }
+    return {
+      serial_number:       `#${item.edition_number}`,
+      stage_id:            genesisStageId,
+      delivery_status_id:  pendingStatusId,
+      image_ipfs_hash:     item.ipfs_image_cid,
+      metadata_ipfs_hash:  item.ipfs_metadata_cid,
+      metadata_uri:        `ipfs://${item.ipfs_metadata_cid}`,
+      traits,
+    };
+  });
 
-    await pool.query(
-      `INSERT INTO nft_records (
-         serial_number, stage_id, delivery_status_id,
-         image_ipfs_hash, metadata_ipfs_hash, metadata_uri, traits
-       ) VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7::jsonb)
+  const { rowCount } = await pool.query(
+    `INSERT INTO nft_records (serial_number, stage_id, delivery_status_id, image_ipfs_hash, metadata_ipfs_hash, metadata_uri, traits)
+     SELECT
+       x.serial_number,
+       x.stage_id::uuid,
+       x.delivery_status_id::uuid,
+       x.image_ipfs_hash,
+       x.metadata_ipfs_hash,
+       x.metadata_uri,
+       x.traits
+     FROM json_to_recordset($1::json) AS x(
+       serial_number text, stage_id text, delivery_status_id text,
+       image_ipfs_hash text, metadata_ipfs_hash text, metadata_uri text, traits jsonb
+     )
+     ON CONFLICT (serial_number) DO UPDATE SET
+       image_ipfs_hash    = EXCLUDED.image_ipfs_hash,
+       metadata_ipfs_hash = EXCLUDED.metadata_ipfs_hash,
+       metadata_uri       = EXCLUDED.metadata_uri,
+       traits             = EXCLUDED.traits,
+       updated_at         = NOW()`,
+    [JSON.stringify(rows)],
+  );
+
+  return rowCount ?? items.length;
+}
+
+// ── Sync directly from a Filebase bucket ─────────────────────────────────────
+// Bucket layout:
+//   images/{n}.png                         — NFT image for edition #n
+//   metadata/{n}.json                      — NFT metadata for edition #n
+//   AssetBlindbox/bearthblindboximage1.png — shared blind box image
+//
+// CIDs come from Filebase x-amz-meta-cid header. Traits from metadata JSON body.
+
+async function filebaseHead(bucket: string, key: string): Promise<string | null> {
+  try {
+    const r = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    return r.Metadata?.cid ?? null;
+  } catch { return null; }
+}
+
+async function filebaseGetJson(
+  bucket: string, key: string,
+): Promise<{ cid: string | null; body: Record<string, unknown> }> {
+  try {
+    const r    = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    const cid  = r.Metadata?.cid ?? null;
+    const text = await r.Body?.transformToString();
+    return { cid, body: text ? JSON.parse(text) as Record<string, unknown> : {} };
+  } catch { return { cid: null, body: {} }; }
+}
+
+function parseFilebaseTraits(json: Record<string, unknown>): Record<string, unknown> {
+  const raw = (json.attributes ?? json.traits ?? {}) as unknown;
+  if (Array.isArray(raw)) {
+    return Object.fromEntries(
+      (raw as Record<string, unknown>[]).map(a => [a.trait_type ?? a.traitType, a.value ?? a.traitValue]),
+    );
+  }
+  return (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
+}
+
+export async function syncFromFilebaseBucket(bucket: string): Promise<{ synced: number; skipped: number }> {
+  const { rows: lv } = await pool.query(
+    `SELECT id, code FROM lookup_values
+     WHERE (category = 'nft_stage' AND code = 'genesis')
+        OR (category = 'delivery_status' AND code = 'pending')`,
+  );
+  const genesisStageId  = lv.find(r => r.code === "genesis")?.id  as string | undefined;
+  const pendingStatusId = lv.find(r => r.code === "pending")?.id  as string | undefined;
+  if (!genesisStageId || !pendingStatusId) throw new Error("Required lookup values not found");
+
+  const bbCid    = await filebaseHead(bucket, "AssetBlindbox/bearthblindboximage1.png");
+  const blindUri = bbCid ? `${FILEBASE_GATEWAY}/${bbCid}` : null;
+
+  const imageKeys: string[] = [];
+  let listToken: string | undefined;
+  do {
+    const r = await s3.send(new ListObjectsV2Command({
+      Bucket: bucket, Prefix: "images/", MaxKeys: 1000, ContinuationToken: listToken,
+    }));
+    imageKeys.push(
+      ...(r.Contents?.filter(o => !o.Key!.endsWith("/") && o.Key!.endsWith(".png")).map(o => o.Key!) ?? []),
+    );
+    listToken = r.IsTruncated ? r.NextContinuationToken : undefined;
+  } while (listToken);
+
+  const editions = imageKeys
+    .map(k => parseInt(k.replace("images/", "").replace(".png", ""), 10))
+    .filter(n => !isNaN(n) && n > 0)
+    .sort((a, b) => a - b);
+
+  type ItemRow = {
+    serial_number: string; stage_id: string; delivery_status_id: string;
+    image_ipfs_hash: string; metadata_ipfs_hash: string; metadata_uri: string;
+    blind_box_uri: string | null; traits: Record<string, unknown>;
+  };
+
+  const fbRows: ItemRow[] = [];
+  let skipped = 0;
+
+  for (let i = 0; i < editions.length; i += SYNC_CONCURRENCY) {
+    const batch = editions.slice(i, i + SYNC_CONCURRENCY);
+    const results = await Promise.all(batch.map(async n => {
+      const [imageCid, { cid: metaCid, body: metaJson }] = await Promise.all([
+        filebaseHead(bucket, `images/${n}.png`),
+        filebaseGetJson(bucket, `metadata/${n}.json`),
+      ]);
+      if (!imageCid || !metaCid) return null;
+      return {
+        serial_number:      `#${n}`,
+        stage_id:           genesisStageId,
+        delivery_status_id: pendingStatusId,
+        image_ipfs_hash:    imageCid,
+        metadata_ipfs_hash: metaCid,
+        metadata_uri:       `ipfs://${metaCid}`,
+        blind_box_uri:      blindUri,
+        traits:             parseFilebaseTraits(metaJson),
+      } as ItemRow;
+    }));
+    for (const r of results) { if (r) fbRows.push(r); else skipped++; }
+  }
+
+  if (!fbRows.length) return { synced: 0, skipped };
+
+  let totalSynced = 0;
+  for (let i = 0; i < fbRows.length; i += 2000) {
+    const chunk = fbRows.slice(i, i + 2000);
+    const { rowCount } = await pool.query(
+      `INSERT INTO nft_records
+         (serial_number, stage_id, delivery_status_id, image_ipfs_hash, metadata_ipfs_hash,
+          metadata_uri, blind_box_uri, traits)
+       SELECT x.serial_number, x.stage_id::uuid, x.delivery_status_id::uuid,
+              x.image_ipfs_hash, x.metadata_ipfs_hash, x.metadata_uri, x.blind_box_uri, x.traits
+       FROM json_to_recordset($1::json) AS x(
+         serial_number text, stage_id text, delivery_status_id text,
+         image_ipfs_hash text, metadata_ipfs_hash text, metadata_uri text,
+         blind_box_uri text, traits jsonb
+       )
        ON CONFLICT (serial_number) DO UPDATE SET
          image_ipfs_hash    = EXCLUDED.image_ipfs_hash,
          metadata_ipfs_hash = EXCLUDED.metadata_ipfs_hash,
          metadata_uri       = EXCLUDED.metadata_uri,
+         blind_box_uri      = EXCLUDED.blind_box_uri,
          traits             = EXCLUDED.traits,
          updated_at         = NOW()`,
-      [
-        serialNumber,
-        genesisStageId,
-        pendingStatusId,
-        item.ipfs_image_cid,
-        item.ipfs_metadata_cid,
-        `ipfs://${item.ipfs_metadata_cid}`,
-        JSON.stringify(traits),
-      ],
+      [JSON.stringify(chunk)],
     );
-    synced++;
+    totalSynced += rowCount ?? 0;
   }
 
-  return synced;
+  return { synced: totalSynced, skipped };
+}
+
+// ── Sync ALL jobs (nft_generated_items → nft_records) ────────────────────────
+// Sync ALL jobs — finds every item with both IPFS CIDs across all generation jobs.
+// Uses a single batch INSERT with unnest for performance.
+export async function syncAllGeneratedItemsToNftRecords(): Promise<number> {
+  const { rows: lookupRows } = await pool.query(
+    `SELECT id, category, code FROM lookup_values
+     WHERE (category = 'nft_stage'       AND code = 'genesis')
+        OR (category = 'delivery_status' AND code = 'pending')`,
+  );
+  const genesisStageId  = lookupRows.find((r: { category: string; code: string }) => r.category === 'nft_stage'       && r.code === 'genesis')?.id as string | undefined;
+  const pendingStatusId = lookupRows.find((r: { category: string; code: string }) => r.category === 'delivery_status' && r.code === 'pending')?.id as string | undefined;
+
+  if (!genesisStageId || !pendingStatusId) {
+    throw new Error("Required lookup values (nft_stage:genesis, delivery_status:pending) not found");
+  }
+
+  const { rows: items } = await pool.query(
+    `SELECT DISTINCT ON (edition_number)
+       edition_number, ipfs_image_cid, ipfs_metadata_cid, metadata_json
+     FROM nft_generated_items
+     WHERE ipfs_image_cid    IS NOT NULL
+       AND ipfs_metadata_cid IS NOT NULL
+     ORDER BY edition_number ASC, created_at DESC`,
+  );
+
+  if (!items.length) return 0;
+
+  const rows = items.map(item => {
+    const meta = typeof item.metadata_json === 'string'
+      ? JSON.parse(item.metadata_json) as Record<string, unknown>
+      : (item.metadata_json as Record<string, unknown>) ?? {};
+    const traits: Record<string, string> = {};
+    if (Array.isArray(meta.attributes)) {
+      for (const attr of meta.attributes as Array<{ trait_type?: string; value?: unknown }>) {
+        if (attr.trait_type && attr.value !== undefined) traits[attr.trait_type] = String(attr.value);
+      }
+    }
+    return {
+      serial_number:      `#${item.edition_number}`,
+      stage_id:           genesisStageId,
+      delivery_status_id: pendingStatusId,
+      image_ipfs_hash:    item.ipfs_image_cid,
+      metadata_ipfs_hash: item.ipfs_metadata_cid,
+      metadata_uri:       `ipfs://${item.ipfs_metadata_cid}`,
+      traits,
+    };
+  });
+
+  const { rowCount } = await pool.query(
+    `INSERT INTO nft_records (serial_number, stage_id, delivery_status_id, image_ipfs_hash, metadata_ipfs_hash, metadata_uri, traits)
+     SELECT
+       x.serial_number,
+       x.stage_id::uuid,
+       x.delivery_status_id::uuid,
+       x.image_ipfs_hash,
+       x.metadata_ipfs_hash,
+       x.metadata_uri,
+       x.traits
+     FROM json_to_recordset($1::json) AS x(
+       serial_number text, stage_id text, delivery_status_id text,
+       image_ipfs_hash text, metadata_ipfs_hash text, metadata_uri text, traits jsonb
+     )
+     ON CONFLICT (serial_number) DO UPDATE SET
+       image_ipfs_hash    = EXCLUDED.image_ipfs_hash,
+       metadata_ipfs_hash = EXCLUDED.metadata_ipfs_hash,
+       metadata_uri       = EXCLUDED.metadata_uri,
+       traits             = EXCLUDED.traits,
+       updated_at         = NOW()`,
+    [JSON.stringify(rows)],
+  );
+
+  return rowCount ?? items.length;
 }

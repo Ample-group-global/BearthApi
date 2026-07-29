@@ -18,7 +18,17 @@ const router = Router();
 // GET /api/nft-sell/waves — list all 7 waves (DB mirror)
 router.get("/", async (_req, res, next) => {
   try {
-    const { rows } = await pool.query("SELECT * FROM nft_wave_get_all()", []);
+    const { rows } = await pool.query("SELECT nft_wave_get_all() AS waves");
+    res.json({ waves: rows[0]?.waves ?? [] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/nft-sell/waves/schedule-status — auto-trigger timeline for scheduler page
+router.get("/schedule-status", async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query("SELECT * FROM v_wave_schedule_status");
     res.json({ waves: rows });
   } catch (err) {
     next(err);
@@ -32,8 +42,8 @@ router.get("/:num", async (req, res, next) => {
     if (isNaN(num) || num < 1 || num > 7)
       return res.status(400).json({ error: "Wave number must be 1–7" });
 
-    const { rows } = await pool.query("SELECT nft_wave_get($1)", [num]);
-    const wave = rows[0]?.nft_wave_get;
+    const { rows } = await pool.query("SELECT nft_wave_get($1) AS wave", [num]);
+    const wave = rows[0]?.wave;
     let onChain = null;
     if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL) {
       try {
@@ -154,77 +164,6 @@ router.post("/:num/auction-mint", requireAdmin, async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/waves/:num/dutch-auction — configure wave as Dutch auction (off-chain only)
-// Body: { startPriceEth: string, floorPriceEth: string, decrementEth: string, intervalSecs: number }
-router.put("/:num/dutch-auction", requireAdmin, async (req, res, next) => {
-  try {
-    const num = parseInt(req.params.num, 10);
-    const { startPriceEth, floorPriceEth, decrementEth, intervalSecs } = req.body as {
-      startPriceEth: string; floorPriceEth: string; decrementEth: string; intervalSecs: number;
-    };
-
-    if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1–7" });
-    if (!startPriceEth || isNaN(parseFloat(startPriceEth)))
-      return res.status(400).json({ error: "startPriceEth (string) required" });
-    if (!floorPriceEth || isNaN(parseFloat(floorPriceEth)))
-      return res.status(400).json({ error: "floorPriceEth (string) required" });
-    if (!decrementEth || isNaN(parseFloat(decrementEth)))
-      return res.status(400).json({ error: "decrementEth (string) required" });
-    if (!intervalSecs || intervalSecs < 1)
-      return res.status(400).json({ error: "intervalSecs (number >= 1) required" });
-
-    const { rows } = await pool.query("SELECT sold_count FROM nft_waves WHERE wave_number=$1", [num]);
-    if ((rows[0]?.sold_count ?? 0) > 0)
-      return res.status(409).json({ error: `Wave ${num} price is locked — first sale has occurred` });
-
-    // Dutch auction is off-chain: store config in DB; use setWavePrice separately to push start price on-chain
-    await pool.query("SELECT nft_wave_set_dutch_config($1,$2,$3,$4,$5,$6)", [num, startPriceEth, floorPriceEth, decrementEth, intervalSecs, true]);
-    await pool.query("UPDATE nft_waves SET sale_method='dutch_auction' WHERE wave_number=$1", [num]);
-    res.json({ ok: true });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /api/nft-sell/waves/:num/dutch-price — get current Dutch auction price (off-chain calculation)
-router.get("/:num/dutch-price", async (req, res, next) => {
-  try {
-    const num = parseInt(req.params.num, 10);
-    if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1–7" });
-
-    const { rows } = await pool.query("SELECT * FROM nft_waves_dutch_list()", []);
-    const wave = rows.find((r: Record<string, unknown>) => Number(r.wave_number) === num);
-
-    if (!wave?.dutch_start_price_eth) {
-      return res.json({ waveNum: num, currentPriceEth: null, isFloor: false, auctionStarted: false });
-    }
-
-    const start    = parseFloat(wave.dutch_start_price_eth as string);
-    const floor    = parseFloat(wave.dutch_floor_price_eth as string);
-    const decrement = parseFloat(wave.dutch_decrement_eth as string);
-    const intervalSecs = Number(wave.dutch_interval_secs);
-
-    // Use wave's updated_at as the auction clock start
-    const startTime = wave.dutch_updated_at
-      ? new Date(wave.dutch_updated_at as string).getTime() / 1000
-      : Date.now() / 1000;
-    const elapsed = Date.now() / 1000 - startTime;
-    const steps = Math.max(0, Math.floor(elapsed / intervalSecs));
-    const currentPrice = Math.max(start - steps * decrement, floor);
-
-    res.json({
-      waveNum:         num,
-      currentPriceEth: currentPrice.toFixed(4),
-      currentPriceWei: ethers.parseEther(currentPrice.toFixed(4)).toString(),
-      isFloor:         currentPrice <= floor,
-      auctionStarted:  true,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
 
 // GET /api/nft-sell/waves/treasury-nfts — list all treasury-held tokens (unsold → owner wallet)
 router.get("/treasury-nfts", async (_req, res, next) => {

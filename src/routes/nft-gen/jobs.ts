@@ -1,9 +1,37 @@
 import { Router } from "express";
 import { requirePermission } from "../../adminAuth";
 import * as svc from "../../services/nft-gen.service";
+import { syncGeneratedItemsToNftRecords, syncAllGeneratedItemsToNftRecords, syncFromFilebaseBucket } from "../../services/nft-gen.service";
 import pool from "../../pool";
 
 const router = Router();
+
+// POST /api/nft-gen/jobs/sync-from-filebase — clear nft_records and rebuild from Filebase bucket
+// Body: { bucket: string }  e.g. { "bucket": "bearth-nft-it" }
+router.post("/sync-from-filebase", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.generate");
+    const bucket = (req.body?.bucket as string) || process.env.FILEBASE_BUCKET || "bearth-nft-it";
+    // Wipe existing records before re-syncing from Filebase as the authoritative source
+    await pool.query("DELETE FROM nft_records");
+    const result = await syncFromFilebaseBucket(bucket);
+    res.json({ bucket, ...result });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// POST /api/nft-gen/jobs/sync-all-records — sync ALL IPFS-ready items across every job
+router.post("/sync-all-records", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.generate");
+    const synced = await syncAllGeneratedItemsToNftRecords();
+    res.json({ synced });
+  } catch (e) {
+    console.error("[sync-all-records] ERROR:", e);
+    next(e);
+  }
+});
 
 // GET /api/nft-gen/jobs?collectionId=<uuid>&status=complete — list jobs for a collection
 router.get("/", async (req, res, next) => {
@@ -165,6 +193,15 @@ router.post("/:id/items/batch-ipfs", async (req, res, next) => {
     }
     const updated = await svc.batchUpdateItemIpfsCids({ jobId: req.params.id, items });
     res.json({ updated });
+  } catch (e) { next(e); }
+});
+
+// POST /api/nft-gen/jobs/:id/sync-records — sync IPFS-ready items to nft_records
+router.post("/:id/sync-records", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.generate");
+    const synced = await syncGeneratedItemsToNftRecords(req.params.id);
+    res.json({ synced });
   } catch (e) { next(e); }
 });
 
