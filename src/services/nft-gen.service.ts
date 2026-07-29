@@ -735,20 +735,25 @@ export async function syncAllGeneratedItemsToNftRecords(): Promise<number> {
   return rowCount ?? items.length;
 }
 
+// Returns the layers root directory.
+// Uses LAYERS_DIR env var on Railway/prod; falls back to a 'layers' sibling
+// folder inside BearthApi for zero-config local development.
+function getLocalLayersDir(): string {
+  return process.env.LAYERS_DIR ?? path.resolve(process.cwd(), 'layers');
+}
+
 export async function fetchLayerImage(rel: string): Promise<Buffer | null> {
   if (!rel || rel.includes('..') || rel.startsWith('/')) return null;
 
-  // 1. Try local disk first (fast, works on Railway with LAYERS_DIR set)
-  const layersDir = process.env.LAYERS_DIR;
-  if (layersDir && fs.existsSync(layersDir)) {
-    const abs   = path.resolve(layersDir, rel);
-    const check = path.relative(path.resolve(layersDir), abs);
-    if (!check.startsWith('..') && !path.isAbsolute(check)) {
-      try { return fs.readFileSync(abs); } catch { }
-    }
+  // 1. Try local disk first (Railway + local dev both work via getLocalLayersDir)
+  const layersDir = getLocalLayersDir();
+  const abs   = path.resolve(layersDir, rel);
+  const check = path.relative(path.resolve(layersDir), abs);
+  if (!check.startsWith('..') && !path.isAbsolute(check)) {
+    try { return fs.readFileSync(abs); } catch { }
   }
 
-  // 2. Fall back to Filebase S3 (works everywhere once layers are uploaded)
+  // 2. Fall back to Filebase S3 (Vercel + any env without local disk)
   const bucket = process.env.FILEBASE_LAYERS_BUCKET || 'bearth-layers';
   try {
     const resp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: rel }));

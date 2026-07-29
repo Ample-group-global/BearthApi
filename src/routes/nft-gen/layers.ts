@@ -20,7 +20,8 @@ router.post("/upload", upload.array("files"), async (req, res, next) => {
     const safe = layer.replace(/[^a-zA-Z0-9\-_]/g, "");
     if (!safe) { res.status(400).json({ error: "layer name required" }); return; }
 
-    const layersDir  = process.env.LAYERS_DIR ?? null;
+    // Use LAYERS_DIR on Railway; default to 'layers/' inside BearthApi for local dev
+    const layersDir  = process.env.LAYERS_DIR ?? path.resolve(process.cwd(), "layers");
     const added:       string[] = [];
     const s3Uploaded:  string[] = [];
     const s3Failures:  string[] = [];
@@ -34,12 +35,10 @@ router.post("/upload", upload.array("files"), async (req, res, next) => {
 
       const rel = sub ? `${safe}/${sub}` : `${safe}/${safeName}`;
 
-      // 1. Persist to local disk if LAYERS_DIR is configured (Railway)
-      if (layersDir) {
-        const targetDir = path.join(layersDir, safe, path.dirname(sub || safeName));
-        fs.mkdirSync(targetDir, { recursive: true });
-        fs.writeFileSync(path.join(layersDir, rel), file.buffer);
-      }
+      // 1. Persist to local disk (always — LAYERS_DIR on Railway, layers/ dir locally)
+      const targetDir = path.join(layersDir, safe, path.dirname(sub || safeName));
+      fs.mkdirSync(targetDir, { recursive: true });
+      fs.writeFileSync(path.join(layersDir, rel), file.buffer);
 
       // 2. Upload to Filebase S3 so BearthAdmin (Vercel) can serve thumbnails
       try {
