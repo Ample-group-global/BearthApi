@@ -3,27 +3,16 @@ import rateLimit from "express-rate-limit";
 import { PoolClient } from "pg";
 import pool from "../pool";
 import { buildMerkleTree, getProof } from "../merkle";
-import { verifySessionCookie } from "../walletAuth";
+import { requirePermission } from "../adminAuth";
 import { HttpError } from "../errors";
 
 const router = Router();
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const MERKLE_ROOT_RE = /^0x[a-fA-F0-9]{64}$/;
-const ADMIN_ADDRESS = (process.env.ADMIN_ADDRESS ?? "").toLowerCase();
-const ADMIN_INTERNAL_KEY = process.env.ADMIN_SECRET ?? "";
 
 const readLimit   = rateLimit({ windowMs: 60_000, limit: 100, standardHeaders: "draft-7", legacyHeaders: false });
 const writeLimit  = rateLimit({ windowMs: 60_000, limit: 10,  standardHeaders: "draft-7", legacyHeaders: false });
 const deleteLimit = rateLimit({ windowMs: 60_000, limit: 5,   standardHeaders: "draft-7", legacyHeaders: false });
-
-function requireAdmin(req: Request): void {
-  // Server-to-server internal auth from BearthAdmin proxy
-  if (ADMIN_INTERNAL_KEY && req.headers["x-admin-key"] === ADMIN_INTERNAL_KEY) return;
-  // Wallet session auth
-  const addr = verifySessionCookie(req.headers.cookie);
-  if (!addr) throw new HttpError(401, "Unauthorized");
-  if (addr.toLowerCase() !== ADMIN_ADDRESS) throw new HttpError(403, "Forbidden");
-}
 
 async function recalcMerkle(client: PoolClient): Promise<string> {
   const { rows: [state] } = await client.query("SELECT * FROM whitelist_state_get()");
@@ -73,10 +62,10 @@ async function bulkWrite(res: Response, next: NextFunction, addresses: string[],
 
 // ── Specific paths first (before /:address) ──────────────────────────────────
 
-// GET /api/whitelist/entries — admin-only, includes name + added_at
+// GET /api/whitelist/entries - admin-only, includes name + added_at
 router.get("/entries", readLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    requireAdmin(req);
+    requirePermission(req, "nft.view");
     const limit  = Math.min(Number(req.query.limit  ?? 100), 1000);
     const offset = Number(req.query.offset ?? 0);
     const [entriesRes, countRes, stateRes] = await Promise.all([
@@ -106,10 +95,10 @@ router.get("/entries", readLimit, async (req: Request, res: Response, next: Next
   } catch (e) { next(e); }
 });
 
-// GET /api/whitelist/export — public
+// GET /api/whitelist/export - public
 router.get("/export", readLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const format           = (req.query.format as string) ?? "json";
+    const format            = (req.query.format as string) ?? "json";
     const includeMerkleRoot = req.query.include_merkle_root !== "false";
     const [addrRes, stateRes] = await Promise.all([
       pool.query("SELECT * FROM whitelist_addresses_all()"),
@@ -143,7 +132,7 @@ router.get("/export", readLimit, async (req: Request, res: Response, next: NextF
   } catch (e) { next(e); }
 });
 
-// GET /api/whitelist/merkle-root — public
+// GET /api/whitelist/merkle-root - public
 router.get("/merkle-root", readLimit, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const [stateRes, countRes] = await Promise.all([
@@ -160,10 +149,10 @@ router.get("/merkle-root", readLimit, async (_req: Request, res: Response, next:
   } catch (e) { next(e); }
 });
 
-// PUT /api/whitelist/merkle-root — admin-only, sets manual override
+// PUT /api/whitelist/merkle-root - admin-only, sets manual override
 router.put("/merkle-root", writeLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    requireAdmin(req);
+    requirePermission(req, "nft.waves.manage");
     const { root } = (req.body ?? {}) as { root?: string };
     if (!root || !MERKLE_ROOT_RE.test(root)) {
       res.status(422).json({ detail: "root must be a 0x-prefixed 32-byte hex string" }); return;
@@ -183,10 +172,10 @@ router.put("/merkle-root", writeLimit, async (req: Request, res: Response, next:
   } catch (e) { next(e); }
 });
 
-// DELETE /api/whitelist/merkle-root — admin-only, clears manual override
+// DELETE /api/whitelist/merkle-root - admin-only, clears manual override
 router.delete("/merkle-root", writeLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    requireAdmin(req);
+    requirePermission(req, "nft.waves.manage");
   } catch (e) { next(e); return; }
   const client = await pool.connect();
   try {
@@ -214,19 +203,19 @@ router.delete("/merkle-root", writeLimit, async (req: Request, res: Response, ne
   }
 });
 
-// POST /api/whitelist/add — add (no replace)
+// POST /api/whitelist/add - add (no replace)
 router.post("/add", writeLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    requireAdmin(req);
+    requirePermission(req, "nft.waves.manage");
   } catch (e) { next(e); return; }
   const { addresses } = (req.body ?? {}) as { addresses?: string[] };
   await bulkWrite(res, next, addresses ?? [], "add");
 });
 
-// POST /api/whitelist/entry — add single entry with optional user_id / is_whitelisted
+// POST /api/whitelist/entry - add single entry with optional user_id / is_whitelisted
 router.post("/entry", writeLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    requireAdmin(req);
+    requirePermission(req, "nft.waves.manage");
     const { address, user_id, is_whitelisted } = (req.body ?? {}) as {
       address?: string;
       user_id?: string | null;
@@ -235,7 +224,7 @@ router.post("/entry", writeLimit, async (req: Request, res: Response, next: Next
     if (!address || !ETH_ADDRESS_RE.test(address)) {
       res.status(422).json({ detail: "invalid address" }); return;
     }
-    const whitelisted = is_whitelisted !== false; // default true
+    const whitelisted = is_whitelisted !== false;
     let added   = 0;
     let skipped = 0;
     let root: string;
@@ -266,7 +255,7 @@ router.post("/entry", writeLimit, async (req: Request, res: Response, next: Next
   } catch (e) { next(e); }
 });
 
-// POST /api/whitelist/test — public, test if address is whitelisted
+// POST /api/whitelist/test - public, test if address is whitelisted
 router.post("/test", writeLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { address } = (req.body ?? {}) as { address?: string };
@@ -279,20 +268,20 @@ router.post("/test", writeLimit, async (req: Request, res: Response, next: NextF
       res.json({ is_whitelisted: false, address, proof: [], root: "0x0", leaf_index: null, generated_at: new Date().toISOString() });
       return;
     }
-    const tree     = buildMerkleTree(addresses);
-    const lower    = address.toLowerCase();
-    const lowerList = addresses.map((a: string) => a.toLowerCase());
-    const leafIndex = lowerList.indexOf(lower);
+    const tree       = buildMerkleTree(addresses);
+    const lower      = address.toLowerCase();
+    const lowerList  = addresses.map((a: string) => a.toLowerCase());
+    const leafIndex  = lowerList.indexOf(lower);
     const isWhitelisted = leafIndex !== -1;
     const proof = isWhitelisted ? getProof(tree, address) : [];
     res.json({ is_whitelisted: isWhitelisted, address, proof, root: tree.root, leaf_index: isWhitelisted ? leafIndex : null, generated_at: new Date().toISOString() });
   } catch (e) { next(e); }
 });
 
-// DELETE /api/whitelist/:address — admin-only
+// DELETE /api/whitelist/:address - admin-only
 router.delete("/:address", deleteLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    requireAdmin(req);
+    requirePermission(req, "nft.waves.manage");
   } catch (e) { next(e); return; }
   const { address } = req.params;
   if (!ETH_ADDRESS_RE.test(address)) {
@@ -302,7 +291,6 @@ router.delete("/:address", deleteLimit, async (req: Request, res: Response, next
   try {
     let root: string;
     await client.query("BEGIN");
-    // whitelist_remove throws P0002 if not found — errorHandler maps it to 404
     await client.query("SELECT whitelist_remove($1)", [address.toLowerCase()]);
     root = await recalcMerkle(client);
     await client.query("COMMIT");
@@ -321,7 +309,7 @@ router.delete("/:address", deleteLimit, async (req: Request, res: Response, next
 // GET /api/whitelist
 router.get("/", readLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    requireAdmin(req);
+    requirePermission(req, "nft.view");
     const limit  = Math.min(Number(req.query.limit  ?? 100), 1000);
     const offset = Number(req.query.offset ?? 0);
     const [countRes, addrRes, stateRes] = await Promise.all([
@@ -345,10 +333,10 @@ router.get("/", readLimit, async (req: Request, res: Response, next: NextFunctio
   } catch (e) { next(e); }
 });
 
-// POST /api/whitelist — bulk write (add or replace)
+// POST /api/whitelist - bulk write (add or replace)
 router.post("/", writeLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    requireAdmin(req);
+    requirePermission(req, "nft.waves.manage");
   } catch (e) { next(e); return; }
   const { addresses, action = "add" } = (req.body ?? {}) as { addresses?: string[]; action?: string };
   await bulkWrite(res, next, addresses ?? [], (action === "replace" ? "replace" : "add"));
