@@ -903,31 +903,35 @@ END;
 $$;
 
 -- ── inventory_overview ────────────────────────────────────────────────
-CREATE OR REPLACE FUNCTION inventory_overview()
+DROP FUNCTION IF EXISTS inventory_overview();
+CREATE FUNCTION inventory_overview()
 RETURNS TABLE(
-  total_products       INT,
-  active_products      INT,
-  low_stock_products   INT,
+  total_products        INT,
+  active_products       INT,
+  low_stock_products    INT,
   out_of_stock_products INT,
   total_inventory_value NUMERIC,
-  pending_pos          INT,
-  open_fulfillments    INT,
-  pending_returns      INT
+  total_reserved        INT,
+  total_available       INT,
+  pending_pos           INT,
+  open_fulfillments     INT,
+  pending_returns       INT
 )
 LANGUAGE plpgsql AS $$
 BEGIN
   RETURN QUERY
   SELECT
-    (SELECT COUNT(*)::INT            FROM products)                                          AS total_products,
-    (SELECT COUNT(*)::INT            FROM products p2
-       LEFT JOIN product_statuses ps ON ps.id = p2.status_id WHERE ps.code = 'active')      AS active_products,
-    (SELECT COUNT(*)::INT            FROM products WHERE stock_qty > 0 AND stock_qty <= 10)  AS low_stock_products,
-    (SELECT COUNT(*)::INT            FROM products WHERE stock_qty = 0)                      AS out_of_stock_products,
-    (SELECT COALESCE(SUM(presale_price * stock_qty), 0)
-       FROM products)                                                                         AS total_inventory_value,
-    (SELECT COUNT(*)::INT            FROM purchase_orders WHERE status IN ('draft','submitted','partial')) AS pending_pos,
-    (SELECT COUNT(*)::INT            FROM order_fulfillment WHERE status IN ('pending','processing','packed','shipped')) AS open_fulfillments,
-    (SELECT COUNT(*)::INT            FROM order_return_items WHERE status IN ('pending','approved','received')) AS pending_returns;
+    (SELECT COUNT(*)::INT FROM products) AS total_products,
+    (SELECT COUNT(*)::INT FROM products p2
+       LEFT JOIN product_statuses ps ON ps.id = p2.status_id WHERE ps.code = 'active') AS active_products,
+    (SELECT COUNT(*)::INT FROM products WHERE stock_qty > 0 AND stock_qty <= 10) AS low_stock_products,
+    (SELECT COUNT(*)::INT FROM products WHERE stock_qty = 0) AS out_of_stock_products,
+    (SELECT COALESCE(SUM(presale_price * stock_qty), 0) FROM products) AS total_inventory_value,
+    (SELECT COALESCE(SUM(reserved_qty), 0)::INT FROM products) AS total_reserved,
+    (SELECT COALESCE(SUM(GREATEST(0, stock_qty - reserved_qty)), 0)::INT FROM products) AS total_available,
+    (SELECT COUNT(*)::INT FROM purchase_orders WHERE status IN ('draft','submitted','partial')) AS pending_pos,
+    (SELECT COUNT(*)::INT FROM order_fulfillment WHERE status IN ('pending','processing','packed','shipped')) AS open_fulfillments,
+    (SELECT COUNT(*)::INT FROM order_return_items WHERE status IN ('pending','approved','received')) AS pending_returns;
 END;
 $$;
 
