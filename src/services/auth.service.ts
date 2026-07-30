@@ -2,7 +2,7 @@ import pool from "../pool";
 import bcrypt from "bcryptjs";
 import { encodeHmacToken, decodeHmacToken } from "../utils/hmac-token";
 
-const RESET_SECRET = process.env.RESET_SECRET ?? process.env.ADMIN_SECRET ?? "bearth-reset-secret";
+const RESET_SECRET = process.env.RESET_SECRET ?? process.env.AUTH_SECRET ?? "bearth-reset-secret";
 const RESET_EXPIRES_MS = 60 * 60 * 1000; // 1 hour
 
 export interface AuthUser {
