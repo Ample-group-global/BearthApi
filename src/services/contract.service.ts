@@ -1,6 +1,6 @@
 import { ethers, type Contract, type EventLog } from "ethers";
 import pool from "../pool";
-import { abi as BearthNFT_ABI } from "../abi/BearthNFT.abi.json";
+import { abi as BearthNFT_ABI } from "../abi/BearthGenesisNFT.abi.json";
 import { getProvider } from "../utils/contract-factory";
 
 // ── Contract singletons ───────────────────────────────────────────────────────
