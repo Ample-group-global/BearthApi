@@ -42,9 +42,13 @@ export const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
     "nft.view", "nft.edit", "nft.confirm_delivery", "nft.view_technical",
     "nft.waves.view", "nft.waves.manage",
     "products.view", "products.create", "products.edit", "products.delete",
+    "customers.view", "customers.create", "customers.edit", "customers.delete",
+    "reconciliation.view", "reconciliation.confirm", "reconciliation.cancel",
     "reports.view",
+    "users.view", "users.create", "users.edit", "users.delete", "users.revoke_permission",
     "nft_gen.view", "nft_gen.manage_collections", "nft_gen.manage_layers",
     "nft_gen.generate", "nft_gen.upload_ipfs",
+    "settings.view", "settings.edit",
   ],
 };
 
