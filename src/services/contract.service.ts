@@ -19,10 +19,14 @@ export function getContractReadOnly(): Contract {
 
 export function getContractWithSigner(): Contract {
   if (!_contractSigned) {
-    const addr        = process.env.CONTRACT_ADDRESS;
-    const privateKey  = process.env.FIXED_PRIVATE_KEY;
+    const addr = process.env.CONTRACT_ADDRESS;
+    // CONTRACT_PRIVATE_KEY is the per-environment signer key:
+    //   IT/Sepolia  → set CONTRACT_PRIVATE_KEY = SEPOLIA_PRIVATE_KEY value
+    //   Mainnet     → set CONTRACT_PRIVATE_KEY = FIXED_PRIVATE_KEY value
+    // Falls back to FIXED_PRIVATE_KEY for backward compatibility.
+    const privateKey = process.env.CONTRACT_PRIVATE_KEY ?? process.env.FIXED_PRIVATE_KEY;
     if (!addr)       throw new Error("CONTRACT_ADDRESS env var is required");
-    if (!privateKey) throw new Error("FIXED_PRIVATE_KEY env var is required");
+    if (!privateKey) throw new Error("CONTRACT_PRIVATE_KEY (or FIXED_PRIVATE_KEY) env var is required");
     const signer = new ethers.Wallet(privateKey, getProvider());
     _contractSigned = new ethers.Contract(addr, BearthNFT_ABI, signer);
   }
@@ -477,6 +481,16 @@ export async function contractGetCollectionInfo(): Promise<{
     purchaseLimitEnabled,
     normalMaxPerWallet,
   };
+}
+
+export async function contractGetRoyalty(): Promise<{ receiver: string; feeBps: number } | null> {
+  try {
+    const c = getContractReadOnly();
+    const [receiver, royaltyAmount] = await c.royaltyInfo(1, 10000) as [string, bigint];
+    return { receiver, feeBps: Number(royaltyAmount) };
+  } catch {
+    return null;
+  }
 }
 
 export async function contractIsGenesis(tokenId: number): Promise<boolean> {

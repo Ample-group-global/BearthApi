@@ -137,8 +137,8 @@ router.delete("/:id", requireAdmin, async (req, res, next) => {
 // GET /api/nft-sell/auctions/on-chain/count — total on-chain auctions created
 router.get("/on-chain/count", async (_req, res, next) => {
   try {
-    const count = await auctionCount();
-    res.json({ count });
+    const count = await auctionCount().catch(() => null);
+    res.json({ count, rpcError: count === null });
   } catch (err) {
     next(err);
   }
@@ -150,10 +150,10 @@ router.get("/on-chain/:id", async (req, res, next) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id) || id < 1) return res.status(400).json({ error: "Invalid auction id" });
     const [auction, timeLeft] = await Promise.all([
-      auctionGet(id),
-      auctionTimeRemaining(id),
+      auctionGet(id).catch(() => null),
+      auctionTimeRemaining(id).catch(() => null),
     ]);
-    res.json({ auction, timeRemainingSeconds: timeLeft });
+    res.json({ auction, timeRemainingSeconds: timeLeft, rpcError: auction === null });
   } catch (err) {
     next(err);
   }
@@ -165,8 +165,8 @@ router.get("/on-chain/:id/pending", async (req, res, next) => {
   try {
     const wallet = req.query.wallet as string;
     if (!wallet) return res.status(400).json({ error: "wallet query param required" });
-    const pending = await auctionPendingWithdrawal(wallet);
-    res.json({ wallet, pendingEth: pending });
+    const pending = await auctionPendingWithdrawal(wallet).catch(() => null);
+    res.json({ wallet, pendingEth: pending, rpcError: pending === null });
   } catch (err) {
     next(err);
   }
