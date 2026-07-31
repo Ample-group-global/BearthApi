@@ -3,16 +3,23 @@ import pool from "../../pool";
 import {
   contractSetRoyalty,
   contractSetTransferValidator,
+  contractGetRoyalty,
 } from "../../services/contract.service";
 import { requireAdmin } from "../../adminAuth";
 
 const router = Router();
 
-// GET /api/nft-sell/royalty — current royalty config (DB mirror)
+// GET /api/nft-sell/royalty — royalty config (on-chain source of truth + DB mirror)
 router.get("/", async (_req, res, next) => {
   try {
-    const { rows } = await pool.query("SELECT nft_royalty_config_get()", []);
-    res.json({ royalty: rows[0]?.nft_royalty_config_get ?? null });
+    const [{ rows }, onChain] = await Promise.all([
+      pool.query("SELECT nft_royalty_config_get()", []),
+      contractGetRoyalty(),
+    ]);
+    res.json({
+      royalty: rows[0]?.nft_royalty_config_get ?? null,
+      onChain,
+    });
   } catch (err) {
     next(err);
   }

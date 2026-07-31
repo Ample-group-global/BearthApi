@@ -4,6 +4,7 @@ import {
   contractSetVIP,
   contractSetPurchaseLimitConfig,
   contractGetWalletInfo,
+  contractGetCollectionInfo,
 } from "../../services/contract.service";
 import { requireAdmin } from "../../adminAuth";
 
@@ -15,16 +16,16 @@ router.get("/:address", async (req, res, next) => {
     const address = req.params.address.toLowerCase();
     const [{ rows }, onChain] = await Promise.all([
       pool.query("SELECT nft_wallet_get($1)", [address]),
-      contractGetWalletInfo(address),
+      contractGetWalletInfo(address).catch(() => null),
     ]);
     res.json({
       wallet: rows[0]?.nft_wallet_get ?? null,
-      onChain: {
+      onChain: onChain ? {
         totalMinted: Number(onChain.totalMinted),
         isVip:       onChain.isVip,
         wlClaimed:   onChain.wlClaimed,
         balance:     Number(onChain.balance),
-      },
+      } : null,
     });
   } catch (err) {
     next(err);
@@ -47,11 +48,20 @@ router.put("/:address/vip", requireAdmin, async (req, res, next) => {
   }
 });
 
-// GET /api/nft-sell/customers/limits — current purchase limit config (DB mirror)
+// GET /api/nft-sell/customers/limits — purchase limit config (on-chain source of truth + DB mirror)
 router.get("/limits", async (_req, res, next) => {
   try {
-    const { rows } = await pool.query("SELECT nft_purchase_limit_get()", []);
-    res.json({ limits: rows[0]?.nft_purchase_limit_get ?? null });
+    const [{ rows }, onChain] = await Promise.all([
+      pool.query("SELECT nft_purchase_limit_get()", []),
+      contractGetCollectionInfo().catch(() => null),
+    ]);
+    res.json({
+      limits: rows[0]?.nft_purchase_limit_get ?? null,
+      onChain: onChain ? {
+        purchaseLimitEnabled:  onChain.purchaseLimitEnabled,
+        normalMaxPerWallet:    Number(onChain.normalMaxPerWallet),
+      } : null,
+    });
   } catch (err) {
     next(err);
   }

@@ -16,11 +16,36 @@ import { requireAdmin } from "../../adminAuth";
 
 const router = Router();
 
-// GET /api/nft-sell/waves — list all 7 waves (DB mirror)
+// GET /api/nft-sell/waves — list all 7 waves (on-chain enriched, DB fallback)
 router.get("/", async (_req, res, next) => {
   try {
     const { rows } = await pool.query("SELECT nft_wave_get_all() AS waves");
-    res.json({ waves: rows[0]?.waves ?? [] });
+    const dbWaves: Record<string, unknown>[] = rows[0]?.waves ?? [];
+
+    const chainResults = await Promise.allSettled(
+      [1, 2, 3, 4, 5, 6, 7].map(n => contractGetWaveInfo(n))
+    );
+
+    const waves = dbWaves.map((w: Record<string, unknown>) => {
+      const idx = Number(w.waveNum) - 1;
+      const r = chainResults[idx];
+      const onChain = r?.status === "fulfilled" ? r.value : null;
+      return {
+        ...w,
+        onChain: onChain ? {
+          priceEth:  Number(onChain.price) / 1e18,
+          qty:       Number(onChain.qty),
+          soldCount: Number(onChain.soldCount),
+          startTime: Number(onChain.startTime),
+          endTime:   Number(onChain.endTime),
+          closed:    onChain.closed,
+          active:    onChain.active,
+          revealed:  onChain.revealed,
+        } : null,
+      };
+    });
+
+    res.json({ waves });
   } catch (err) {
     next(err);
   }

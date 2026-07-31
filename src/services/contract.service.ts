@@ -479,6 +479,16 @@ export async function contractGetCollectionInfo(): Promise<{
   };
 }
 
+export async function contractGetRoyalty(): Promise<{ receiver: string; feeBps: number } | null> {
+  try {
+    const c = getContractReadOnly();
+    const [receiver, royaltyAmount] = await c.royaltyInfo(1, 10000) as [string, bigint];
+    return { receiver, feeBps: Number(royaltyAmount) };
+  } catch {
+    return null;
+  }
+}
+
 export async function contractIsGenesis(tokenId: number): Promise<boolean> {
   return getContractReadOnly().isGenesis(tokenId);
 }
