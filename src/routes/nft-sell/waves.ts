@@ -36,6 +36,28 @@ router.get("/schedule-status", async (_req, res, next) => {
   }
 });
 
+// GET /api/nft-sell/waves/treasury-nfts — list all treasury-held tokens (unsold → owner wallet)
+router.get("/treasury-nfts", async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query("SELECT nft_treasury_nfts_list()", []);
+    const nfts = rows[0]?.nft_treasury_nfts_list ?? [];
+    res.json({ nfts });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/nft-sell/waves/resync — replay all events from block 0 to rebuild DB
+router.post("/resync", requireAdmin, async (req, res, next) => {
+  try {
+    const fromBlock = parseInt(req.body.fromBlock ?? "0", 10);
+    const result    = await resyncFromBlock(fromBlock);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/nft-sell/waves/:num — single wave (DB + on-chain)
 router.get("/:num", async (req, res, next) => {
   try {
@@ -184,28 +206,6 @@ router.post("/:num/auction-mint", requireAdmin, async (req, res, next) => {
   }
 });
 
-
-// GET /api/nft-sell/waves/treasury-nfts — list all treasury-held tokens (unsold → owner wallet)
-router.get("/treasury-nfts", async (_req, res, next) => {
-  try {
-    const { rows } = await pool.query("SELECT nft_treasury_nfts_list()", []);
-    const nfts = rows[0]?.nft_treasury_nfts_list ?? [];
-    res.json({ nfts });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /api/nft-sell/waves/resync — replay all events from block 0 to rebuild DB
-router.post("/resync", requireAdmin, async (req, res, next) => {
-  try {
-    const fromBlock = parseInt(req.body.fromBlock ?? "0", 10);
-    const result    = await resyncFromBlock(fromBlock);
-    res.json({ ok: true, ...result });
-  } catch (err) {
-    next(err);
-  }
-});
 
 // ── Strategy extensions ────────────────────────────────────────────────────────
 

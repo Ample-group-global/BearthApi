@@ -189,7 +189,7 @@ async function runGenerate(generateId: string, collectionId: string, editionSize
     .filter((l: any) => l.is_active)
     .sort((a: any, b: any) => a.sort_order - b.sort_order);
 
-  if (!activeLayers.length) throw new Error("No active layers found for this collection.");
+  if (!activeLayers.length) throw new Error("No active layers found for this collection. Go to the Settings tab and click Continue to sync your layers, then try generating again.");
 
   // 2. Load traits
   const layerIds = activeLayers.map((l: any) => l.id);

@@ -7,8 +7,8 @@ const router = Router();
 // GET /api/nft-sell/events — list all events
 router.get("/", async (_req, res, next) => {
   try {
-    const { rows } = await pool.query("SELECT nft_events_list()", []);
-    res.json({ events: rows[0]?.nft_events_list ?? [] });
+    const { rows } = await pool.query("SELECT * FROM nft_events_list()", []);
+    res.json({ events: rows ?? [] });
   } catch (err) {
     next(err);
   }
@@ -61,8 +61,8 @@ router.delete("/:id", requireAdmin, async (req, res, next) => {
 // GET /api/nft-sell/events/:id/checkins — list check-ins for an event
 router.get("/:id/checkins", async (req, res, next) => {
   try {
-    const { rows } = await pool.query("SELECT nft_event_checkins_list($1)", [req.params.id]);
-    res.json({ checkins: rows[0]?.nft_event_checkins_list ?? [] });
+    const { rows } = await pool.query("SELECT * FROM nft_event_checkins_list($1)", [req.params.id]);
+    res.json({ checkins: rows ?? [] });
   } catch (err) {
     next(err);
   }

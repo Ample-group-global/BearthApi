@@ -8,8 +8,8 @@ const router = Router();
 // GET /api/nft-sell/packs — list all pack definitions
 router.get("/", async (_req, res, next) => {
   try {
-    const { rows } = await pool.query("SELECT nft_pack_defs_list()", []);
-    res.json({ packs: rows[0]?.nft_pack_defs_list ?? [] });
+    const { rows } = await pool.query("SELECT * FROM nft_pack_defs_list()", []);
+    res.json({ packs: rows ?? [] });
   } catch (err) {
     next(err);
   }
@@ -69,8 +69,8 @@ router.post("/:id/commit", requireAdmin, async (req, res, next) => {
 // GET /api/nft-sell/packs/:id/orders — list pack orders for a definition
 router.get("/:id/orders", async (req, res, next) => {
   try {
-    const { rows } = await pool.query("SELECT nft_pack_orders_list($1)", [req.params.id]);
-    res.json({ orders: rows[0]?.nft_pack_orders_list ?? [] });
+    const { rows } = await pool.query("SELECT * FROM nft_pack_orders_list($1)", [req.params.id]);
+    res.json({ orders: rows ?? [] });
   } catch (err) {
     next(err);
   }

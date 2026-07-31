@@ -219,7 +219,7 @@ export function startEventListeners(): void {
   const watchedEvents = [
     "WaveSold", "WaveScheduleUpdated", "WavePriceUpdated",
     "WaveRevealed",
-    "PhaseChanged", "Revealed", "PurchaseLimitChanged",
+    "PhaseChanged", "Revealed", "PurchaseLimitChanged", "VIPStatusChanged",
     "RoyaltyUpdated", "SBTChanged", "Transfer", "Bred", "TokenPriceSet",
     "TransferValidatorUpdated", "Paused", "Unpaused",
   ];
