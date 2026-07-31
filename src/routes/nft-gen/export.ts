@@ -9,7 +9,7 @@ import sharp                                                     from "sharp";
 import { requirePermission }                                     from "../../adminAuth";
 import pool                                                      from "../../pool";
 import { getS3Client }                                           from "../../clients/s3";
-import { batchUpdateItemIpfsCids }                               from "../../services/nft-gen.service";
+import { batchUpdateItemIpfsCids, syncGeneratedItemsToNftRecords, getLocalLayersDir } from "../../services/nft-gen.service";
 
 const router = Router();
 
@@ -50,30 +50,35 @@ async function streamToBuffer(body: unknown): Promise<Buffer> {
   });
 }
 
+// Resolves S3 bucket name from either LAYERS_BUCKET or FILEBASE_LAYERS_BUCKET env vars.
+function layersBucket(): string | null {
+  return process.env.LAYERS_BUCKET || process.env.FILEBASE_LAYERS_BUCKET || null;
+}
+
 function makeLayerFetcher(layersDir: string | null) {
   const cache       = new Map<string, Buffer>();
   const resolvedDir = layersDir ? path.resolve(layersDir) : null;
+  const bucket      = layersBucket();
 
   return async function fetchLayerBuf(filePath: string): Promise<Buffer | null> {
     if (cache.has(filePath)) return cache.get(filePath)!;
 
     let buf: Buffer | null = null;
 
+    // 1. Try local disk first (fast path — works in local dev and when LAYERS_DIR is set)
     if (resolvedDir) {
-      // Local filesystem — dev / Railway
       const abs = path.resolve(resolvedDir, filePath);
       if (abs.startsWith(resolvedDir) && fs.existsSync(abs)) {
         buf = fs.readFileSync(abs);
       }
-    } else {
-      // Cloud storage — Vercel / prod without local disk
-      const bucket = process.env.LAYERS_BUCKET;
-      if (bucket) {
-        try {
-          const res = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: filePath }));
-          buf = await streamToBuffer(res.Body);
-        } catch { buf = null; }
-      }
+    }
+
+    // 2. Fall back to Filebase S3 (Railway restarts wipe local disk; uploads always go to S3)
+    if (!buf && bucket) {
+      try {
+        const res = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: filePath }));
+        buf = await streamToBuffer(res.Body);
+      } catch { buf = null; }
     }
 
     if (buf) cache.set(filePath, buf);
@@ -84,15 +89,13 @@ function makeLayerFetcher(layersDir: string | null) {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function resolveLayersDir(): string | null {
-  const dir = process.env.LAYERS_DIR || null;
-  if (dir && !fs.existsSync(dir)) return null; // configured but missing on disk
-  return dir;
+  const dir = getLocalLayersDir();
+  return fs.existsSync(dir) ? dir : null;
 }
 
 function hasLayerSource(): boolean {
-  const dir = process.env.LAYERS_DIR;
-  if (dir && fs.existsSync(dir)) return true;
-  return !!process.env.LAYERS_BUCKET;
+  if (fs.existsSync(getLocalLayersDir())) return true;
+  return !!layersBucket();
 }
 
 // ── POST / — start server-side export ────────────────────────────────────────
@@ -386,8 +389,12 @@ async function runExport(
     }
   }
 
+  // Promote all IPFS-synced items into nft_records for wave selling
+  state.phase = "Syncing to NFT Records…";
+  const synced = await syncGeneratedItemsToNftRecords(jobId);
+
   state.status = "done";
-  state.phase  = `Complete — ${total} NFTs exported to Filebase`;
+  state.phase  = `Complete — ${total} NFTs exported to Filebase, ${synced} synced to NFT Records`;
 }
 
 async function runPreview(

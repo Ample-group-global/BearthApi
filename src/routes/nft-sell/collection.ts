@@ -26,6 +26,7 @@ const router = Router();
 router.get("/", async (_req, res, next) => {
   try {
     const { rows } = await pool.query("SELECT nft_collection_config_get()", []);
+    const cfg = rows[0]?.nft_collection_config_get ?? null;
     let onChain = null;
     if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL) {
       try {
@@ -34,6 +35,7 @@ router.get("/", async (_req, res, next) => {
           currentPhase:         Number(info.currentPhase),
           maxSupply:            Number(info.maxSupply),
           totalMinted:          Number(info.totalMinted),
+          revealCount:          Number(cfg?.reveal_count ?? 0),
           sbt:                  info.sbt,
           purchaseLimitEnabled: info.purchaseLimitEnabled,
           normalMaxPerWallet:   Number(info.normalMaxPerWallet),
@@ -42,7 +44,7 @@ router.get("/", async (_req, res, next) => {
         onChain = null;
       }
     }
-    res.json({ config: rows[0]?.nft_collection_config_get ?? null, onChain });
+    res.json({ config: cfg, onChain });
   } catch (err) {
     next(err);
   }

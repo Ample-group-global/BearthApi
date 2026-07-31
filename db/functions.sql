@@ -422,10 +422,15 @@ $$;
 
 -- ── Referrers ────────────────────────────────────────────────────────
 
-CREATE OR REPLACE FUNCTION referrers_list(
+DROP FUNCTION IF EXISTS referrers_list(text);
+CREATE FUNCTION referrers_list(
   p_search TEXT DEFAULT NULL
 )
-RETURNS TABLE(id UUID, referrer_code VARCHAR, first_name VARCHAR, last_name VARCHAR, name TEXT, phone VARCHAR, email VARCHAR, role_code VARCHAR)
+RETURNS TABLE(
+  id UUID, referrer_code VARCHAR, first_name VARCHAR, last_name VARCHAR,
+  name TEXT, phone VARCHAR, email VARCHAR, role_code VARCHAR,
+  referred_count INT, referrer_name TEXT
+)
 LANGUAGE plpgsql AS $$
 BEGIN
   RETURN QUERY
@@ -433,7 +438,9 @@ BEGIN
          u.first_name, u.last_name,
          TRIM(u.first_name || ' ' || u.last_name) AS name,
          u.phone, u.email,
-         r.code AS role_code
+         r.code AS role_code,
+         (SELECT COUNT(*) FROM users u2 WHERE u2.referrer_id = u.id AND u2.is_active = TRUE)::int AS referred_count,
+         (SELECT TRIM(u3.first_name || ' ' || u3.last_name) FROM users u3 WHERE u3.id = u.referrer_id) AS referrer_name
   FROM users u
   JOIN roles r ON u.role_id = r.id
   WHERE r.code IN ('admin', 'operation', 'technical_team', 'sales_team', 'ext_referrer', 'customer')

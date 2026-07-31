@@ -29,10 +29,9 @@ router.post("/", async (req, res, next) => {
     if (!collectionId)        { res.status(422).json({ error: "collectionId is required." }); return; }
     if (!editionSize || Number(editionSize) < 1) { res.status(422).json({ error: "editionSize must be >= 1." }); return; }
 
-    const layersDir = process.env.LAYERS_DIR;
-    if (!layersDir || !fs.existsSync(layersDir)) {
-      res.status(500).json({ error: "LAYERS_DIR not configured on server." }); return;
-    }
+    // Generate reads layers+traits from DB and builds combinations in memory.
+    // PNG files are only needed during Export (compositing) — not here.
+    const layersDir = svc.getLocalLayersDir(); // used only for optional weights/conflicts json files
 
     const generateId = randomUUID();
     generateJobs.set(generateId, { status: "running", phase: "Loading layers…", progress: 0, total: Number(editionSize) });

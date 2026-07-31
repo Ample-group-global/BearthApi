@@ -27,7 +27,6 @@ import nftSellSeasonsRouter          from "./routes/nft-sell/seasons";
 import nftSellPacksRouter            from "./routes/nft-sell/packs";
 import nftSellBurnRouter             from "./routes/nft-sell/burn";
 import nftSellCollaborationsRouter   from "./routes/nft-sell/collaborations";
-import nftSellDutchRouter           from "./routes/nft-sell/dutch";
 import nftSellOtcRouter             from "./routes/nft-sell/otc";
 import nftSellBulkRouter            from "./routes/nft-sell/bulk";
 import nftSellGiftsRouter           from "./routes/nft-sell/gifts";
@@ -37,8 +36,10 @@ import nftSellUpgradeNFTRouter      from "./routes/nft-sell/upgrade-nft";
 import nftSellSchedulerRouter       from "./routes/nft-sell/scheduler";
 import nftSellRewardTokenRouter     from "./routes/nft-sell/reward-token";
 import nftsRouter from "./routes/nfts";
+import wavesRouter from "./routes/waves";
 import filebaseRouter from "./routes/filebase";
 import { startEventListeners } from "./services/contract.service";
+import { startWaveAutoTrigger } from "./services/wave-auto-trigger.service";
 import pool from "./pool";
 import { buildMerkleTree } from "./merkle";
 import { errorHandler } from "./errorHandler";
@@ -109,6 +110,7 @@ app.use("/api/admin/permissions", adminPermissionsRouter);
 app.use("/api/admin/menus",       adminMenusRouter);
 app.use("/api/admin/users",       adminUsersRouter);
 app.use("/api/nfts",              nftsRouter);
+app.use("/api/waves",             wavesRouter);
 app.use("/api/nft-gen",           nftGenRouter);
 app.use("/api/filebase",          filebaseRouter);
 app.use("/api/opensea",           openSeaRouter);
@@ -127,7 +129,6 @@ app.use("/api/nft-sell/seasons",         nftSellSeasonsRouter);
 app.use("/api/nft-sell/packs",           nftSellPacksRouter);
 app.use("/api/nft-sell/burn",            nftSellBurnRouter);
 app.use("/api/nft-sell/collaborations",  nftSellCollaborationsRouter);
-app.use("/api/nft-sell/dutch",           nftSellDutchRouter);
 app.use("/api/nft-sell/otc",             nftSellOtcRouter);
 app.use("/api/nft-sell/bulk",            nftSellBulkRouter);
 app.use("/api/nft-sell/gifts",           nftSellGiftsRouter);
@@ -184,6 +185,7 @@ if (!process.env.VERCEL) {
     if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL) {
       startEventListeners();
     }
+    startWaveAutoTrigger();
   });
 }
 

@@ -17,6 +17,80 @@ async function getEnabledCurrencies(): Promise<string[]> {
   return rows.map((r: { code: string }) => r.code);
 }
 
+// GET /api/nft-sell/admin-sales/history — mint & sales history from nft_records
+// Query: ?wave=1  &wallet=0x...  &from=2026-01-01  &to=2026-12-31  &limit=50  &offset=0
+router.get("/history", async (req, res, next) => {
+  try {
+    const limit  = Math.min(parseInt(req.query.limit  as string || "50",  10), 500);
+    const offset = parseInt(req.query.offset as string || "0",  10);
+    const wave   = req.query.wave   as string | undefined;
+    const wallet = req.query.wallet as string | undefined;
+    const from   = req.query.from   as string | undefined;
+    const to     = req.query.to     as string | undefined;
+
+    const conditions: string[] = ["r.mint_tx_hash IS NOT NULL"];
+    const params: unknown[]    = [];
+
+    if (wave)   { params.push(parseInt(wave, 10)); conditions.push(`r.wave_num = $${params.length}`); }
+    if (wallet) { params.push(`%${wallet.toLowerCase()}%`); conditions.push(`LOWER(r.owner_address) LIKE $${params.length}`); }
+    if (from)   { params.push(from); conditions.push(`r.minted_at >= $${params.length}::date`); }
+    if (to)     { params.push(to);   conditions.push(`r.minted_at <  ($${params.length}::date + interval '1 day')`); }
+
+    const where = conditions.join(" AND ");
+
+    params.push(limit, offset);
+    const limitIdx  = params.length - 1;
+    const offsetIdx = params.length;
+
+    const { rows } = await pool.query(
+      `SELECT
+         r.serial_number,
+         r.token_id,
+         r.wave_num,
+         r.owner_address     AS wallet,
+         r.price_eth,
+         r.rarity_tier,
+         r.image_ipfs_hash,
+         r.is_revealed,
+         r.mint_tx_hash,
+         r.minted_at,
+         r.last_sale_price_eth,
+         r.last_tx_hash,
+         r.sold_at,
+         r.traits,
+         COUNT(*) OVER()     AS total_count
+       FROM nft_records r
+       WHERE ${where}
+       ORDER BY r.minted_at DESC
+       LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+      params,
+    );
+
+    const total = rows[0]?.total_count ? Number(rows[0].total_count) : 0;
+    const records = rows.map(({ total_count: _tc, ...r }) => r);
+    res.json({ records, total, limit, offset, hasMore: offset + limit < total });
+  } catch (err) { next(err); }
+});
+
+// GET /api/nft-sell/admin-sales/history/summary — totals by wave
+router.get("/history/summary", async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        COALESCE(wave_num::text, '—')   AS wave,
+        COUNT(*)                         AS total_minted,
+        SUM(price_eth)                   AS total_eth,
+        COUNT(sold_at)                   AS total_sold,
+        SUM(last_sale_price_eth)         AS total_sale_eth
+      FROM nft_records
+      WHERE mint_tx_hash IS NOT NULL
+      GROUP BY wave_num
+      ORDER BY wave_num ASC NULLS LAST
+    `);
+    res.json({ summary: rows });
+  } catch (err) { next(err); }
+});
+
 // GET /api/nft-sell/admin-sales — list all admin-recorded sales (paginated)
 // Query: ?status=pending|minted|failed|refunded  &mode=offline_cash  &limit=50  &offset=0
 router.get("/", async (req, res, next) => {

@@ -19,6 +19,7 @@ export async function listNft(params: {
   stageCode?: string | null;
   revealed?: boolean | null;
   waveId?: string | null;
+  waveNumber?: number | null;
   limit?: number;
   offset?: number;
   sortBy?: string | null;
@@ -26,8 +27,8 @@ export async function listNft(params: {
 }) {
   const {
     search = null, deliveryStatusCode = null, stageCode = null,
-    revealed = null, waveId = null, limit = 20, offset = 0,
-    sortBy = null, sortDir = null,
+    revealed = null, waveId = null, waveNumber = null,
+    limit = 20, offset = 0, sortBy = null, sortDir = null,
   } = params;
 
   const sortCol = sortBy && SORT_COLS[sortBy] ? SORT_COLS[sortBy] : null;
@@ -40,12 +41,17 @@ export async function listNft(params: {
     `SELECT
        nr.id, nr.serial_number, nr.token_id,
        nr.image_ipfs_hash, nr.metadata_uri, nr.blind_box_uri,
-       nr.is_revealed, nr.revealed_at,
+       nr.is_revealed, nr.revealed_at, nr.minted_at, nr.sold_at,
+       nr.owner_address,
        nr.notes, nr.delivered_at, nr.created_at, nr.updated_at,
        nr.stage_id, nr.stage_name,
        nr.nft_type_id, nr.type_name,
        nr.delivery_status_id, nr.delivery_status_code, nr.delivery_status_name,
        nr.wave_id, w.wave_number, w.name AS wave_name,
+       w.quantity AS wave_quantity,
+       w.scheduled_start AS wave_scheduled_start,
+       w.scheduled_end   AS wave_scheduled_end,
+       w.reveal_scheduled_at AS wave_reveal_scheduled_at,
        nr.price_eth,
        COALESCE(nr.price_eth, w.default_price_eth) AS effective_price_eth,
        COUNT(*) OVER() AS total_count
@@ -56,15 +62,17 @@ export async function listNft(params: {
        AND ($3::VARCHAR IS NULL OR nr.stage_code = $3)
        AND ($4::BOOLEAN IS NULL OR nr.is_revealed = $4)
        AND ($5::UUID IS NULL OR nr.wave_id = $5::UUID)
+       AND ($6::INT IS NULL OR w.wave_number = $6)
      ORDER BY ${orderBy}
-     LIMIT $6 OFFSET $7`,
-    [search, deliveryStatusCode, stageCode, revealed, waveId, limit, offset],
+     LIMIT $7 OFFSET $8`,
+    [search, deliveryStatusCode, stageCode, revealed, waveId, waveNumber, limit, offset],
   );
   const { rows: statsRows } = await pool.query(
     `SELECT
-      COUNT(*) FILTER (WHERE NOT nr.is_revealed)    AS blind_count,
-      COUNT(*) FILTER (WHERE nr.is_revealed)         AS revealed_count,
-      COUNT(*) FILTER (WHERE nr.delivery_status_code = 'delivered') AS delivered_count
+      COUNT(*) FILTER (WHERE NOT nr.is_revealed)                         AS blind_count,
+      COUNT(*) FILTER (WHERE nr.is_revealed)                             AS revealed_count,
+      COUNT(*) FILTER (WHERE nr.delivery_status_code = 'sold')          AS sold_count,
+      COUNT(*) FILTER (WHERE nr.delivery_status_code = 'delivered')     AS delivered_count
     FROM v_nft_records nr`,
   );
   const st = statsRows[0] ?? {};
@@ -72,9 +80,10 @@ export async function listNft(params: {
   return {
     nftRecords:    toCamel(rows),
     total:         Number(rows[0]?.total_count ?? 0),
-    blindCount:    Number(st.blind_count     ?? 0),
-    revealedCount: Number(st.revealed_count  ?? 0),
-    deliveredCount:Number(st.delivered_count ?? 0),
+    blindCount:    Number(st.blind_count      ?? 0),
+    revealedCount: Number(st.revealed_count   ?? 0),
+    soldCount:     Number(st.sold_count       ?? 0),
+    deliveredCount:Number(st.delivered_count  ?? 0),
     limit,
     offset,
   };

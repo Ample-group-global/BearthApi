@@ -9,8 +9,8 @@ export const COOKIE_MAX_AGE = 86400; // seconds
 const TTL_MS = 24 * 60 * 60 * 1000;
 
 function sign(data: string): string {
-  const secret = process.env.ADMIN_SECRET;
-  if (!secret) throw new Error("ADMIN_SECRET is not set");
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) throw new Error("AUTH_SECRET is not set");
   return crypto.createHmac("sha256", secret).update(data).digest("base64url");
 }
 
