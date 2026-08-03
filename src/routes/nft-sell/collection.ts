@@ -23,6 +23,30 @@ import { requireAdmin } from "../../adminAuth";
 
 const router = Router();
 
+// ── Blind box image resolver (metadata JSON → actual image URL) ───────────────
+// blindBoxUri is an ERC721 metadata JSON. For display we need the `image` field inside it.
+// Cache per process lifetime (changes only when admin updates the blind box URI).
+const IPFS_GATEWAY = "https://amgbearth.myfilebase.com/ipfs/";
+function ipfsToHttp(uri: string): string { return uri.replace("ipfs://", IPFS_GATEWAY); }
+
+let _cachedBlindBoxImageUrl: string | null = null;
+let _cachedForUri: string | null = null;
+
+async function resolveBlindBoxImageUrl(metaUri: string | null): Promise<string | null> {
+  if (!metaUri) return null;
+  if (_cachedForUri === metaUri && _cachedBlindBoxImageUrl) return _cachedBlindBoxImageUrl;
+  try {
+    const res  = await fetch(ipfsToHttp(metaUri));
+    const meta = await res.json() as Record<string, unknown>;
+    if (meta?.image && typeof meta.image === "string") {
+      _cachedBlindBoxImageUrl = ipfsToHttp(meta.image);
+      _cachedForUri = metaUri;
+      return _cachedBlindBoxImageUrl;
+    }
+  } catch { /* fall through */ }
+  return null;
+}
+
 // GET /api/nft-sell/collection — full collection config (DB + on-chain)
 router.get("/", async (_req, res, next) => {
   try {
@@ -247,6 +271,7 @@ router.get("/stats", async (_req, res, next) => {
         : Promise.resolve(null),
       pool.query("SELECT * FROM nft_revenue_summary()", []).catch(() => ({ rows: [null] })),
     ]);
+    const blindBoxMetaUri = configResult.rows[0]?.nft_collection_config_get?.blind_box_uri ?? null;
 
     const cfg   = configResult.rows[0]?.nft_collection_config_get ?? null;
     const waves: Record<string, unknown>[] = wavesResult.rows ?? [];
@@ -280,7 +305,8 @@ router.get("/stats", async (_req, res, next) => {
         closed:     Boolean(paidWave?.wave_closed),
         closeAction: paidWave?.close_action ?? null,
       },
-      blindBoxUri:   cfg?.blind_box_uri ?? null,
+      blindBoxUri:      cfg?.blind_box_uri ?? null,
+      blindBoxImageUrl: await resolveBlindBoxImageUrl(blindBoxMetaUri),
       revealed:      Number(cfg?.reveal_count ?? 0),
       isRevealed:    (cfg?.current_phase ?? "") === "Revealed",
       adminRevenue: rev ? {
