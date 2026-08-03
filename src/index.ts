@@ -35,6 +35,7 @@ import nftSellUpgradeRouter         from "./routes/nft-sell/upgrade";
 import nftSellUpgradeNFTRouter      from "./routes/nft-sell/upgrade-nft";
 import nftSellSchedulerRouter       from "./routes/nft-sell/scheduler";
 import nftSellRewardTokenRouter     from "./routes/nft-sell/reward-token";
+import walletsRouter from "./routes/wallets";
 import nftsRouter from "./routes/nfts";
 import wavesRouter from "./routes/waves";
 import filebaseRouter from "./routes/filebase";
@@ -137,6 +138,7 @@ app.use("/api/nft-sell/upgrade",         nftSellUpgradeRouter);
 app.use("/api/nft-sell/upgrade-nft",    nftSellUpgradeNFTRouter);
 app.use("/api/nft-sell/scheduler",       nftSellSchedulerRouter);
 app.use("/api/nft-sell/reward-token",    nftSellRewardTokenRouter);
+app.use("/api/wallets",                  walletsRouter);
 app.get("/api/health", async (_req, res) => {
   try {
     const { rows } = await pool.query(
