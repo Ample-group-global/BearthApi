@@ -342,7 +342,8 @@ router.get("/tokens", async (req, res, next) => {
         r.rarity_tier, r.rarity_price_eth, r.rarity_price_locked,
         r.is_revealed, r.mint_tx_hash, r.minted_at, r.synced_at, r.created_at
       FROM nft_records r
-      WHERE ($1::VARCHAR IS NULL OR LOWER(r.owner_address) = LOWER($1))
+      WHERE r.mint_tx_hash IS NOT NULL
+        AND ($1::VARCHAR IS NULL OR LOWER(r.owner_address) = LOWER($1))
         AND ($2::INT IS NULL OR r.on_chain_wave_num = $2)
       ORDER BY r.token_id
       LIMIT $3 OFFSET $4
@@ -350,7 +351,8 @@ router.get("/tokens", async (req, res, next) => {
 
     const { rows: countRows } = await pool.query(`
       SELECT COUNT(*) AS total FROM nft_records
-      WHERE ($1::VARCHAR IS NULL OR LOWER(owner_address) = LOWER($1))
+      WHERE mint_tx_hash IS NOT NULL
+        AND ($1::VARCHAR IS NULL OR LOWER(owner_address) = LOWER($1))
         AND ($2::INT IS NULL OR on_chain_wave_num = $2)
     `, [owner ?? null, waveNum]);
 
