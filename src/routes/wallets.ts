@@ -3,6 +3,7 @@ import rateLimit from "express-rate-limit";
 import pool from "../pool";
 import { requirePermission } from "../adminAuth";
 import { HttpError } from "../errors";
+import { contractBlockAccount } from "../services/contract.service";
 
 const router = Router();
 
@@ -96,8 +97,9 @@ router.get("/:address", readLimit, async (req: Request, res: Response, next: Nex
 });
 
 // ── POST /api/wallets/:address/block ──────────────────────────────────────────
-// Admin: block a wallet. Body: { reason?: string }
-// If the wallet has never connected, registers it first, then blocks it.
+// Admin: block a wallet both in DB and on-chain.
+// Body: { reason?: string, onChain?: boolean }
+// onChain defaults to true — set false to block only in DB (faster, no gas).
 router.post("/:address/block", writeLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
     requirePermission(req, "customers.edit");
@@ -106,33 +108,61 @@ router.post("/:address/block", writeLimit, async (req: Request, res: Response, n
       res.status(422).json({ error: "Invalid Ethereum address" });
       return;
     }
-    const { reason } = (req.body ?? {}) as { reason?: string };
+    const { reason, onChain = true } = (req.body ?? {}) as { reason?: string; onChain?: boolean };
+
+    // 1. DB block (auto-registers wallet if never connected)
     const client = await pool.connect();
+    let dbRow: Record<string, unknown>;
     try {
       await client.query("BEGIN");
-      // Ensure the wallet exists before blocking (auto-register if needed)
       await client.query("SELECT wallet_connect($1)", [address]);
       const { rows } = await client.query("SELECT * FROM wallet_block($1, $2)", [address, reason ?? null]);
       await client.query("COMMIT");
-      const r = rows[0];
-      res.json({
-        ok:            true,
-        address:       r.address,
-        isBlocked:     r.is_blocked,
-        blockedReason: r.blocked_reason ?? null,
-        blockedAt:     r.blocked_at ? (r.blocked_at as Date).toISOString() : null,
-      });
+      dbRow = rows[0];
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;
     } finally {
       client.release();
     }
+
+    // 2. On-chain block (optional, requires PAUSER_ROLE + gas)
+    let txHash: string | null = null;
+    if (onChain) {
+      try {
+        const receipt = await contractBlockAccount(address, true);
+        txHash = receipt.hash;
+      } catch (chainErr) {
+        // Return partial success — DB block applied, on-chain failed
+        res.status(207).json({
+          ok:            true,
+          dbBlocked:     true,
+          onChainBlocked: false,
+          onChainError:  chainErr instanceof Error ? chainErr.message : "On-chain block failed",
+          address:       dbRow.address,
+          isBlocked:     dbRow.is_blocked,
+          blockedReason: dbRow.blocked_reason ?? null,
+          blockedAt:     dbRow.blocked_at ? (dbRow.blocked_at as Date).toISOString() : null,
+        });
+        return;
+      }
+    }
+
+    res.json({
+      ok:             true,
+      dbBlocked:      true,
+      onChainBlocked: onChain,
+      txHash,
+      address:        dbRow.address,
+      isBlocked:      dbRow.is_blocked,
+      blockedReason:  dbRow.blocked_reason ?? null,
+      blockedAt:      dbRow.blocked_at ? (dbRow.blocked_at as Date).toISOString() : null,
+    });
   } catch (e) { next(e); }
 });
 
 // ── DELETE /api/wallets/:address/block ────────────────────────────────────────
-// Admin: remove a block from a wallet.
+// Admin: remove a block from a wallet. Body: { onChain?: boolean }
 router.delete("/:address/block", writeLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
     requirePermission(req, "customers.edit");
@@ -141,9 +171,32 @@ router.delete("/:address/block", writeLimit, async (req: Request, res: Response,
       res.status(422).json({ error: "Invalid Ethereum address" });
       return;
     }
+    const { onChain = true } = (req.body ?? {}) as { onChain?: boolean };
+
+    // 1. DB unblock
     const { rows } = await pool.query("SELECT * FROM wallet_unblock($1)", [address]);
     if (!rows[0]) throw new HttpError(404, "Wallet not found");
-    res.json({ ok: true, address: rows[0].address, isBlocked: rows[0].is_blocked });
+
+    // 2. On-chain unblock (optional)
+    let txHash: string | null = null;
+    if (onChain) {
+      try {
+        const receipt = await contractBlockAccount(address, false);
+        txHash = receipt.hash;
+      } catch (chainErr) {
+        res.status(207).json({
+          ok:              true,
+          dbUnblocked:     true,
+          onChainUnblocked: false,
+          onChainError:    chainErr instanceof Error ? chainErr.message : "On-chain unblock failed",
+          address:         rows[0].address,
+          isBlocked:       rows[0].is_blocked,
+        });
+        return;
+      }
+    }
+
+    res.json({ ok: true, dbUnblocked: true, onChainUnblocked: onChain, txHash, address: rows[0].address, isBlocked: rows[0].is_blocked });
   } catch (e) { next(e); }
 });
 

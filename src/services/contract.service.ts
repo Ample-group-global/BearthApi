@@ -51,6 +51,7 @@ const CONTRACT_ERROR_MESSAGES: Record<string, string> = {
   NotAllowlisted:           "This wallet is not on the allowlist",
   WrongPayment:             "Incorrect ETH amount sent",
   PurchaseLimitExceeded:    "Purchase limit exceeded for this wallet",
+  WalletBlocked:            "This wallet has been blocked from minting",
   InvalidQuantity:          "Invalid quantity — must be at least 1",
   TokenAlreadyMinted:       "Token has already been minted",
   // Phase / state
@@ -563,6 +564,14 @@ export async function contractEmergencyTransfer(
   if (!ethers.isAddress(to))   throw new Error("Invalid to address");
   if (!reason?.trim())         throw new Error("reason is required");
   return callContract("emergencyTransfer", [id, from, to, reason]);
+}
+
+export async function contractBlockAccount(
+  wallet: string,
+  blocked: boolean
+): Promise<ethers.TransactionReceipt> {
+  if (!ethers.isAddress(wallet)) throw new Error("Invalid wallet address");
+  return callContract("blockAccount", [wallet, blocked]);
 }
 
 export async function contractBreedMint(
