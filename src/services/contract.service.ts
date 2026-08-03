@@ -51,6 +51,7 @@ const CONTRACT_ERROR_MESSAGES: Record<string, string> = {
   NotAllowlisted:           "This wallet is not on the allowlist",
   WrongPayment:             "Incorrect ETH amount sent",
   PurchaseLimitExceeded:    "Purchase limit exceeded for this wallet",
+  WalletBlocked:            "This wallet has been blocked from minting",
   InvalidQuantity:          "Invalid quantity — must be at least 1",
   TokenAlreadyMinted:       "Token has already been minted",
   // Phase / state
@@ -322,27 +323,66 @@ export function startEventListeners(): void {
 
 // ── Full resync from block history ────────────────────────────────────────────
 
-export async function resyncFromBlock(fromBlock = 0): Promise<{ synced: number }> {
-  const contract = getContractReadOnly();
-  const iface    = contract.interface;
-  const filter   = { address: process.env.CONTRACT_ADDRESS, fromBlock, toBlock: "latest" };
-  const logs     = await getProvider().getLogs(filter);
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-  let synced = 0;
-  for (const log of logs) {
+export async function resyncFromBlock(fromBlock = 0): Promise<{ synced: number; scannedBlocks: number; skippedChunks: number }> {
+  const provider  = getProvider();
+  const contract  = getContractReadOnly();
+  const iface     = contract.interface;
+  // 500-block chunks keep every RPC provider happy (Infura/Alchemy free tier limit is typically 2000,
+  // but smaller chunks also reduce the chance of hitting per-request log-count limits).
+  const CHUNK     = 500;
+
+  const latestBlock = await provider.getBlockNumber();
+  // Default to last 20 000 blocks (~2–3 days on Sepolia) so the function stays well within
+  // Vercel's 300 s serverless timeout.  Pass an explicit block number to reach further back.
+  const startBlock = fromBlock === 0
+    ? Math.max(0, latestBlock - 20_000)
+    : fromBlock;
+
+  let synced       = 0;
+  let skippedChunks = 0;
+  let cursor       = startBlock;
+
+  while (cursor <= latestBlock) {
+    const end = Math.min(cursor + CHUNK - 1, latestBlock);
+
+    let logs: Awaited<ReturnType<typeof provider.getLogs>> = [];
     try {
-      const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
-      if (!parsed) continue;
-      await syncEvent(
-        parsed.name, [...parsed.args],
-        log.transactionHash, log.blockNumber, log.index
-      );
-      synced++;
-    } catch {
-      // skip unparseable logs
+      logs = await provider.getLogs({
+        address:   process.env.CONTRACT_ADDRESS,
+        fromBlock: cursor,
+        toBlock:   end,
+      });
+    } catch (chunkErr) {
+      // Log the failure but continue — a single RPC hiccup should not abort the entire resync
+      console.error(`[resync] getLogs chunk ${cursor}-${end} failed, skipping:`, chunkErr);
+      skippedChunks++;
+      cursor = end + 1;
+      await sleep(300); // back off briefly before next chunk
+      continue;
     }
+
+    for (const log of logs) {
+      try {
+        const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
+        if (!parsed) continue;
+        await syncEvent(
+          parsed.name, [...parsed.args],
+          log.transactionHash, log.blockNumber, log.index
+        );
+        synced++;
+      } catch {
+        // skip unparseable / already-synced logs
+      }
+    }
+
+    cursor = end + 1;
+    // Small pause between chunks to avoid hitting RPC rate limits
+    if (cursor <= latestBlock) await sleep(100);
   }
-  return { synced };
+
+  return { synced, scannedBlocks: latestBlock - startBlock + 1, skippedChunks };
 }
 
 // ── Admin write functions ─────────────────────────────────────────────────────
@@ -524,6 +564,14 @@ export async function contractEmergencyTransfer(
   if (!ethers.isAddress(to))   throw new Error("Invalid to address");
   if (!reason?.trim())         throw new Error("reason is required");
   return callContract("emergencyTransfer", [id, from, to, reason]);
+}
+
+export async function contractBlockAccount(
+  wallet: string,
+  blocked: boolean
+): Promise<ethers.TransactionReceipt> {
+  if (!ethers.isAddress(wallet)) throw new Error("Invalid wallet address");
+  return callContract("blockAccount", [wallet, blocked]);
 }
 
 export async function contractBreedMint(
