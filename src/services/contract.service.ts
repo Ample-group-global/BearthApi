@@ -322,29 +322,45 @@ export function startEventListeners(): void {
 
 // ── Full resync from block history ────────────────────────────────────────────
 
-export async function resyncFromBlock(fromBlock = 0): Promise<{ synced: number; scannedBlocks: number }> {
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+export async function resyncFromBlock(fromBlock = 0): Promise<{ synced: number; scannedBlocks: number; skippedChunks: number }> {
   const provider  = getProvider();
   const contract  = getContractReadOnly();
   const iface     = contract.interface;
-  const CHUNK     = 2000; // safe for all RPC providers
+  // 500-block chunks keep every RPC provider happy (Infura/Alchemy free tier limit is typically 2000,
+  // but smaller chunks also reduce the chance of hitting per-request log-count limits).
+  const CHUNK     = 500;
 
   const latestBlock = await provider.getBlockNumber();
-  // When caller passes 0 (scan all), default to last 100k blocks (~2 weeks on Sepolia).
-  // Pass an explicit block number to scan further back.
+  // Default to last 20 000 blocks (~2–3 days on Sepolia) so the function stays well within
+  // Vercel's 300 s serverless timeout.  Pass an explicit block number to reach further back.
   const startBlock = fromBlock === 0
-    ? Math.max(0, latestBlock - 100_000)
+    ? Math.max(0, latestBlock - 20_000)
     : fromBlock;
 
-  let synced = 0;
-  let cursor = startBlock;
+  let synced       = 0;
+  let skippedChunks = 0;
+  let cursor       = startBlock;
 
   while (cursor <= latestBlock) {
-    const end  = Math.min(cursor + CHUNK - 1, latestBlock);
-    const logs = await provider.getLogs({
-      address:   process.env.CONTRACT_ADDRESS,
-      fromBlock: cursor,
-      toBlock:   end,
-    });
+    const end = Math.min(cursor + CHUNK - 1, latestBlock);
+
+    let logs: Awaited<ReturnType<typeof provider.getLogs>> = [];
+    try {
+      logs = await provider.getLogs({
+        address:   process.env.CONTRACT_ADDRESS,
+        fromBlock: cursor,
+        toBlock:   end,
+      });
+    } catch (chunkErr) {
+      // Log the failure but continue — a single RPC hiccup should not abort the entire resync
+      console.error(`[resync] getLogs chunk ${cursor}-${end} failed, skipping:`, chunkErr);
+      skippedChunks++;
+      cursor = end + 1;
+      await sleep(300); // back off briefly before next chunk
+      continue;
+    }
 
     for (const log of logs) {
       try {
@@ -356,13 +372,16 @@ export async function resyncFromBlock(fromBlock = 0): Promise<{ synced: number; 
         );
         synced++;
       } catch {
-        // skip unparseable logs
+        // skip unparseable / already-synced logs
       }
     }
+
     cursor = end + 1;
+    // Small pause between chunks to avoid hitting RPC rate limits
+    if (cursor <= latestBlock) await sleep(100);
   }
 
-  return { synced, scannedBlocks: latestBlock - startBlock + 1 };
+  return { synced, scannedBlocks: latestBlock - startBlock + 1, skippedChunks };
 }
 
 // ── Admin write functions ─────────────────────────────────────────────────────
