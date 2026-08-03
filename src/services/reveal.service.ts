@@ -29,15 +29,15 @@ function shuffle<T>(arr: T[]): T[] {
 /**
  * Execute wave reveal:
  * 1. Find all minted token_ids for this wave (from nft_records where on_chain_wave_num = waveNum and token_id IS NOT NULL)
- * 2. Find all unassigned nft_records (no token_id, for this wave or unassigned) with IPFS CIDs
- * 3. Shuffle pool, map token_id → random nft_record
+ * 2. Find all unassigned nft_records (no token_id) with IPFS CIDs
+ * 3. Fisher-Yates shuffle pool, map token_id → random nft_record (wrapped in DB transaction)
  * 4. Update nft_records with token assignments + is_revealed = true
- * 5. Build the reveal base URI from Filebase
- * 6. Call revealWave(waveNum, ipfs://baseURI) on-chain
- * 7. Sync nft_waves reveal state
+ * 5. Call revealWave(waveNum, ipfs://baseURI) on-chain
+ * 6. Sync nft_waves reveal state
+ * Returns txHash (or null in dev mode without contract env vars)
  */
-export async function executeWaveReveal(waveNum: number): Promise<void> {
-  // Load the wave's reveal URI from nft_waves
+export async function executeWaveReveal(waveNum: number): Promise<string | null> {
+  // Load the wave's reveal URI from nft_waves — must be set before calling this function
   const { rows: waveRows } = await pool.query<{
     id:              string;
     wave_number:     number;
@@ -49,6 +49,15 @@ export async function executeWaveReveal(waveNum: number): Promise<void> {
   if (!waveRows.length) throw new Error(`Wave ${waveNum} not found`);
   const wave = waveRows[0];
 
+  // wave_reveal_uri must be set before calling executeWaveReveal
+  const revealUri = wave.wave_reveal_uri;
+  if (!revealUri || !revealUri.startsWith("ipfs://")) {
+    throw new Error(
+      `Wave ${waveNum}: wave_reveal_uri is not set or invalid. ` +
+      `Set it in nft_waves (must start with ipfs://) before triggering reveal.`,
+    );
+  }
+
   // Get minted token IDs for this wave (on-chain events should have synced these)
   const { rows: mintedRows } = await pool.query<{ token_id: number; id: string }>(
     `SELECT token_id, id FROM nft_records
@@ -59,15 +68,15 @@ export async function executeWaveReveal(waveNum: number): Promise<void> {
 
   if (!mintedRows.length) {
     console.log(`[reveal] Wave ${waveNum}: no minted tokens found — skipping reveal`);
-    return;
+    return null;
   }
 
   // Get unassigned nft_records pool (IPFS synced, no token_id yet)
-  const { rows: pool_ } = await pool.query<{
-    id:                  string;
-    serial_number:       string;
-    image_ipfs_hash:     string | null;
-    metadata_ipfs_hash:  string | null;
+  const { rows: poolRows } = await pool.query<{
+    id:                 string;
+    serial_number:      string;
+    image_ipfs_hash:    string | null;
+    metadata_ipfs_hash: string | null;
   }>(
     `SELECT id, serial_number, image_ipfs_hash, metadata_ipfs_hash
        FROM nft_records
@@ -77,14 +86,14 @@ export async function executeWaveReveal(waveNum: number): Promise<void> {
       ORDER BY id`,
   );
 
-  if (pool_.length < mintedRows.length) {
+  if (poolRows.length < mintedRows.length) {
     throw new Error(
-      `Wave ${waveNum}: not enough unassigned NFT records (${pool_.length}) for ${mintedRows.length} minted tokens`,
+      `Wave ${waveNum}: not enough unassigned NFT records (${poolRows.length}) for ${mintedRows.length} minted tokens`,
     );
   }
 
   // Shuffle the pool and slice to match minted count
-  const shuffled = shuffle(pool_).slice(0, mintedRows.length);
+  const shuffled = shuffle(poolRows).slice(0, mintedRows.length);
 
   // Get sold delivery_status_id
   const { rows: statusRows } = await pool.query<{ id: string }>(
@@ -92,45 +101,35 @@ export async function executeWaveReveal(waveNum: number): Promise<void> {
   );
   const soldStatusId = statusRows[0]?.id ?? null;
 
-  // Map each minted token → a random nft_record and update
-  for (let i = 0; i < mintedRows.length; i++) {
-    const minted = mintedRows[i];
-    const record = shuffled[i];
-
-    await pool.query(
-      `UPDATE nft_records SET
-          token_id              = $2,
-          on_chain_wave_num     = $3,
-          is_revealed           = TRUE,
-          revealed_at           = NOW(),
-          delivery_status_id    = COALESCE($4::uuid, delivery_status_id),
-          updated_at            = NOW()
-        WHERE id = $1::uuid`,
-      [record.id, minted.token_id, waveNum, soldStatusId],
-    );
-  }
-
-  // Determine reveal URI — use stored wave_reveal_uri or build from Filebase gateway
-  let revealUri = wave.wave_reveal_uri;
-  if (!revealUri) {
-    // Derive from first metadata IPFS CID: ipfs://<CID without filename>
-    // The CID folder is stored in metadata_ipfs_hash on nft_generated_items after export
-    const { rows: sample } = await pool.query<{ metadata_ipfs_hash: string }>(
-      `SELECT metadata_ipfs_hash FROM nft_records WHERE on_chain_wave_num = $1 AND metadata_ipfs_hash IS NOT NULL LIMIT 1`,
-      [waveNum],
-    );
-    if (sample[0]?.metadata_ipfs_hash) {
-      // metadata_ipfs_hash is the CID of the metadata JSON file — strip filename to get folder CID
-      // In our Filebase setup it's the raw IPFS CID of the metadata folder
-      revealUri = `ipfs://${sample[0].metadata_ipfs_hash}`;
+  // Assign each minted token → a random nft_record inside a single DB transaction
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (let i = 0; i < mintedRows.length; i++) {
+      const minted = mintedRows[i];
+      const record = shuffled[i];
+      await client.query(
+        `UPDATE nft_records SET
+            token_id           = $2,
+            on_chain_wave_num  = $3,
+            is_revealed        = TRUE,
+            revealed_at        = NOW(),
+            delivery_status_id = COALESCE($4::uuid, delivery_status_id),
+            updated_at         = NOW()
+          WHERE id = $1::uuid`,
+        [record.id, minted.token_id, waveNum, soldStatusId],
+      );
     }
-  }
-
-  if (!revealUri) {
-    throw new Error(`Wave ${waveNum}: no reveal URI available — set wave_reveal_uri in nft_waves`);
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
 
   // Call revealWave(waveNum, uri) on-chain
+  let txHash: string | null = null;
   if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL && process.env.FIXED_PRIVATE_KEY) {
     const contract = getGenesisContract();
     const tx = await (contract.revealWave as (n: number, uri: string) => Promise<ethers.TransactionResponse>)(
@@ -139,7 +138,8 @@ export async function executeWaveReveal(waveNum: number): Promise<void> {
     );
     const receipt = await tx.wait(1);
     if (!receipt) throw new Error(`No receipt for revealWave(${waveNum})`);
-    console.log(`[reveal] Wave ${waveNum} revealed on-chain, tx: ${receipt.hash}`);
+    txHash = receipt.hash;
+    console.log(`[reveal] Wave ${waveNum} revealed on-chain, tx: ${txHash}`);
   } else {
     console.log(`[reveal] Wave ${waveNum}: no contract env vars — DB-only reveal (dev mode)`);
   }
@@ -151,10 +151,12 @@ export async function executeWaveReveal(waveNum: number): Promise<void> {
         wave_revealed    = TRUE,
         wave_reveal_uri  = $2,
         wave_revealed_at = NOW(),
+        last_tx_hash     = COALESCE($3, last_tx_hash),
         updated_at       = NOW()
       WHERE wave_number = $1`,
-    [waveNum, revealUri],
+    [waveNum, revealUri, txHash],
   );
 
-  console.log(`[reveal] Wave ${waveNum} reveal complete — ${mintedRows.length} tokens assigned randomly`);
+  console.log(`[reveal] Wave ${waveNum} reveal complete — ${mintedRows.length} tokens randomly assigned`);
+  return txHash;
 }

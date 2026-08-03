@@ -3,7 +3,6 @@ import { ethers } from "ethers";
 import pool from "../../pool";
 import {
   contractRevealAll,
-  contractRevealWave,
   contractSetPhase,
   contractSetMerkleRoot,
   contractSetTreasuryWallet,
@@ -16,8 +15,10 @@ import {
   contractSetRarityBatch,
   contractGetCollectionInfo,
   contractSetContractURI,
+  contractSetBlindBoxURI,
   contractEmergencyTransfer,
 } from "../../services/contract.service";
+import { executeWaveReveal } from "../../services/reveal.service";
 import { requireAdmin } from "../../adminAuth";
 
 const router = Router();
@@ -85,6 +86,7 @@ router.post("/reveal", requireAdmin, async (req, res, next) => {
 
 // POST /api/nft-sell/collection/reveal-wave — reveal a single wave with its URI
 // Body: { waveNum: number, uri: string }  e.g. { waveNum: 1, uri: "ipfs://Qm..." }
+// Uses executeWaveReveal for random token assignment (Fisher-Yates shuffle)
 router.post("/reveal-wave", requireAdmin, async (req, res, next) => {
   try {
     const { waveNum, uri } = req.body as { waveNum: number; uri: string };
@@ -93,10 +95,15 @@ router.post("/reveal-wave", requireAdmin, async (req, res, next) => {
     if (!uri?.startsWith("ipfs://"))
       return res.status(400).json({ error: "uri must start with ipfs://" });
 
-    const receipt = await contractRevealWave(Number(waveNum), uri);
-    await pool.query("UPDATE nft_waves SET wave_revealed=TRUE, wave_reveal_uri=$1 WHERE wave_number=$2", [uri, Number(waveNum)]);
-    await pool.query("UPDATE nft_records SET is_revealed=TRUE, revealed_at=NOW() WHERE on_chain_wave_num=$1 AND is_revealed=FALSE", [Number(waveNum)]);
-    res.json({ success: true, txHash: receipt.hash, waveNum: Number(waveNum) });
+    // Store URI in DB first so executeWaveReveal can pick it up
+    await pool.query(
+      "UPDATE nft_waves SET wave_reveal_uri = $1 WHERE wave_number = $2",
+      [uri, Number(waveNum)],
+    );
+
+    // Execute reveal with Fisher-Yates random token assignment
+    const txHash = await executeWaveReveal(Number(waveNum));
+    res.json({ success: true, txHash, waveNum: Number(waveNum) });
   } catch (err) {
     next(err);
   }
@@ -273,6 +280,7 @@ router.get("/stats", async (_req, res, next) => {
         closed:     Boolean(paidWave?.wave_closed),
         closeAction: paidWave?.close_action ?? null,
       },
+      blindBoxUri:   cfg?.blind_box_uri ?? null,
       revealed:      Number(cfg?.reveal_count ?? 0),
       isRevealed:    (cfg?.current_phase ?? "") === "Revealed",
       adminRevenue: rev ? {
@@ -297,7 +305,7 @@ router.get("/stats", async (_req, res, next) => {
 // Query: ?limit=50&offset=0&owner=0x...&waveNum=1
 router.get("/tokens", async (req, res, next) => {
   try {
-    const limit   = Math.min(parseInt(req.query.limit  as string ?? "50", 10), 200);
+    const limit   = Math.min(parseInt(req.query.limit  as string ?? "50", 10), 9999);
     const offset  = parseInt(req.query.offset as string ?? "0", 10);
     const owner   = req.query.owner   as string | undefined;
     const waveNum = req.query.waveNum ? parseInt(req.query.waveNum as string, 10) : null;
@@ -344,6 +352,21 @@ router.put("/contract-uri", requireAdmin, async (req, res, next) => {
     const { uri } = req.body as { uri: string };
     if (!uri) return res.status(400).json({ error: "uri required" });
     const receipt = await contractSetContractURI(uri);
+    res.json({ ok: true, txHash: receipt.hash });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/nft-sell/collection/blind-box-uri — set on-chain blind box URI + sync to DB
+// Body: { uri: string }  e.g. "ipfs://Qm..."
+// The blind box URI is shown by tokenURI() for all unrevealed tokens.
+router.put("/blind-box-uri", requireAdmin, async (req, res, next) => {
+  try {
+    const { uri } = req.body as { uri: string };
+    if (!uri || !uri.startsWith("ipfs://")) return res.status(400).json({ error: "uri required and must start with ipfs://" });
+    const receipt = await contractSetBlindBoxURI(uri);
+    await pool.query("UPDATE nft_collection_config SET blind_box_uri = $1, updated_at = NOW() WHERE id = 1", [uri]);
     res.json({ ok: true, txHash: receipt.hash });
   } catch (err) {
     next(err);

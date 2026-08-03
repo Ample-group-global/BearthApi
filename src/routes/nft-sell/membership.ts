@@ -4,6 +4,20 @@ import { requireAdmin } from "../../adminAuth";
 
 const router = Router();
 
+// GET /api/nft-sell/membership/verify?wallet=0x... — check wallet membership tier
+// MUST be registered before /:id to avoid Express matching "verify" as an id param
+router.get("/verify", async (req, res, next) => {
+  try {
+    const wallet = req.query.wallet as string;
+    if (!wallet) return res.status(400).json({ error: "wallet query param required" });
+
+    const { rows } = await pool.query("SELECT nft_membership_wallet_verify($1)", [wallet.toLowerCase()]);
+    res.json({ membership: rows[0]?.nft_membership_wallet_verify ?? null });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/nft-sell/membership — list all membership tiers
 router.get("/", async (_req, res, next) => {
   try {
@@ -59,19 +73,6 @@ router.delete("/:id", requireAdmin, async (req, res, next) => {
   try {
     await pool.query("UPDATE nft_membership_tiers SET is_active=FALSE WHERE id=$1", [req.params.id]);
     res.json({ ok: true });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /api/nft-sell/membership/verify?wallet=0x... — check wallet membership tier
-router.get("/verify", async (req, res, next) => {
-  try {
-    const wallet = req.query.wallet as string;
-    if (!wallet) return res.status(400).json({ error: "wallet query param required" });
-
-    const { rows } = await pool.query("SELECT nft_membership_wallet_verify($1)", [wallet.toLowerCase()]);
-    res.json({ membership: rows[0]?.nft_membership_wallet_verify ?? null });
   } catch (err) {
     next(err);
   }

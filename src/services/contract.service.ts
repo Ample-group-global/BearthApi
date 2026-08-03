@@ -431,6 +431,13 @@ export async function contractSetContractURI(
   return callContract("setContractURI", [uri]);
 }
 
+export async function contractSetBlindBoxURI(
+  uri: string
+): Promise<ethers.TransactionReceipt> {
+  if (!uri) throw new Error("URI is required");
+  return callContract("setBlindBoxURI", [uri]);
+}
+
 export async function contractEmergencyTransfer(
   id: number,
   from: string,
