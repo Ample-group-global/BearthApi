@@ -31,7 +31,7 @@ router.get("/history", async (req, res, next) => {
     const conditions: string[] = ["r.mint_tx_hash IS NOT NULL"];
     const params: unknown[]    = [];
 
-    if (wave)   { params.push(parseInt(wave, 10)); conditions.push(`r.wave_num = $${params.length}`); }
+    if (wave)   { params.push(parseInt(wave, 10)); conditions.push(`r.on_chain_wave_num = $${params.length}`); }
     if (wallet) { params.push(`%${wallet.toLowerCase()}%`); conditions.push(`LOWER(r.owner_address) LIKE $${params.length}`); }
     if (from)   { params.push(from); conditions.push(`r.minted_at >= $${params.length}::date`); }
     if (to)     { params.push(to);   conditions.push(`r.minted_at <  ($${params.length}::date + interval '1 day')`); }
@@ -46,7 +46,7 @@ router.get("/history", async (req, res, next) => {
       `SELECT
          r.serial_number,
          r.token_id,
-         r.wave_num,
+         r.on_chain_wave_num AS wave_num,
          r.owner_address     AS wallet,
          r.price_eth,
          r.rarity_tier,

@@ -8,9 +8,9 @@ import {
   contractAuctionMint,
   contractGetWaveInfo,
   contractSetAllowlistRoot,
-  contractRevealWave,
   resyncFromBlock,
 } from "../../services/contract.service";
+import { executeWaveReveal } from "../../services/reveal.service";
 import { buildMerkleTree } from "../../merkle";
 import { requireAdmin } from "../../adminAuth";
 
@@ -155,7 +155,8 @@ router.put("/:num/price", requireAdmin, async (req, res, next) => {
 });
 
 // POST /api/nft-sell/waves/:num/reveal — admin manually reveals a specific wave
-// Body: { uri: string }  e.g. "ipfs://Qm.../collection-metadata.json"
+// Body: { uri: string }  e.g. "ipfs://Qm..."
+// This path uses executeWaveReveal for random token assignment (Fisher-Yates shuffle)
 router.post("/:num/reveal", requireAdmin, async (req, res, next) => {
   try {
     const num = parseInt(req.params.num, 10);
@@ -165,9 +166,15 @@ router.post("/:num/reveal", requireAdmin, async (req, res, next) => {
     if (!uri?.startsWith("ipfs://"))
       return res.status(400).json({ error: "uri must start with ipfs://" });
 
-    const receipt = await contractRevealWave(num, uri);
-    await pool.query("SELECT nft_wave_sync_reveal($1,$2,$3)", [num, uri, receipt.hash]).catch(() => null);
-    res.json({ ok: true, txHash: receipt.hash, waveNumber: num });
+    // Store URI in DB first so executeWaveReveal can pick it up
+    await pool.query(
+      "UPDATE nft_waves SET wave_reveal_uri = $1 WHERE wave_number = $2",
+      [uri, num],
+    );
+
+    // Execute reveal with Fisher-Yates random token assignment
+    const txHash = await executeWaveReveal(num);
+    res.json({ ok: true, txHash, waveNumber: num });
   } catch (err) {
     next(err);
   }

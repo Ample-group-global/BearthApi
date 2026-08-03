@@ -45,9 +45,32 @@ router.put("/", requireAdmin, async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/royalty/enforcement — not supported; use transfer validator instead
-router.put("/enforcement", requireAdmin, (_req, res) => {
-  res.status(501).json({ error: "Royalty enforcement toggling is not supported. Use PUT /api/nft-sell/royalty/transfer-validator to set the ERC721C transfer validator." });
+// PUT /api/nft-sell/royalty/enforcement — toggle royalty enforcement flag in DB
+// Body: { enforced: boolean }
+// Note: this updates the DB flag only. On-chain enforcement requires setting the
+// ERC721C transfer validator at LEVEL_2 via PUT /api/nft-sell/royalty/transfer-validator
+router.put("/enforcement", requireAdmin, async (req, res, next) => {
+  try {
+    const { enforced } = req.body as { enforced: boolean };
+    if (typeof enforced !== "boolean")
+      return res.status(400).json({ error: "enforced (boolean) required" });
+
+    await pool.query(
+      `UPDATE nft_collection_config
+          SET royalty_enforced = $1, updated_at = NOW()
+        WHERE id = (SELECT id FROM nft_collection_config ORDER BY created_at LIMIT 1)`,
+      [enforced],
+    );
+    res.json({
+      ok: true,
+      enforced,
+      note: enforced
+        ? "DB flag enabled. To enforce on-chain, also set the ERC721C transfer validator to LEVEL_2 via PUT /api/nft-sell/royalty/transfer-validator."
+        : "DB flag disabled.",
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // GET /api/nft-sell/royalty/marketplaces — list allowed marketplaces
