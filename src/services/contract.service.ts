@@ -322,27 +322,47 @@ export function startEventListeners(): void {
 
 // ── Full resync from block history ────────────────────────────────────────────
 
-export async function resyncFromBlock(fromBlock = 0): Promise<{ synced: number }> {
-  const contract = getContractReadOnly();
-  const iface    = contract.interface;
-  const filter   = { address: process.env.CONTRACT_ADDRESS, fromBlock, toBlock: "latest" };
-  const logs     = await getProvider().getLogs(filter);
+export async function resyncFromBlock(fromBlock = 0): Promise<{ synced: number; scannedBlocks: number }> {
+  const provider  = getProvider();
+  const contract  = getContractReadOnly();
+  const iface     = contract.interface;
+  const CHUNK     = 2000; // safe for all RPC providers
+
+  const latestBlock = await provider.getBlockNumber();
+  // When caller passes 0 (scan all), default to last 100k blocks (~2 weeks on Sepolia).
+  // Pass an explicit block number to scan further back.
+  const startBlock = fromBlock === 0
+    ? Math.max(0, latestBlock - 100_000)
+    : fromBlock;
 
   let synced = 0;
-  for (const log of logs) {
-    try {
-      const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
-      if (!parsed) continue;
-      await syncEvent(
-        parsed.name, [...parsed.args],
-        log.transactionHash, log.blockNumber, log.index
-      );
-      synced++;
-    } catch {
-      // skip unparseable logs
+  let cursor = startBlock;
+
+  while (cursor <= latestBlock) {
+    const end  = Math.min(cursor + CHUNK - 1, latestBlock);
+    const logs = await provider.getLogs({
+      address:   process.env.CONTRACT_ADDRESS,
+      fromBlock: cursor,
+      toBlock:   end,
+    });
+
+    for (const log of logs) {
+      try {
+        const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
+        if (!parsed) continue;
+        await syncEvent(
+          parsed.name, [...parsed.args],
+          log.transactionHash, log.blockNumber, log.index
+        );
+        synced++;
+      } catch {
+        // skip unparseable logs
+      }
     }
+    cursor = end + 1;
   }
-  return { synced };
+
+  return { synced, scannedBlocks: latestBlock - startBlock + 1 };
 }
 
 // ── Admin write functions ─────────────────────────────────────────────────────
