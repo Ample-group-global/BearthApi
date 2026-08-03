@@ -33,6 +33,76 @@ export function getContractWithSigner(): Contract {
   return _contractSigned;
 }
 
+// ── Contract custom error → human-readable messages ──────────────────────────
+
+const CONTRACT_ERROR_MESSAGES: Record<string, string> = {
+  // Wave / supply
+  WaveSoldOut:              "This wave is sold out",
+  SupplyExceeded:           "Collection is sold out — 9,999 max supply reached",
+  WaveNotStarted:           "This wave has not started yet",
+  WaveEnded:                "This wave has ended",
+  WaveNotScheduled:         "This wave has not been scheduled yet",
+  WaveAlreadyClosed:        "This wave has already been closed",
+  WavePriceLocked:          "Wave price cannot be changed after the first sale",
+  WaveStillActive:          "Wave is still active — wait for it to end before closing",
+  InvalidWaveNumber:        "Invalid wave number — must be 1 to 7",
+  // Mint
+  AlreadyClaimed:           "This wallet has already claimed its free mint",
+  NotAllowlisted:           "This wallet is not on the allowlist",
+  WrongPayment:             "Incorrect ETH amount sent",
+  PurchaseLimitExceeded:    "Purchase limit exceeded for this wallet",
+  InvalidQuantity:          "Invalid quantity — must be at least 1",
+  TokenAlreadyMinted:       "Token has already been minted",
+  // Phase / state
+  WrongPhase:               "This action is not available in the current phase",
+  InvalidPhase:             "Cannot move to an earlier phase",
+  // Params
+  ZeroAddress:              "Address cannot be zero",
+  InvalidTime:              "Invalid time — end must be after start and in the future",
+  InvalidURI:               "Invalid URI — must not be empty",
+  InvalidRarityTier:        "Invalid rarity tier — must be 1 (Common) to 4 (Legendary)",
+  InvalidRoyaltyParams:     "Invalid royalty — receiver cannot be zero and BPS must be 0–1000",
+  ArrayLengthMismatch:      "Array length mismatch between tokenIds and values",
+  TokenDoesNotExist:        "Token does not exist",
+  InvalidEmergencyTransfer: "Invalid emergency transfer parameters",
+  // Transfer / SBT
+  TransferNotAllowed:       "Transfer not allowed — SBT mode is on or account is blocked",
+  SBTCannotBeApproved:      "Cannot approve an SBT token",
+  MarketplaceNotAllowed:    "This marketplace is not approved by the transfer validator",
+  // Finance
+  RefundFailed:             "ETH refund to buyer failed",
+  TransferFailed:           "ETH transfer to treasury failed",
+  NoBalance:                "No ETH balance available to withdraw",
+  // Access
+  AccessControlUnauthorizedAccount: "Caller does not have the required role",
+  // Pause
+  EnforcedPause:            "Contract is paused",
+  ExpectedPause:            "Contract is not currently paused",
+  // Reentrancy
+  ReentrancyGuardReentrantCall: "Reentrant call detected",
+  // ERC721A internals
+  URIQueryForNonexistentToken: "Token does not exist",
+  MintToZeroAddress:        "Cannot mint to zero address",
+  MintZeroQuantity:         "Cannot mint zero quantity",
+};
+
+function decodeContractError(err: unknown): string | null {
+  if (!(err instanceof Error)) return null;
+  const raw = err as Record<string, unknown>;
+  const data =
+    (raw["data"] as string | undefined) ??
+    ((raw["info"] as Record<string, unknown> | undefined)?.["error"] as Record<string, unknown> | undefined)?.["data"] as string | undefined;
+  if (!data || data === "0x") return null;
+  try {
+    const iface   = new ethers.Interface(BearthNFT_ABI);
+    const decoded = iface.parseError(data);
+    if (!decoded) return null;
+    return CONTRACT_ERROR_MESSAGES[decoded.name] ?? decoded.name;
+  } catch {
+    return null;
+  }
+}
+
 // ── Transaction helper ────────────────────────────────────────────────────────
 
 export async function callContract(
@@ -41,13 +111,19 @@ export async function callContract(
   overrides: Record<string, unknown> = {}
 ): Promise<ethers.TransactionReceipt> {
   const contract = getContractWithSigner();
-  const tx       = await (contract[methodName] as (...a: unknown[]) => Promise<ethers.TransactionResponse>)(
-    ...args, overrides
-  );
-  const receipt = await tx.wait(1);
-  if (!receipt) throw new Error(`No receipt for ${methodName} tx`);
-  await syncReceiptLogs(receipt);
-  return receipt;
+  try {
+    const tx = await (contract[methodName] as (...a: unknown[]) => Promise<ethers.TransactionResponse>)(
+      ...args, overrides
+    );
+    const receipt = await tx.wait(1);
+    if (!receipt) throw new Error(`No receipt for ${methodName} tx`);
+    await syncReceiptLogs(receipt);
+    return receipt;
+  } catch (err) {
+    const readable = decodeContractError(err);
+    if (readable) throw new Error(readable);
+    throw err;
+  }
 }
 
 // ── DB sync: one event at a time ──────────────────────────────────────────────
