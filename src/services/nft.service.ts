@@ -42,7 +42,8 @@ export async function listNft(params: {
        nr.id, nr.serial_number, nr.token_id,
        nr.image_ipfs_hash, nr.metadata_uri, nr.blind_box_uri,
        nr.is_revealed, nr.revealed_at, nr.minted_at, nr.sold_at,
-       nr.owner_address,
+       nr.owner_address, nr.traits,
+       nr.mint_tx_hash, nr.last_tx_hash,
        nr.notes, nr.delivered_at, nr.created_at, nr.updated_at,
        nr.stage_id, nr.stage_name,
        nr.nft_type_id, nr.type_name,
@@ -69,8 +70,10 @@ export async function listNft(params: {
   );
   const { rows: statsRows } = await pool.query(
     `SELECT
+      COUNT(*)                                                            AS total_all,
       COUNT(*) FILTER (WHERE NOT nr.is_revealed)                         AS blind_count,
       COUNT(*) FILTER (WHERE nr.is_revealed)                             AS revealed_count,
+      COUNT(*) FILTER (WHERE nr.token_id IS NOT NULL)                    AS minted_count,
       COUNT(*) FILTER (WHERE nr.delivery_status_code = 'sold')          AS sold_count,
       COUNT(*) FILTER (WHERE nr.delivery_status_code = 'delivered')     AS delivered_count
     FROM v_nft_records nr`,
@@ -80,8 +83,10 @@ export async function listNft(params: {
   return {
     nftRecords:    toCamel(rows),
     total:         Number(rows[0]?.total_count ?? 0),
+    totalAll:      Number(st.total_all        ?? 0),
     blindCount:    Number(st.blind_count      ?? 0),
     revealedCount: Number(st.revealed_count   ?? 0),
+    mintedCount:   Number(st.minted_count     ?? 0),
     soldCount:     Number(st.sold_count       ?? 0),
     deliveredCount:Number(st.delivered_count  ?? 0),
     limit,
