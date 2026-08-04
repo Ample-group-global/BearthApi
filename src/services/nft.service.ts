@@ -48,7 +48,7 @@ export async function listNft(params: {
        nr.is_revealed, nr.revealed_at, nr.minted_at, nr.sold_at,
        nr.owner_address, nr.traits,
        nr.mint_tx_hash, nr.last_tx_hash,
-       nr.rarity_tier, nr.last_sale_price_eth,
+       nr.rarity_tier, nr.rarity_score, nr.rarity_rank, nr.last_sale_price_eth,
        nr.notes, nr.delivered_at, nr.created_at, nr.updated_at,
        nr.stage_id, nr.stage_name,
        nr.nft_type_id, nr.type_name,
