@@ -1,6 +1,6 @@
 import { ethers, type Contract, type EventLog } from "ethers";
 import pool from "../pool";
-import { abi as BearthNFT_ABI } from "../abi/BearthGenesisNFT.abi.json";
+import BearthNFT_ABI from "../abi/BearthGenesisNFT.abi.json";
 import { getProvider } from "../utils/contract-factory";
 
 // ── Contract singletons ───────────────────────────────────────────────────────
@@ -301,24 +301,36 @@ export function startEventListeners(): void {
     "WaveSold", "WaveScheduleUpdated", "WavePriceUpdated",
     "WaveRevealed",
     "PhaseChanged", "Revealed", "PurchaseLimitChanged", "VIPStatusChanged",
-    "RoyaltyUpdated", "SBTChanged", "Transfer", "Bred", "TokenPriceSet",
+    "RoyaltyUpdated", "SBTChanged", "Transfer", "TokenPriceSet",
     "TransferValidatorUpdated", "Paused", "Unpaused",
   ];
 
+  // Guard: only register events that exist in the deployed ABI.
+  const abiEventNames = new Set(
+    contract.interface.fragments
+      .filter((f) => f.type === "event")
+      .map((f) => (f as { name: string }).name),
+  );
+
+  let registered = 0;
   for (const eventName of watchedEvents) {
-    contract.on(eventName, async (...rawArgs: unknown[]) => {
-      const ev = rawArgs[rawArgs.length - 1] as EventLog;
-      const args = rawArgs.slice(0, -1);
-      await syncEvent(
-        eventName, args,
-        ev.transactionHash,
-        ev.blockNumber,
-        ev.index
-      );
-    });
+    if (!abiEventNames.has(eventName)) {
+      console.warn(`[contract.service] Skipping unknown event '${eventName}' (not in ABI)`);
+      continue;
+    }
+    try {
+      contract.on(eventName, async (...rawArgs: unknown[]) => {
+        const ev = rawArgs[rawArgs.length - 1] as EventLog;
+        const args = rawArgs.slice(0, -1);
+        await syncEvent(eventName, args, ev.transactionHash, ev.blockNumber, ev.index);
+      });
+      registered++;
+    } catch (err) {
+      console.warn(`[contract.service] Could not register listener for '${eventName}':`, err);
+    }
   }
 
-  console.log("[contract.service] Event listeners started on", process.env.CONTRACT_ADDRESS);
+  console.log(`[contract.service] Event listeners started on ${process.env.CONTRACT_ADDRESS} (${registered}/${watchedEvents.length} events)`);
 }
 
 // ── Full resync from block history ────────────────────────────────────────────
