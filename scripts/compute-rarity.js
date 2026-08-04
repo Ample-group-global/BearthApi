@@ -38,9 +38,9 @@ async function main() {
   const pool = new Pool({ connectionString: DB_URL });
   console.log("Connecting to DB…");
 
-  // 1. Load all NFTs with traits
+  // 1. Load ALL NFTs with traits (needed for accurate frequency map across full collection)
   const { rows } = await pool.query(
-    "SELECT id, serial_number, traits FROM nft_records WHERE traits IS NOT NULL ORDER BY serial_number"
+    "SELECT id, serial_number, traits, is_revealed FROM nft_records WHERE traits IS NOT NULL ORDER BY serial_number"
   );
   const total = rows.length;
   console.log(`Loaded ${total} NFTs with traits.`);
@@ -80,13 +80,20 @@ async function main() {
     console.log(`  Rank ${n.rank}  ${n.serialNumber}  score=${n.score.toFixed(2)}  tier=${getTier(n.rank)}`)
   );
 
-  // 6. Batch-update nft_records in chunks of 500
-  console.log("\nWriting scores + ranks + tiers to DB…");
+  // 6. Clear rarity data from all unrevealed NFTs first
+  const { rowCount: cleared } = await pool.query(
+    `UPDATE nft_records SET rarity_score = NULL, rarity_rank = NULL, rarity_tier = NULL, updated_at = NOW()
+     WHERE is_revealed = false AND (rarity_score IS NOT NULL OR rarity_rank IS NOT NULL OR rarity_tier IS NOT NULL)`
+  );
+  console.log(`\nCleared rarity from ${cleared} unrevealed NFTs.`);
+
+  // 7. Batch-update ONLY revealed NFTs with scores + ranks + tiers (in chunks of 500)
+  const revealedScored = scored.filter(n => rows.find(r => r.id === n.id)?.is_revealed);
+  console.log(`Writing scores + ranks + tiers to ${revealedScored.length} revealed NFT(s)…`);
   const CHUNK = 500;
   let updated = 0;
-  for (let i = 0; i < scored.length; i += CHUNK) {
-    const chunk = scored.slice(i, i + CHUNK);
-    // Build a single UPDATE … FROM (VALUES …) statement for efficiency
+  for (let i = 0; i < revealedScored.length; i += CHUNK) {
+    const chunk = revealedScored.slice(i, i + CHUNK);
     const values = chunk
       .map((n, j) => `($${j * 3 + 1}::uuid, $${j * 3 + 2}::numeric, $${j * 3 + 3}::int)`)
       .join(", ");
@@ -103,22 +110,28 @@ async function main() {
            END,
            updated_at = NOW()
        FROM (VALUES ${values}) AS v(id, score, rank)
-       WHERE nr.id = v.id`,
+       WHERE nr.id = v.id AND nr.is_revealed = true`,
       params
     );
     updated += chunk.length;
-    process.stdout.write(`\r  ${updated}/${total} updated…`);
+    process.stdout.write(`\r  ${updated}/${revealedScored.length} revealed updated…`);
   }
 
-  // 7. Verify tier distribution
+  // 8. Verify tier distribution (revealed only)
   const { rows: dist } = await pool.query(
     `SELECT rarity_tier, COUNT(*) AS count
      FROM nft_records
+     WHERE is_revealed = true
      GROUP BY rarity_tier
      ORDER BY COUNT(*) ASC`
   );
-  console.log("\n\nTier distribution:");
+  console.log("\n\nTier distribution (revealed NFTs only):");
   dist.forEach(r => console.log(`  ${r.rarity_tier}: ${r.count}`));
+
+  const { rows: nullCheck } = await pool.query(
+    `SELECT COUNT(*) AS unrevealed_with_rarity FROM nft_records WHERE is_revealed = false AND rarity_score IS NOT NULL`
+  );
+  console.log(`\nUnrevealed NFTs with rarity data (should be 0): ${nullCheck[0].unrevealed_with_rarity}`);
 
   console.log("\nDone.");
   await pool.end();
