@@ -21,6 +21,8 @@ export async function listNft(params: {
   minted?: boolean | null;
   waveId?: string | null;
   waveNumber?: number | null;
+  mintedFrom?: string | null;
+  mintedTo?: string | null;
   limit?: number;
   offset?: number;
   sortBy?: string | null;
@@ -29,6 +31,7 @@ export async function listNft(params: {
   const {
     search = null, deliveryStatusCode = null, stageCode = null,
     revealed = null, minted = null, waveId = null, waveNumber = null,
+    mintedFrom = null, mintedTo = null,
     limit = 20, offset = 0, sortBy = null, sortDir = null,
   } = params;
 
@@ -45,6 +48,7 @@ export async function listNft(params: {
        nr.is_revealed, nr.revealed_at, nr.minted_at, nr.sold_at,
        nr.owner_address, nr.traits,
        nr.mint_tx_hash, nr.last_tx_hash,
+       nr.rarity_tier, nr.last_sale_price_eth,
        nr.notes, nr.delivered_at, nr.created_at, nr.updated_at,
        nr.stage_id, nr.stage_name,
        nr.nft_type_id, nr.type_name,
@@ -66,9 +70,11 @@ export async function listNft(params: {
        AND ($5::UUID IS NULL OR nr.wave_id = $5::UUID)
        AND ($6::INT IS NULL OR w.wave_number = $6)
        AND ($9::BOOLEAN IS NULL OR (nr.token_id IS NOT NULL) = $9)
+       AND ($10::DATE IS NULL OR nr.minted_at >= $10::DATE)
+       AND ($11::DATE IS NULL OR nr.minted_at <  ($11::DATE + interval '1 day'))
      ORDER BY ${orderBy}
      LIMIT $7 OFFSET $8`,
-    [search, deliveryStatusCode, stageCode, revealed, waveId, waveNumber, limit, offset, minted],
+    [search, deliveryStatusCode, stageCode, revealed, waveId, waveNumber, limit, offset, minted, mintedFrom, mintedTo],
   );
   const { rows: statsRows } = await pool.query(
     `SELECT

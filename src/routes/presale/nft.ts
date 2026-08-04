@@ -19,6 +19,8 @@ router.get("/", async (req, res, next) => {
       minted:             mintedRaw   === "true" ? true : mintedRaw   === "false" ? false : null,
       waveId:             (req.query.wave_id         as string) ?? null,
       waveNumber:         waveNumRaw ? Number(waveNumRaw) : null,
+      mintedFrom:         (req.query.minted_from     as string) ?? null,
+      mintedTo:           (req.query.minted_to       as string) ?? null,
       limit:              Number(req.query.limit  ?? 20),
       offset:             Number(req.query.offset ?? 0),
       sortBy:             (req.query.sort_by         as string) ?? null,
