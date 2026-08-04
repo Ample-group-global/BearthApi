@@ -1,6 +1,7 @@
 import { Router } from "express";
 import pool from "../pool";
 import { requireAdmin } from "../adminAuth";
+import { _syncRevealedMetadata } from "../services/reveal.service";
 
 const router = Router();
 
@@ -84,6 +85,20 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// POST /api/waves/:waveNumber/sync-metadata — re-fetch IPFS metadata for all tokens in a revealed wave
+router.post("/:waveNumber/sync-metadata", requireAdmin, async (req, res, next) => {
+  try {
+    const waveNum = parseInt(req.params.waveNumber, 10);
+    if (isNaN(waveNum)) { res.status(400).json({ error: "Invalid wave number" }); return; }
+    await _syncRevealedMetadata(waveNum);
+    const { rows } = await pool.query(
+      `SELECT COUNT(*) AS synced FROM nft_records WHERE on_chain_wave_num = $1 AND image_ipfs_hash IS NOT NULL`,
+      [waveNum],
+    );
+    res.json({ ok: true, waveNumber: waveNum, synced: Number(rows[0].synced) });
+  } catch (err) { next(err); }
 });
 
 export default router;

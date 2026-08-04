@@ -8,15 +8,19 @@ router.get("/", async (req, res, next) => {
   try {
     requirePermission(req, "nft.view");
     const revealedRaw = req.query.revealed as string | undefined;
-    const sortDirRaw = req.query.sort_dir as string | undefined;
-    const waveNumRaw = req.query.wave_number as string | undefined;
+    const mintedRaw   = req.query.minted   as string | undefined;
+    const sortDirRaw  = req.query.sort_dir as string | undefined;
+    const waveNumRaw  = req.query.wave_number as string | undefined;
     const result = await nftService.listNft({
       search:             (req.query.search          as string) ?? null,
       deliveryStatusCode: (req.query.delivery_status as string) ?? null,
       stageCode:          (req.query.stage           as string) ?? null,
       revealed:           revealedRaw === "true" ? true : revealedRaw === "false" ? false : null,
+      minted:             mintedRaw   === "true" ? true : mintedRaw   === "false" ? false : null,
       waveId:             (req.query.wave_id         as string) ?? null,
       waveNumber:         waveNumRaw ? Number(waveNumRaw) : null,
+      mintedFrom:         (req.query.minted_from     as string) ?? null,
+      mintedTo:           (req.query.minted_to       as string) ?? null,
       limit:              Number(req.query.limit  ?? 20),
       offset:             Number(req.query.offset ?? 0),
       sortBy:             (req.query.sort_by         as string) ?? null,

@@ -27,7 +27,7 @@ router.get("/", async (_req, res, next) => {
     );
 
     const waves = dbWaves.map((w: Record<string, unknown>) => {
-      const idx = Number(w.waveNum) - 1;
+      const idx = Number(w.waveNumber ?? w.waveNum) - 1;
       const r = chainResults[idx];
       const onChain = r?.status === "fulfilled" ? r.value : null;
       return {

@@ -359,6 +359,11 @@
   },
   {
     "inputs": [],
+    "name": "WalletBlocked",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "WaveAlreadyClosed",
     "type": "error"
   },

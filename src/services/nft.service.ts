@@ -18,8 +18,11 @@ export async function listNft(params: {
   deliveryStatusCode?: string | null;
   stageCode?: string | null;
   revealed?: boolean | null;
+  minted?: boolean | null;
   waveId?: string | null;
   waveNumber?: number | null;
+  mintedFrom?: string | null;
+  mintedTo?: string | null;
   limit?: number;
   offset?: number;
   sortBy?: string | null;
@@ -27,7 +30,8 @@ export async function listNft(params: {
 }) {
   const {
     search = null, deliveryStatusCode = null, stageCode = null,
-    revealed = null, waveId = null, waveNumber = null,
+    revealed = null, minted = null, waveId = null, waveNumber = null,
+    mintedFrom = null, mintedTo = null,
     limit = 20, offset = 0, sortBy = null, sortDir = null,
   } = params;
 
@@ -42,7 +46,9 @@ export async function listNft(params: {
        nr.id, nr.serial_number, nr.token_id,
        nr.image_ipfs_hash, nr.metadata_uri, nr.blind_box_uri,
        nr.is_revealed, nr.revealed_at, nr.minted_at, nr.sold_at,
-       nr.owner_address,
+       nr.owner_address, nr.traits,
+       nr.mint_tx_hash, nr.last_tx_hash,
+       nr.rarity_tier, nr.rarity_score, nr.rarity_rank, nr.last_sale_price_eth,
        nr.notes, nr.delivered_at, nr.created_at, nr.updated_at,
        nr.stage_id, nr.stage_name,
        nr.nft_type_id, nr.type_name,
@@ -63,14 +69,19 @@ export async function listNft(params: {
        AND ($4::BOOLEAN IS NULL OR nr.is_revealed = $4)
        AND ($5::UUID IS NULL OR nr.wave_id = $5::UUID)
        AND ($6::INT IS NULL OR w.wave_number = $6)
+       AND ($9::BOOLEAN IS NULL OR (nr.token_id IS NOT NULL) = $9)
+       AND ($10::DATE IS NULL OR nr.minted_at >= $10::DATE)
+       AND ($11::DATE IS NULL OR nr.minted_at <  ($11::DATE + interval '1 day'))
      ORDER BY ${orderBy}
      LIMIT $7 OFFSET $8`,
-    [search, deliveryStatusCode, stageCode, revealed, waveId, waveNumber, limit, offset],
+    [search, deliveryStatusCode, stageCode, revealed, waveId, waveNumber, limit, offset, minted, mintedFrom, mintedTo],
   );
   const { rows: statsRows } = await pool.query(
     `SELECT
-      COUNT(*) FILTER (WHERE NOT nr.is_revealed)                         AS blind_count,
+      COUNT(*)                                                            AS total_all,
+      COUNT(*) FILTER (WHERE nr.token_id IS NOT NULL AND NOT nr.is_revealed) AS blind_count,
       COUNT(*) FILTER (WHERE nr.is_revealed)                             AS revealed_count,
+      COUNT(*) FILTER (WHERE nr.token_id IS NOT NULL)                    AS minted_count,
       COUNT(*) FILTER (WHERE nr.delivery_status_code = 'sold')          AS sold_count,
       COUNT(*) FILTER (WHERE nr.delivery_status_code = 'delivered')     AS delivered_count
     FROM v_nft_records nr`,
@@ -80,8 +91,10 @@ export async function listNft(params: {
   return {
     nftRecords:    toCamel(rows),
     total:         Number(rows[0]?.total_count ?? 0),
+    totalAll:      Number(st.total_all        ?? 0),
     blindCount:    Number(st.blind_count      ?? 0),
     revealedCount: Number(st.revealed_count   ?? 0),
+    mintedCount:   Number(st.minted_count     ?? 0),
     soldCount:     Number(st.sold_count       ?? 0),
     deliveredCount:Number(st.delivered_count  ?? 0),
     limit,

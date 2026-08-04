@@ -9,20 +9,42 @@ function getPool(): Pool {
   _pool = new Pool({
     connectionString:            url,
     ssl:                         { rejectUnauthorized: false },
-    max:                         20,
-    min:                         2,
-    idleTimeoutMillis:           30_000,
-    connectionTimeoutMillis:     30_000,
+    max:                         10,
+    min:                         1,
+    idleTimeoutMillis:           15_000,
+    connectionTimeoutMillis:     8_000,
     keepAlive:                   true,
     keepAliveInitialDelayMillis: 5_000,
   });
   _pool.on("error", (err) => {
     console.warn("[pool] idle client error:", err.message);
   });
-  // Keep at least one connection warm with a periodic ping (25s — below Railway's NAT drop timeout)
-  setInterval(async () => {
-    try { await _pool!.query("SELECT 1"); } catch { /* ignore — pool reconnects */ }
-  }, 25_000);
+  // Ping every 10s to keep Railway idle connections alive.
+  // Skip ping when pool is fully loaded — a connection timeout under heavy load is NOT
+  // a dead pool. Only recreate if pool truly has zero connections (all dropped by Railway).
+  const schedulePing = () => setTimeout(async () => {
+    const p = _pool;
+    if (!p) return;
+    if (p.idleCount === 0) {
+      // Pool is fully busy — skip ping, reschedule
+      schedulePing();
+      return;
+    }
+    try {
+      await p.query("SELECT 1");
+    } catch {
+      if (p.totalCount === 0) {
+        console.warn("[pool] ping failed with no active connections — recreating pool");
+        _pool = null;
+        p.end().catch(() => {});
+        getPool();
+      } else {
+        console.warn("[pool] ping error but pool still has connections — skipping recreation");
+      }
+    }
+    schedulePing();
+  }, 10_000);
+  schedulePing();
   return _pool;
 }
 
