@@ -71,7 +71,7 @@ export async function listNft(params: {
   const { rows: statsRows } = await pool.query(
     `SELECT
       COUNT(*)                                                            AS total_all,
-      COUNT(*) FILTER (WHERE NOT nr.is_revealed)                         AS blind_count,
+      COUNT(*) FILTER (WHERE nr.token_id IS NOT NULL AND NOT nr.is_revealed) AS blind_count,
       COUNT(*) FILTER (WHERE nr.is_revealed)                             AS revealed_count,
       COUNT(*) FILTER (WHERE nr.token_id IS NOT NULL)                    AS minted_count,
       COUNT(*) FILTER (WHERE nr.delivery_status_code = 'sold')          AS sold_count,
