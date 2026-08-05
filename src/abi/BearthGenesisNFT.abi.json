@@ -1774,6 +1774,11 @@
         "internalType": "uint256",
         "name": "qty",
         "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "waveNum",
+        "type": "uint256"
       }
     ],
     "name": "reserveMint",

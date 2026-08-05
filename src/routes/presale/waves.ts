@@ -42,6 +42,7 @@ router.put("/:id", async (req, res, next) => {
       notes:              body.notes          ?? null,
       clearSchedule:      body.clearSchedule  ?? false,
       revealScheduledAt,
+      tierPrices:         body.tierPrices     ?? null,
     });
     if (!wave) { res.status(404).json({ error: "Wave not found" }); return; }
     res.json({ wave });

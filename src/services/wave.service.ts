@@ -20,21 +20,36 @@ export async function updateWave(id: string, params: {
   notes?: string | null;
   clearSchedule?: boolean;
   revealScheduledAt?: string | null;
+  tierPrices?: { legendary?: number; epic?: number; rare?: number; common?: number } | null;
 }) {
-  const { defaultPriceEth, saleMethod, scheduledStart, scheduledEnd, status, notes, clearSchedule, revealScheduledAt } = params;
+  const { defaultPriceEth, saleMethod, scheduledStart, scheduledEnd, status, notes, clearSchedule, revealScheduledAt, tierPrices } = params;
   await pool.query(
     "SELECT * FROM wave_upsert($1::uuid, $2, $3, $4, $5, $6, $7, $8)",
     [id, defaultPriceEth ?? null, saleMethod ?? null, scheduledStart ?? null, scheduledEnd ?? null, status ?? null, notes ?? null, clearSchedule ?? false],
   );
 
-  if (revealScheduledAt !== undefined) {
+  // Apply fields not handled by wave_upsert: reveal date, tier prices, trigger flag resets
+  const hasScheduleChange = scheduledStart !== undefined || scheduledEnd !== undefined || clearSchedule;
+  if (revealScheduledAt !== undefined || tierPrices !== undefined || hasScheduleChange) {
     await pool.query(
       `UPDATE nft_waves SET
-         reveal_scheduled_at   = $2,
-         wave_reveal_triggered = CASE WHEN $2 IS DISTINCT FROM reveal_scheduled_at THEN FALSE ELSE wave_reveal_triggered END,
+         reveal_scheduled_at   = CASE WHEN $2::boolean THEN $3 ELSE reveal_scheduled_at END,
+         tier_prices           = CASE WHEN $4::boolean THEN $5::jsonb ELSE tier_prices END,
+         wave_start_triggered  = CASE WHEN $6::boolean AND $7 IS DISTINCT FROM scheduled_start THEN FALSE ELSE wave_start_triggered END,
+         wave_end_triggered    = CASE WHEN $6::boolean AND $8 IS DISTINCT FROM scheduled_end   THEN FALSE ELSE wave_end_triggered   END,
+         wave_reveal_triggered = CASE WHEN $2::boolean AND $3 IS DISTINCT FROM reveal_scheduled_at THEN FALSE ELSE wave_reveal_triggered END,
          updated_at            = NOW()
        WHERE id = $1::uuid`,
-      [id, revealScheduledAt ?? null],
+      [
+        id,
+        revealScheduledAt !== undefined,  // $2 bool
+        revealScheduledAt ?? null,        // $3
+        tierPrices !== undefined,         // $4 bool
+        tierPrices ? JSON.stringify(tierPrices) : null, // $5
+        hasScheduleChange,                // $6 bool
+        scheduledStart ?? null,           // $7
+        scheduledEnd ?? null,             // $8
+      ],
     );
   }
 

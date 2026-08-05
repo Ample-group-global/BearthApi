@@ -573,11 +573,13 @@ export async function contractSetRarityBatch(
 
 export async function contractReserveMint(
   to: string,
-  qty: number
+  qty: number,
+  waveNum = 0
 ): Promise<ethers.TransactionReceipt> {
   if (!ethers.isAddress(to)) throw new Error("Invalid recipient address");
   if (qty < 1) throw new Error("Quantity must be at least 1");
-  return callContract("reserveMint", [to, qty]);
+  if (waveNum < 0 || waveNum > 7) throw new Error("Wave number must be 0–7");
+  return callContract("reserveMint", [to, qty, waveNum]);
 }
 
 export async function contractSetSBT(
