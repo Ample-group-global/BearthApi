@@ -16,6 +16,10 @@ import { requireAdmin } from "../../adminAuth";
 
 const router = Router();
 
+function withChainTimeout<T>(p: Promise<T>, ms = 8000): Promise<T | null> {
+  return Promise.race([p, new Promise<null>(resolve => setTimeout(() => resolve(null), ms))]);
+}
+
 // GET /api/nft-sell/waves — list all 7 waves (on-chain enriched, DB fallback)
 router.get("/", async (_req, res, next) => {
   try {
@@ -23,7 +27,7 @@ router.get("/", async (_req, res, next) => {
     const dbWaves: Record<string, unknown>[] = rows[0]?.waves ?? [];
 
     const chainResults = await Promise.allSettled(
-      [1, 2, 3, 4, 5, 6, 7].map(n => contractGetWaveInfo(n))
+      [1, 2, 3, 4, 5, 6, 7].map(n => withChainTimeout(contractGetWaveInfo(n), 6000))
     );
 
     const waves = dbWaves.map((w: Record<string, unknown>) => {

@@ -20,7 +20,7 @@ const router = Router();
 router.use("/customers",      customersRouter);
 router.use("/referrers",      referrersRouter);
 router.use("/products",       productsRouter);
-router.use("/nft",            nftRouter);
+router.use("/nfts",           nftRouter);
 router.use("/waves",          wavesRouter);
 router.use("/orders",         ordersRouter);
 router.use("/reconciliation", reconciliationRouter);

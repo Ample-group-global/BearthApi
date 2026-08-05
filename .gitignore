@@ -51,3 +51,10 @@ mddoc-divakar/
 # Backup folders
 BearthApi-backup-2026-07-27/
 .vercel
+
+# Test files (not committed to repo)
+tests/
+
+# Local runtime files (not committed)
+src/auth-pool.ts
+src/logger.ts

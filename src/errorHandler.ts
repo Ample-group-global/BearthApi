@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { HttpError } from "./errors";
+import { logger } from "./logger";
 
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
   if (res.headersSent) return;
@@ -21,7 +22,7 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     e.code === "ETIMEDOUT" ||
     e.code === "ENOTFOUND"
   ) {
-    console.error("[DB] Connection error:", msg);
+    logger.error("[DB] Connection error", new Error(msg));
     res.status(503).json({
       error: "Database is temporarily unavailable. Please try again in a moment.",
       cause: "db_connection_timeout",
@@ -29,6 +30,6 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return;
   }
 
-  console.error(err);
+  logger.error("[server] Unhandled route error", err);
   res.status(500).json({ error: "Something went wrong on the server. Please try again." });
 }

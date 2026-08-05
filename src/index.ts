@@ -36,7 +36,7 @@ import nftSellUpgradeNFTRouter      from "./routes/nft-sell/upgrade-nft";
 import nftSellSchedulerRouter       from "./routes/nft-sell/scheduler";
 import nftSellRewardTokenRouter     from "./routes/nft-sell/reward-token";
 import walletsRouter from "./routes/wallets";
-import nftsRouter from "./routes/nfts";
+import nftChainRouter from "./routes/nft-chain";
 import wavesRouter from "./routes/waves";
 import filebaseRouter from "./routes/filebase";
 import { startEventListeners } from "./services/contract.service";
@@ -44,9 +44,33 @@ import { startWaveAutoTrigger } from "./services/wave-auto-trigger.service";
 import pool from "./pool";
 import { buildMerkleTree } from "./merkle";
 import { errorHandler } from "./errorHandler";
+import { logger } from "./logger";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 8000);
+
+// Prevent unhandled promise rejections from crashing the process.
+// IMPORTANT: never log the full error object — ethers.js attaches a `payload`
+// field with the entire JSON-RPC request body. Serialising it synchronously to
+// stderr blocks the Node.js event loop when hundreds of RPC timeouts fire during
+// a blockchain resync, making Express unable to serve any HTTP request.
+process.on("unhandledRejection", (reason) => {
+  if (reason instanceof Error) {
+    const msg = reason.message ?? "";
+    // Suppress ethers.js / free-RPC noise — caught by resync try/catch;
+    // the unhandledRejection fires at the provider layer before our catch runs.
+    if (
+      msg.includes("request timed out") ||
+      msg.includes("could not coalesce") ||
+      msg.includes("eth_getLogs") ||
+      msg.includes("underlying network changed")
+    ) return;
+  }
+  logger.warn("[process] Unhandled rejection", reason);
+});
+process.on("uncaughtException", (err) => {
+  logger.error("[process] Uncaught exception", err);
+});
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
@@ -110,7 +134,7 @@ app.use("/api/admin/roles",       adminRolesRouter);
 app.use("/api/admin/permissions", adminPermissionsRouter);
 app.use("/api/admin/menus",       adminMenusRouter);
 app.use("/api/admin/users",       adminUsersRouter);
-app.use("/api/nfts",              nftsRouter);
+app.use("/api/nft-chain",         nftChainRouter);
 app.use("/api/waves",             wavesRouter);
 app.use("/api/nft-gen",           nftGenRouter);
 app.use("/api/filebase",          filebaseRouter);

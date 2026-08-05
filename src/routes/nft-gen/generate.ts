@@ -5,6 +5,7 @@ import fs                      from "fs";
 import { requirePermission }   from "../../adminAuth";
 import pool                    from "../../pool";
 import * as svc                from "../../services/nft-gen.service";
+import { logger }              from "../../logger";
 
 const router = Router();
 
@@ -40,8 +41,8 @@ router.post("/", async (req, res, next) => {
     runGenerate(generateId, String(collectionId), Number(editionSize), layersDir, createdBy)
       .catch(err => {
         const s = generateJobs.get(generateId);
-        if (s) { s.status = "error"; s.error = String(err?.message ?? err); }
-        console.error("[generate]", err);
+        if (s) { s.status = "error"; s.error = err instanceof Error ? err.message : String(err); }
+        logger.warn("[generate] job failed", err);
       });
 
     res.status(202).json({ generateId });

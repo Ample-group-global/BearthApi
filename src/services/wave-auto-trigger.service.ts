@@ -3,6 +3,7 @@ import {
   contractSetWaveSchedule,
   contractTreasuryClose,
 } from "./contract.service";
+import { logger } from "../logger";
 
 // Called from startRevealWave in contract.service — we import dynamically to avoid circular deps
 async function getRevealService() {
@@ -65,7 +66,7 @@ async function checkAndTriggerWaves(): Promise<void> {
           );
           console.log(`[wave-auto-trigger] Wave ${num} started`);
         } catch (e) {
-          console.error(`[wave-auto-trigger] Wave ${num} start failed:`, e);
+          logger.warn(`[wave-auto-trigger] Wave ${num} start failed`, e);
         }
       }
 
@@ -86,7 +87,7 @@ async function checkAndTriggerWaves(): Promise<void> {
           );
           console.log(`[wave-auto-trigger] Wave ${num} ended/treasury-closed`);
         } catch (e) {
-          console.error(`[wave-auto-trigger] Wave ${num} end failed:`, e);
+          logger.warn(`[wave-auto-trigger] Wave ${num} end failed`, e);
         }
       }
 
@@ -107,7 +108,7 @@ async function checkAndTriggerWaves(): Promise<void> {
           );
           console.log(`[wave-auto-trigger] Wave ${num} reveal executed`);
         } catch (e) {
-          console.error(`[wave-auto-trigger] Wave ${num} reveal failed:`, e);
+          logger.warn(`[wave-auto-trigger] Wave ${num} reveal failed`, e);
         }
       }
     }
@@ -121,8 +122,8 @@ export function startWaveAutoTrigger(): void {
     console.log("[wave-auto-trigger] CONTRACT_ADDRESS not set — auto-trigger disabled");
     return;
   }
-  console.log("[wave-auto-trigger] Auto-trigger scheduler started (60s interval)");
-  // Initial check after 10s
-  setTimeout(() => checkAndTriggerWaves().catch(e => console.error("[wave-auto-trigger] startup check:", e)), 10_000);
-  setInterval(() => checkAndTriggerWaves().catch(e => console.error("[wave-auto-trigger] tick:", e)), 60_000);
+  console.log("[wave-auto-trigger] Auto-trigger scheduler started (120s interval)");
+  // Initial check after 30s — give the server time to settle after start
+  setTimeout(() => checkAndTriggerWaves().catch(e => logger.warn("[wave-auto-trigger] tick error", e)), 30_000);
+  setInterval(() => checkAndTriggerWaves().catch(e => logger.warn("[wave-auto-trigger] tick error", e)), 120_000);
 }

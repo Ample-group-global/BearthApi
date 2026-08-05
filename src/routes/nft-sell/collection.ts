@@ -23,6 +23,10 @@ import { requireAdmin } from "../../adminAuth";
 
 const router = Router();
 
+function withChainTimeout<T>(p: Promise<T>, ms = 8000): Promise<T | null> {
+  return Promise.race([p, new Promise<null>(resolve => setTimeout(() => resolve(null), ms))]);
+}
+
 // ── Blind box image resolver (metadata JSON → actual image URL) ───────────────
 // blindBoxUri is an ERC721 metadata JSON. For display we need the `image` field inside it.
 // Cache per process lifetime (changes only when admin updates the blind box URI).
@@ -55,7 +59,8 @@ router.get("/", async (_req, res, next) => {
     let onChain = null;
     if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL) {
       try {
-        const info = await contractGetCollectionInfo();
+        const info = await withChainTimeout(contractGetCollectionInfo());
+        if (!info) throw new Error("chain_timeout");
         onChain = {
           currentPhase:         Number(info.currentPhase),
           maxSupply:            Number(info.maxSupply),
@@ -267,7 +272,7 @@ router.get("/stats", async (_req, res, next) => {
       pool.query("SELECT nft_collection_config_get()", []),
       pool.query("SELECT * FROM nft_wave_get_all()", []),
       process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL
-        ? contractGetCollectionInfo().catch(() => null)
+        ? withChainTimeout(contractGetCollectionInfo()).catch(() => null)
         : Promise.resolve(null),
       pool.query("SELECT * FROM nft_revenue_summary()", []).catch(() => ({ rows: [null] })),
     ]);
@@ -340,7 +345,7 @@ router.get("/tokens", async (req, res, next) => {
       SELECT
         r.token_id, r.owner_address, r.on_chain_wave_num AS wave_number,
         r.rarity_tier, r.rarity_price_eth, r.rarity_price_locked,
-        r.is_revealed, r.mint_tx_hash, r.minted_at, r.synced_at, r.created_at
+        r.is_revealed, r.image_ipfs_hash, r.mint_tx_hash, r.minted_at, r.synced_at, r.created_at
       FROM nft_records r
       WHERE r.mint_tx_hash IS NOT NULL
         AND ($1::VARCHAR IS NULL OR LOWER(r.owner_address) = LOWER($1))

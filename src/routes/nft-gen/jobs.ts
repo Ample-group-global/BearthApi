@@ -28,7 +28,6 @@ router.post("/sync-all-records", async (req, res, next) => {
     const synced = await syncAllGeneratedItemsToNftRecords();
     res.json({ synced });
   } catch (e) {
-    console.error("[sync-all-records] ERROR:", e);
     next(e);
   }
 });

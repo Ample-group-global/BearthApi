@@ -1,4 +1,4 @@
-import pool from "../pool";
+import authPool from "../auth-pool";
 import bcrypt from "bcryptjs";
 import { encodeHmacToken, decodeHmacToken } from "../utils/hmac-token";
 
@@ -24,7 +24,7 @@ interface AuthUserRow {
 }
 
 export async function getUserByEmail(email: string): Promise<AuthUser | null> {
-  const { rows } = await pool.query("SELECT * FROM users_get_by_email($1)", [email]);
+  const { rows } = await authPool.query("SELECT * FROM users_get_by_email($1)", [email]);
   const row = rows[0] as AuthUserRow | undefined;
   if (!row) return null;
   return {
@@ -42,7 +42,7 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
 }
 
 export async function updateLastLogin(userId: string): Promise<void> {
-  await pool.query("UPDATE users SET last_login_at = NOW() WHERE id = $1::uuid", [userId]);
+  await authPool.query("UPDATE users SET last_login_at = NOW() WHERE id = $1::uuid", [userId]);
 }
 
 export function createResetToken(email: string): string {
@@ -61,7 +61,7 @@ export function verifyResetToken(token: string): { email: string } | null {
 
 export async function updatePassword(email: string, newPassword: string): Promise<boolean> {
   const hash = await bcrypt.hash(newPassword, 12);
-  const { rowCount } = await pool.query(
+  const { rowCount } = await authPool.query(
     "UPDATE users SET password_hash = $1, updated_at = NOW() WHERE email = $2 AND is_active = true",
     [hash, email],
   );

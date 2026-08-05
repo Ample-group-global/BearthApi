@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { logger } from "./logger";
 
 let _pool: Pool | null = null;
 
@@ -8,43 +9,21 @@ function getPool(): Pool {
   if (!url) throw new Error("DATABASE_URL is not set");
   _pool = new Pool({
     connectionString:            url,
-    ssl:                         { rejectUnauthorized: false },
-    max:                         10,
+    ssl:                         (url.includes("localhost") || url.includes("127.0.0.1"))
+                                   ? false
+                                   : { rejectUnauthorized: false },
+    // Keep total connections well under Railway's per-database limit (~25).
+    // auth-pool.ts holds 2 more → total from this process = 7 max.
+    max:                         5,
     min:                         1,
-    idleTimeoutMillis:           15_000,
-    connectionTimeoutMillis:     8_000,
+    idleTimeoutMillis:           10_000,
+    connectionTimeoutMillis:     30_000,
     keepAlive:                   true,
     keepAliveInitialDelayMillis: 5_000,
   });
   _pool.on("error", (err) => {
-    console.warn("[pool] idle client error:", err.message);
+    logger.warn("[pool] idle client error", err);
   });
-  // Ping every 10s to keep Railway idle connections alive.
-  // Skip ping when pool is fully loaded — a connection timeout under heavy load is NOT
-  // a dead pool. Only recreate if pool truly has zero connections (all dropped by Railway).
-  const schedulePing = () => setTimeout(async () => {
-    const p = _pool;
-    if (!p) return;
-    if (p.idleCount === 0) {
-      // Pool is fully busy — skip ping, reschedule
-      schedulePing();
-      return;
-    }
-    try {
-      await p.query("SELECT 1");
-    } catch {
-      if (p.totalCount === 0) {
-        console.warn("[pool] ping failed with no active connections — recreating pool");
-        _pool = null;
-        p.end().catch(() => {});
-        getPool();
-      } else {
-        console.warn("[pool] ping error but pool still has connections — skipping recreation");
-      }
-    }
-    schedulePing();
-  }, 10_000);
-  schedulePing();
   return _pool;
 }
 
