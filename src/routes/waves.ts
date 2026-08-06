@@ -34,7 +34,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
     if (!id) return res.status(400).json({ error: "Wave id required" });
 
     const { rows: existing } = await pool.query(
-      "SELECT id, wave_number, status, scheduled_start, scheduled_end FROM nft_waves WHERE id = $1::uuid",
+      "SELECT id, wave_number, status, scheduled_start, scheduled_end, wave_closed FROM nft_waves WHERE id = $1::uuid",
       [id],
     );
     if (!existing.length) return res.status(404).json({ error: "Wave not found" });
@@ -51,12 +51,18 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
     // effective end = incoming value if provided, otherwise the current DB value
     const effectiveEnd = endVal ? new Date(endVal) : existingEnd;
 
-    // Rule 6: once scheduled_start has arrived the schedule is LOCKED — no date changes
-    // Only trigger if non-null dates are being set (null = keep existing, not a change)
+    // Rule: reveal_scheduled_at can only be set after the wave is closed
+    if (revealScheduledAt !== undefined && revealScheduledAt !== null && !wave.wave_closed) {
+      return res.status(409).json({
+        error: `Wave ${waveNumber} must be closed before a reveal date can be set.`,
+      });
+    }
+
+    // Rule: once scheduled_start has arrived the schedule is LOCKED — no date changes
+    // reveal_scheduled_at is excluded; it has its own guard above
     const isDateChange = clearSchedule === true ||
-      (scheduledStart   !== undefined && scheduledStart   !== null) ||
-      (scheduledEnd     !== undefined && scheduledEnd     !== null) ||
-      (revealScheduledAt !== undefined && revealScheduledAt !== null);
+      (scheduledStart !== undefined && scheduledStart !== null) ||
+      (scheduledEnd   !== undefined && scheduledEnd   !== null);
     if (isDateChange && existingStart && now >= existingStart) {
       return res.status(409).json({
         error: `Wave ${waveNumber} schedule is locked — the start date (${existingStart.toISOString()}) has already arrived. No date changes are allowed.`,
