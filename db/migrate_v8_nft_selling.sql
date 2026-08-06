@@ -203,13 +203,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_wallets_address ON customer_walle
 INSERT INTO nft_waves
   (wave_number, name, quantity, default_price_eth, sale_method, status)
 VALUES
-  (1, 'Genesis',    303,  0.0000, 'free_mint',      'upcoming'),
-  (2, 'Genesis',    303,  0.0303, 'fixed_price',    'upcoming'),
-  (3, 'Ascension',  606,  0.0303, 'english_auction','upcoming'),
-  (4, 'Odyssey',    909,  0.0606, 'english_auction','upcoming'),
-  (5, 'Awakening', 1515,  0.0909, 'english_auction','upcoming'),
-  (6, 'Continuum', 2424,  0.1515, 'english_auction','upcoming'),
-  (7, 'Eternity',  3939,  0.2424, 'english_auction','upcoming')
+  (1, 'Genesis',    303,  0.0000, 'free_mint',   'upcoming'),
+  (2, 'Genesis',    303,  0.0303, 'fixed_price', 'upcoming'),
+  (3, 'Ascension',  606,  0.0606, 'fixed_price', 'upcoming'),
+  (4, 'Odyssey',    909,  0.0909, 'fixed_price', 'upcoming'),
+  (5, 'Awakening', 1515,  0.1515, 'fixed_price', 'upcoming'),
+  (6, 'Continuum', 2424,  0.2424, 'fixed_price', 'upcoming'),
+  (7, 'Eternity',  3939,  0.3939, 'fixed_price', 'upcoming')
 ON CONFLICT (wave_number) DO NOTHING;
 
 -- ══════════════════════════════════════════════════════════════════════
