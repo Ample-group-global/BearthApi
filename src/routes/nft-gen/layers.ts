@@ -2,11 +2,45 @@ import fs      from "fs";
 import path    from "path";
 import multer  from "multer";
 import { Router } from "express";
+import { ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { requirePermission } from "../../adminAuth";
 import * as svc from "../../services/nft-gen.service";
+import { getS3Client }       from "../../clients/s3";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+// ── POST /clear-bucket — wipe bearth-layers before a new collection upload ───
+router.post("/clear-bucket", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.manage_layers");
+    const bucket = process.env.FILEBASE_LAYERS_BUCKET || "bearth-layers";
+    const s3 = getS3Client();
+    let deleted = 0;
+    let continuationToken: string | undefined;
+
+    do {
+      const list = await s3.send(new ListObjectsV2Command({
+        Bucket: bucket,
+        MaxKeys: 1000,
+        ContinuationToken: continuationToken,
+      }));
+
+      const keys = (list.Contents ?? []).map(o => o.Key!).filter(Boolean);
+      if (keys.length) {
+        await s3.send(new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: keys.map(k => ({ Key: k })), Quiet: true },
+        }));
+        deleted += keys.length;
+      }
+
+      continuationToken = list.IsTruncated ? list.NextContinuationToken : undefined;
+    } while (continuationToken);
+
+    res.json({ ok: true, bucket, deleted });
+  } catch (e) { next(e); }
+});
 
 // ── POST /upload — receive layer PNGs from BearthAdmin, save to disk + S3 ────
 router.post("/upload", upload.array("files"), async (req, res, next) => {
