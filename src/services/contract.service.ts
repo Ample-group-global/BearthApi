@@ -45,7 +45,7 @@ const CONTRACT_ERROR_MESSAGES: Record<string, string> = {
   WaveNotScheduled: "This wave has not been scheduled yet",
   WaveAlreadyClosed: "This wave has already been closed",
   WavePriceLocked: "Wave price cannot be changed after the first sale",
-  WaveStillActive: "Wave is still active — wait for it to end before closing",
+  WaveStillActive: "Wave is still active or not yet revealed — wait for it to end and complete the reveal before closing",
   InvalidWaveNumber: "Invalid wave number — must be 1 to 7",
   // Mint
   AlreadyClaimed: "This wallet has already claimed its free mint",
@@ -204,7 +204,34 @@ async function syncEvent(
       case "WaveRevealed": {
         // WaveRevealed(waveNum indexed, uri, timestamp)
         const [waveNum, uri] = args as [bigint, string, bigint];
-        await pool.query("SELECT nft_wave_sync_reveal($1,$2,$3)", [Number(waveNum), uri, txHash]);
+        const waveNumN = Number(waveNum);
+        let startingIndex: number | null = null;
+        let waveQty: number | null = null;
+        try {
+          const ro = getContractReadOnly();
+          waveQty = Number(await ro.waveQty(waveNumN));
+          const coordAddr = process.env.REVEAL_COORDINATOR_ADDRESS;
+          if (coordAddr) {
+            // VRF path: coordinator stores the startingIndex it set
+            const coordAbi = ["function getWaveStartingIndex(uint256) external view returns (uint256)"];
+            const coord = new ethers.Contract(coordAddr, coordAbi, getProvider());
+            startingIndex = Number(await coord.getWaveStartingIndex(waveNumN));
+          } else {
+            // prevrandao path: startingIndex = block.prevrandao % waveQty
+            // Read the reveal block to recover the prevrandao value
+            const receipt = await getProvider().getTransactionReceipt(txHash);
+            if (receipt && waveQty > 0) {
+              const block = await getProvider().getBlock(receipt.blockNumber);
+              if (block?.prevRandao) {
+                startingIndex = Number(BigInt(block.prevRandao) % BigInt(waveQty));
+              }
+            }
+          }
+        } catch { /* non-fatal: artwork sync skipped, marks revealed only */ }
+        await pool.query(
+          "SELECT nft_wave_sync_reveal($1,$2,$3,$4,$5)",
+          [waveNumN, uri, txHash, startingIndex, waveQty],
+        );
         break;
       }
 
@@ -293,21 +320,39 @@ async function syncReceiptLogs(receipt: ethers.TransactionReceipt): Promise<void
 
 // ── Event listener (local dev / persistent server only) ──────────────────────
 
-// Sequential queue for event callbacks.
+// Sequential queue for event callbacks with circuit breaker.
 // ethers.js fires all listener callbacks without awaiting — if multiple events
 // arrive in one poll cycle they all run concurrently, exhausting the DB pool.
 // A promise chain serialises them: the next callback only starts once the
 // previous one resolves or rejects.
 let _eventQueue: Promise<void> = Promise.resolve();
+// Circuit breaker: if DB is unavailable, pause event sync for 30 s so auth/other
+// requests can succeed. Resets after 30 s of backoff.
+let _circuitOpenUntil = 0;
 
 function enqueueEvent(fn: () => Promise<void>): void {
-  // 150ms pace between events so each pool connection is released before the next
-  // callback acquires one — prevents Railway DB connection-limit exhaustion under
-  // burst conditions (e.g., multiple VIPStatusChanged events in one poll cycle).
   _eventQueue = _eventQueue
-    .then(() => sleep(150))
-    .then(fn)
-    .catch(() => { /* errors handled inside fn */ });
+    .then(async () => {
+      const now = Date.now();
+      if (now < _circuitOpenUntil) {
+        // Circuit is open — skip this event to avoid pool starvation
+        return;
+      }
+      await sleep(150); // 150 ms pace between events
+    })
+    .then(async () => {
+      try {
+        await fn();
+      } catch (err) {
+        const e = err as { message?: string };
+        if (e.message?.includes("timeout exceeded") || e.message?.includes("Connection terminated")) {
+          // DB unavailable — open circuit for 30 s to let other requests through
+          _circuitOpenUntil = Date.now() + 30_000;
+          logger.warn("[event-queue] DB timeout — circuit open for 30 s");
+        }
+      }
+    })
+    .catch(() => { /* prevent unhandled rejection */ });
 }
 
 export function startEventListeners(): void {

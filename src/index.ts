@@ -1,3 +1,7 @@
+// Load .env.local if DATABASE_URL is not already set (e.g. started without --env-file)
+import { config as loadEnv } from "dotenv";
+if (!process.env.DATABASE_URL) loadEnv({ path: ".env.local" });
+
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
@@ -37,6 +41,7 @@ import nftSellSchedulerRouter       from "./routes/nft-sell/scheduler";
 import nftSellRewardTokenRouter     from "./routes/nft-sell/reward-token";
 import walletsRouter from "./routes/wallets";
 import nftChainRouter from "./routes/nft-chain";
+import nftsRouter from "./routes/nfts";
 import wavesRouter from "./routes/waves";
 import filebaseRouter from "./routes/filebase";
 import { startEventListeners } from "./services/contract.service";
@@ -135,6 +140,7 @@ app.use("/api/admin/permissions", adminPermissionsRouter);
 app.use("/api/admin/menus",       adminMenusRouter);
 app.use("/api/admin/users",       adminUsersRouter);
 app.use("/api/nft-chain",         nftChainRouter);
+app.use("/api/nfts",              nftsRouter);
 app.use("/api/waves",             wavesRouter);
 app.use("/api/nft-gen",           nftGenRouter);
 app.use("/api/filebase",          filebaseRouter);
@@ -170,8 +176,9 @@ app.get("/api/health", async (_req, res) => {
       "ROUND(pg_database_size(current_database()) / 1024.0 / 1024.0, 1) AS db_size_mb"
     );
     res.json({ status: "ok", db_size: rows[0].db_size, db_size_mb: Number(rows[0].db_size_mb) });
-  } catch {
-    res.json({ status: "ok" });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(503).json({ status: "error", error: "Database unreachable", detail: msg });
   }
 });
 
@@ -209,7 +216,9 @@ if (!process.env.VERCEL) {
     console.log(`BearthApi listening on port ${PORT}`);
     recalcMerkleOnStartup().catch(e => console.warn("Startup Merkle recalc failed:", e));
     if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL) {
-      startEventListeners();
+      // Delay 30 s so the auth pool is free for login requests on fresh startup
+      // before the Sepolia event listeners begin polling.
+      setTimeout(() => startEventListeners(), 30_000);
     }
     startWaveAutoTrigger();
   });

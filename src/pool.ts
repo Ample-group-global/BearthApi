@@ -16,7 +16,7 @@ function getPool(): Pool {
     // auth-pool.ts holds 2 more → total from this process = 7 max.
     max:                         5,
     min:                         1,
-    idleTimeoutMillis:           10_000,
+    idleTimeoutMillis:           0,
     connectionTimeoutMillis:     30_000,
     keepAlive:                   true,
     keepAliveInitialDelayMillis: 5_000,

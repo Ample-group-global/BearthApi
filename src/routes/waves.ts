@@ -34,22 +34,66 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
     if (!id) return res.status(400).json({ error: "Wave id required" });
 
     const { rows: existing } = await pool.query(
-      "SELECT id, wave_number, status FROM nft_waves WHERE id = $1::uuid",
+      "SELECT id, wave_number, status, scheduled_start, scheduled_end FROM nft_waves WHERE id = $1::uuid",
       [id],
     );
     if (!existing.length) return res.status(404).json({ error: "Wave not found" });
 
-    const wave = existing[0];
+    const wave       = existing[0];
+    const waveNumber = Number(wave.wave_number);
+    const existingStart = wave.scheduled_start ? new Date(wave.scheduled_start) : null;
+    const existingEnd   = wave.scheduled_end   ? new Date(wave.scheduled_end)   : null;
+    const now = new Date();
 
     const startVal = clearSchedule ? null : (scheduledStart ?? null);
     const endVal   = clearSchedule ? null : (scheduledEnd   ?? null);
 
+    // effective end = incoming value if provided, otherwise the current DB value
+    const effectiveEnd = endVal ? new Date(endVal) : existingEnd;
+
+    // Rule 6: once scheduled_start has arrived the schedule is LOCKED — no date changes
+    const isDateChange = clearSchedule === true ||
+      scheduledStart !== undefined ||
+      scheduledEnd   !== undefined ||
+      revealScheduledAt !== undefined;
+    if (isDateChange && existingStart && now >= existingStart) {
+      return res.status(409).json({
+        error: `Wave ${waveNumber} schedule is locked — the start date (${existingStart.toISOString()}) has already arrived. No date changes are allowed.`,
+      });
+    }
+
+    // Rules 1, 2, 3: sequential gate — Wave N requires Wave N-1 to be fully closed
+    if (waveNumber > 1 && (startVal || endVal)) {
+      const { rows: prevRows } = await pool.query(
+        "SELECT scheduled_end FROM nft_waves WHERE wave_number = $1",
+        [waveNumber - 1],
+      );
+      const prevEnd = prevRows[0]?.scheduled_end ? new Date(prevRows[0].scheduled_end) : null;
+      if (!prevEnd) {
+        return res.status(409).json({
+          error: `Wave ${waveNumber - 1} has no schedule yet — set Wave ${waveNumber - 1} schedule first.`,
+        });
+      }
+      if (now <= prevEnd) {
+        return res.status(409).json({
+          error: `Wave ${waveNumber - 1} has not closed yet (ends ${prevEnd.toISOString()}). Wave ${waveNumber} can only be scheduled after Wave ${waveNumber - 1} closes.`,
+        });
+      }
+      if (startVal && new Date(startVal) <= prevEnd) {
+        return res.status(409).json({
+          error: `Wave ${waveNumber} start must be strictly after Wave ${waveNumber - 1} end (${prevEnd.toISOString()}).`,
+        });
+      }
+    }
+
+    // start < end (within same wave)
     if (startVal && endVal && new Date(startVal) >= new Date(endVal)) {
       return res.status(400).json({ error: "Scheduled end must be after start" });
     }
 
-    if (revealScheduledAt && endVal && new Date(revealScheduledAt) < new Date(endVal)) {
-      return res.status(400).json({ error: "Reveal date must be after wave end date" });
+    // Rule 4: reveal_scheduled_at must be strictly AFTER the wave's own end
+    if (revealScheduledAt && effectiveEnd && new Date(revealScheduledAt) <= effectiveEnd) {
+      return res.status(400).json({ error: "Reveal date must be strictly after wave end date" });
     }
 
     await pool.query(

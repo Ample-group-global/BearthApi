@@ -1,7 +1,6 @@
 import pool from "../pool";
 import {
   contractSetWaveSchedule,
-  contractTreasuryClose,
 } from "./contract.service";
 import { logger } from "../logger";
 
@@ -70,7 +69,7 @@ async function checkAndTriggerWaves(): Promise<void> {
         }
       }
 
-      // Auto-end: treasury close on-chain
+      // Auto-end: mark wave closed in DB (treasury-close is manual, after reveal)
       if (
         wave.scheduled_end &&
         new Date(wave.scheduled_end) <= new Date(now) &&
@@ -78,14 +77,11 @@ async function checkAndTriggerWaves(): Promise<void> {
         !wave.wave_end_triggered
       ) {
         try {
-          if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL && process.env.FIXED_PRIVATE_KEY) {
-            await contractTreasuryClose(num, null);
-          }
           await pool.query(
-            `UPDATE nft_waves SET wave_end_triggered = TRUE, wave_closed = TRUE, status = 'closed', close_action = 'treasury', updated_at = NOW() WHERE wave_number = $1`,
+            `UPDATE nft_waves SET wave_end_triggered = TRUE, wave_closed = TRUE, status = 'closed', updated_at = NOW() WHERE wave_number = $1`,
             [num],
           );
-          console.log(`[wave-auto-trigger] Wave ${num} ended/treasury-closed`);
+          console.log(`[wave-auto-trigger] Wave ${num} closed`);
         } catch (e) {
           logger.warn(`[wave-auto-trigger] Wave ${num} end failed`, e);
         }

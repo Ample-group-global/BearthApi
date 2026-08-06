@@ -76,12 +76,14 @@ router.get("/treasury-nfts", async (_req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/waves/resync — replay all events from block 0 to rebuild DB
+// POST /api/nft-sell/waves/resync — replay all events from block history to rebuild DB.
+// Returns immediately; resync runs in background so auth/other pools stay healthy.
 router.post("/resync", requireAdmin, async (req, res, next) => {
   try {
     const fromBlock = parseInt(req.body.fromBlock ?? "0", 10);
-    const result    = await resyncFromBlock(fromBlock);
-    res.json({ ok: true, ...result });
+    // Fire-and-forget: don't await — prevents pool starvation during long scans
+    resyncFromBlock(fromBlock).catch(e => console.error("[resync] background error", e));
+    res.json({ ok: true, started: true, message: "Resync started in background — check server logs for progress" });
   } catch (err) {
     next(err);
   }
@@ -118,7 +120,7 @@ router.get("/:num", async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/waves/:num/schedule — set wave start/end time
+// PUT /api/nft-sell/waves/:num/schedule — set wave start/end time on-chain
 // Body: { startUnix: number, endUnix: number }
 router.put("/:num/schedule", requireAdmin, async (req, res, next) => {
   try {
@@ -130,6 +132,44 @@ router.put("/:num/schedule", requireAdmin, async (req, res, next) => {
       return res.status(400).json({ error: "Wave number must be 1–7" });
     if (!startUnix || !endUnix || endUnix <= startUnix)
       return res.status(400).json({ error: "Valid startUnix and endUnix (end > start) required" });
+
+    const now = Date.now();
+
+    // Rule 6: once scheduled_start has arrived the on-chain schedule is LOCKED
+    const { rows: curRows } = await pool.query(
+      "SELECT scheduled_start FROM nft_waves WHERE wave_number = $1",
+      [num],
+    );
+    const curStart = curRows[0]?.scheduled_start ? new Date(curRows[0].scheduled_start).getTime() : null;
+    if (curStart && now >= curStart) {
+      return res.status(409).json({
+        error: `Wave ${num} schedule is locked — the start date has already arrived. No changes allowed.`,
+      });
+    }
+
+    // Rules 1, 2, 3: sequential gate
+    if (num > 1) {
+      const { rows: prevRows } = await pool.query(
+        "SELECT scheduled_end FROM nft_waves WHERE wave_number = $1",
+        [num - 1],
+      );
+      const prevEndMs = prevRows[0]?.scheduled_end ? new Date(prevRows[0].scheduled_end).getTime() : null;
+      if (!prevEndMs) {
+        return res.status(409).json({
+          error: `Wave ${num - 1} has no schedule yet — set Wave ${num - 1} schedule first.`,
+        });
+      }
+      if (now <= prevEndMs) {
+        return res.status(409).json({
+          error: `Wave ${num - 1} has not closed yet. Wave ${num} can only be scheduled after Wave ${num - 1} closes.`,
+        });
+      }
+      if (startUnix * 1000 <= prevEndMs) {
+        return res.status(409).json({
+          error: `Wave ${num} start must be strictly after Wave ${num - 1} end (${new Date(prevEndMs).toISOString()}).`,
+        });
+      }
+    }
 
     const receipt = await contractSetWaveSchedule(num, startUnix, endUnix);
     res.json({ ok: true, txHash: receipt.hash });
@@ -186,7 +226,7 @@ router.post("/:num/reveal", requireAdmin, async (req, res, next) => {
 
 // POST /api/nft-sell/waves/:num/treasury-close
 // Mints all unsold NFTs to recipient wallet (defaults to contract's treasuryWallet).
-// Call after wave end time. Owner can sell these tokens later on any platform.
+// Call after wave end time AND after wave is revealed. Owner can sell these tokens later.
 // Body: { recipient?: string }  — optional Ethereum address; omit to use contract treasuryWallet
 router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
   try {
@@ -198,7 +238,39 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
     if (recipient && !/^0x[0-9a-fA-F]{40}$/.test(recipient))
       return res.status(400).json({ error: "recipient must be a valid Ethereum address (0x + 40 hex chars)" });
 
+    // Rule 7: wave must be CLOSED and REVEALED before treasury transfer
+    const { rows: waveRows } = await pool.query(
+      "SELECT scheduled_end, wave_revealed FROM nft_waves WHERE wave_number = $1",
+      [num],
+    );
+    const waveRow = waveRows[0];
+    if (!waveRow?.scheduled_end || new Date() <= new Date(waveRow.scheduled_end)) {
+      return res.status(409).json({
+        error: `Wave ${num} has not closed yet. Treasury transfer is only allowed after the wave end date passes.`,
+      });
+    }
+    if (!waveRow.wave_revealed) {
+      return res.status(409).json({
+        error: `Wave ${num} has not been revealed yet. Complete the reveal before moving NFTs to the treasury wallet.`,
+      });
+    }
+
     const receipt = await contractTreasuryClose(num, recipient ?? null);
+
+    // Update DB: treasury_pending → transferred; set close_action on wave
+    await pool.query(
+      `UPDATE nft_records nr
+          SET delivery_status_id = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = 'transferred'),
+              updated_at         = NOW()
+        WHERE nr.wave_id = (SELECT id FROM nft_waves WHERE wave_number = $1)
+          AND nr.delivery_status_id = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = 'treasury_pending')`,
+      [num],
+    );
+    await pool.query(
+      `UPDATE nft_waves SET close_action = 'treasury', updated_at = NOW() WHERE wave_number = $1`,
+      [num],
+    );
+
     res.json({ ok: true, txHash: receipt.hash });
   } catch (err) {
     next(err);
