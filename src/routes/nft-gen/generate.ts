@@ -174,6 +174,30 @@ function computeRarity(combos: Record<string, Asset | null>[], layers: Layer[]):
   return scored;
 }
 
+// ── Async cleanup — runs fire-and-forget before each new generation ───────────
+// Deletes old completed/failed job records for this collection (excluding the
+// new job). Cascade rules handle nft_generated_items, nft_item_traits, and
+// nft_upload_batches automatically. nft_records.generated_item_id is SET NULL.
+// Permanent config tables (nft_collections, nft_layers, nft_traits) are never touched.
+
+async function cleanOldGenerationData(collectionId: string, newJobId: string): Promise<void> {
+  const { rows: oldJobs } = await pool.query<{ id: string }>(
+    `SELECT id FROM nft_generation_jobs
+     WHERE collection_id = $1::uuid
+       AND id <> $2::uuid
+       AND status IN ('completed', 'failed')`,
+    [collectionId, newJobId]
+  );
+  if (!oldJobs.length) return;
+
+  const oldIds = oldJobs.map(r => r.id);
+  await pool.query(
+    "DELETE FROM nft_generation_jobs WHERE id = ANY($1::uuid[])",
+    [oldIds]
+  );
+  logger.info(`[generate] cleanup: removed ${oldIds.length} old job(s) for collection ${collectionId}`);
+}
+
 // ── Background worker ─────────────────────────────────────────────────────────
 
 const BATCH_SIZE  = 500;
@@ -239,6 +263,12 @@ async function runGenerate(generateId: string, collectionId: string, editionSize
   if (!jobId) throw new Error("Failed to create generation job in DB.");
   await svc.startJob(String(jobId));
   state.jobId = String(jobId);
+
+  // Fire-and-forget: clean old completed/failed job data for this collection.
+  // Not awaited — generation speed is critical.
+  cleanOldGenerationData(collectionId, String(jobId)).catch(err =>
+    logger.warn("[generate] cleanup error (non-critical)", err)
+  );
 
   // 7. Batch-save items with concurrency
   state.phase = "Saving to database…";
