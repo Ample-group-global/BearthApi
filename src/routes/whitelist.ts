@@ -5,6 +5,7 @@ import pool from "../pool";
 import { buildMerkleTree, getProof } from "../merkle";
 import { requirePermission } from "../adminAuth";
 import { HttpError } from "../errors";
+import { contractSetAllowlistRoot } from "../services/contract.service";
 
 const router = Router();
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
@@ -330,6 +331,23 @@ router.get("/", readLimit, async (req: Request, res: Response, next: NextFunctio
         manual_override: Boolean(state?.manual_override),
       },
     });
+  } catch (e) { next(e); }
+});
+
+// POST /api/whitelist/push-chain - push current merkle root to contract on-chain
+router.post("/push-chain", writeLimit, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    requirePermission(req, "nft.waves.manage");
+  } catch (e) { next(e); return; }
+  try {
+    const stateRes = await pool.query("SELECT * FROM whitelist_state_get()");
+    const state = stateRes.rows[0];
+    const root = state?.merkle_root as string | undefined;
+    if (!root || root === "0x0") {
+      res.status(422).json({ error: "No merkle root computed — add addresses first" }); return;
+    }
+    const receipt = await contractSetAllowlistRoot(root);
+    res.json({ success: true, txHash: receipt.hash, root });
   } catch (e) { next(e); }
 });
 

@@ -9,9 +9,11 @@ router.get("/", async (req, res, next) => {
   try {
     const {
       search, delivery_status, stage, revealed, minted,
-      wave_id, wave_number, minted_from, minted_to,
+      wave_id, wave_number, minted_from, minted_to, mint_type,
       limit, offset, sort_by, sort_dir,
     } = req.query as Record<string, string>;
+
+    const VALID_MINT_TYPES = new Set(["free", "paid", "admin", "treasury"]);
 
     const result = await nftService.listNft({
       search:             search  || null,
@@ -23,6 +25,7 @@ router.get("/", async (req, res, next) => {
       waveNumber:         wave_number ? Number(wave_number) : null,
       mintedFrom:         minted_from || null,
       mintedTo:           minted_to   || null,
+      mintType:           (mint_type && VALID_MINT_TYPES.has(mint_type)) ? mint_type : null,
       limit:              limit  ? Number(limit)  : 20,
       offset:             offset ? Number(offset) : 0,
       sortBy:             sort_by  || null,
