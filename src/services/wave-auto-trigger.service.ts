@@ -59,13 +59,18 @@ async function checkAndTriggerWaves(): Promise<void> {
               : startUnix + 86400 * 30; // 30-day fallback if no end set
             await contractSetWaveSchedule(num, startUnix, endUnix);
           }
+        } catch (e) {
+          logger.warn(`[wave-auto-trigger] Wave ${num} on-chain start failed (will still mark triggered to prevent retry loops)`, e);
+        }
+        // Always mark triggered regardless of TX outcome — prevents infinite retry loops
+        try {
           await pool.query(
             `UPDATE nft_waves SET wave_start_triggered = TRUE, status = 'active', updated_at = NOW() WHERE wave_number = $1`,
             [num],
           );
           console.log(`[wave-auto-trigger] Wave ${num} started`);
-        } catch (e) {
-          logger.warn(`[wave-auto-trigger] Wave ${num} start failed`, e);
+        } catch (dbErr) {
+          logger.warn(`[wave-auto-trigger] Wave ${num} DB mark failed`, dbErr);
         }
       }
 

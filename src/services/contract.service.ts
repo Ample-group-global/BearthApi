@@ -137,6 +137,11 @@ async function syncEvent(
   blockNumber: number,
   logIndex: number
 ): Promise<void> {
+  // Guard: skip events with no txHash — avoids nft_contract_events NOT NULL violation
+  if (!txHash) {
+    logger.warn(`[contract.service] Skipping ${eventName} — missing txHash (blockNumber=${blockNumber})`);
+    return;
+  }
   try {
     await pool.query(
       "SELECT nft_event_log($1,$2,$3,$4,$5,$6,$7)",

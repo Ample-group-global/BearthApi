@@ -159,11 +159,6 @@ router.put("/:num/schedule", requireAdmin, async (req, res, next) => {
           error: `Wave ${num - 1} has no schedule yet — set Wave ${num - 1} schedule first.`,
         });
       }
-      if (now <= prevEndMs) {
-        return res.status(409).json({
-          error: `Wave ${num - 1} has not closed yet. Wave ${num} can only be scheduled after Wave ${num - 1} closes.`,
-        });
-      }
       if (startUnix * 1000 <= prevEndMs) {
         return res.status(409).json({
           error: `Wave ${num} start must be strictly after Wave ${num - 1} end (${new Date(prevEndMs).toISOString()}).`,

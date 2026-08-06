@@ -134,6 +134,10 @@ app.get("/api/docs", (_req, res) => {
 app.use("/api/auth", authRouter);
 app.use("/api/whitelist", whitelistRouter);
 app.use("/api/proof", proofRouter);
+// wavesRouter must be registered BEFORE the catch-all presaleRouter so that
+// PUT /api/waves/:id enforcement (sequential rule, schedule lock) is applied first.
+// GET /api/waves falls through wavesRouter (no GET handler) and is served by presaleRouter.
+app.use("/api/waves",             wavesRouter);
 app.use("/api", presaleRouter);
 app.use("/api/admin/roles",       adminRolesRouter);
 app.use("/api/admin/permissions", adminPermissionsRouter);
@@ -141,7 +145,6 @@ app.use("/api/admin/menus",       adminMenusRouter);
 app.use("/api/admin/users",       adminUsersRouter);
 app.use("/api/nft-chain",         nftChainRouter);
 app.use("/api/nfts",              nftsRouter);
-app.use("/api/waves",             wavesRouter);
 app.use("/api/nft-gen",           nftGenRouter);
 app.use("/api/filebase",          filebaseRouter);
 app.use("/api/opensea",           openSeaRouter);

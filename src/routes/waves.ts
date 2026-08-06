@@ -52,17 +52,20 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
     const effectiveEnd = endVal ? new Date(endVal) : existingEnd;
 
     // Rule 6: once scheduled_start has arrived the schedule is LOCKED — no date changes
+    // Only trigger if non-null dates are being set (null = keep existing, not a change)
     const isDateChange = clearSchedule === true ||
-      scheduledStart !== undefined ||
-      scheduledEnd   !== undefined ||
-      revealScheduledAt !== undefined;
+      (scheduledStart   !== undefined && scheduledStart   !== null) ||
+      (scheduledEnd     !== undefined && scheduledEnd     !== null) ||
+      (revealScheduledAt !== undefined && revealScheduledAt !== null);
     if (isDateChange && existingStart && now >= existingStart) {
       return res.status(409).json({
         error: `Wave ${waveNumber} schedule is locked — the start date (${existingStart.toISOString()}) has already arrived. No date changes are allowed.`,
       });
     }
 
-    // Rules 1, 2, 3: sequential gate — Wave N requires Wave N-1 to be fully closed
+    // Sequential gate — Wave N's start must be strictly after Wave N-1's end.
+    // We enforce date ordering only (not "Wave N-1 must be physically closed"),
+    // so all waves can be pre-scheduled upfront as long as timestamps are valid.
     if (waveNumber > 1 && (startVal || endVal)) {
       const { rows: prevRows } = await pool.query(
         "SELECT scheduled_end FROM nft_waves WHERE wave_number = $1",
@@ -72,11 +75,6 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       if (!prevEnd) {
         return res.status(409).json({
           error: `Wave ${waveNumber - 1} has no schedule yet — set Wave ${waveNumber - 1} schedule first.`,
-        });
-      }
-      if (now <= prevEnd) {
-        return res.status(409).json({
-          error: `Wave ${waveNumber - 1} has not closed yet (ends ${prevEnd.toISOString()}). Wave ${waveNumber} can only be scheduled after Wave ${waveNumber - 1} closes.`,
         });
       }
       if (startVal && new Date(startVal) <= prevEnd) {
