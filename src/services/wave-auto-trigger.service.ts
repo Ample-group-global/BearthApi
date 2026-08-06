@@ -126,8 +126,8 @@ export function startWaveAutoTrigger(): void {
     console.log("[wave-auto-trigger] CONTRACT_ADDRESS not set — auto-trigger disabled");
     return;
   }
-  console.log("[wave-auto-trigger] Auto-trigger scheduler started (120s interval)");
-  // Initial check after 30s — give the server time to settle after start
-  setTimeout(() => checkAndTriggerWaves().catch(e => logger.warn("[wave-auto-trigger] tick error", e)), 30_000);
-  setInterval(() => checkAndTriggerWaves().catch(e => logger.warn("[wave-auto-trigger] tick error", e)), 120_000);
+  console.log("[wave-auto-trigger] Auto-trigger scheduler started (30s interval)");
+  // Initial check after 10s — give the server time to settle after start
+  setTimeout(() => checkAndTriggerWaves().catch(e => logger.warn("[wave-auto-trigger] tick error", e)), 10_000);
+  setInterval(() => checkAndTriggerWaves().catch(e => logger.warn("[wave-auto-trigger] tick error", e)), 30_000);
 }

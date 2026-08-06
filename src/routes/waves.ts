@@ -2,6 +2,8 @@ import { Router } from "express";
 import pool from "../pool";
 import { requireAdmin } from "../adminAuth";
 import { _syncRevealedMetadata } from "../services/reveal.service";
+import { contractSetWaveSchedule } from "../services/contract.service";
+import { logger } from "../logger";
 
 const router = Router();
 
@@ -90,6 +92,21 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       }
     }
 
+    // Forward sequential gate — Wave N's end must be strictly before Wave N+1's start (if scheduled).
+    // This prevents overlaps when Wave N's end is updated after Wave N+1 was already scheduled.
+    if (endVal && waveNumber < 7) {
+      const { rows: nextRows } = await pool.query(
+        "SELECT scheduled_start FROM nft_waves WHERE wave_number = $1",
+        [waveNumber + 1],
+      );
+      const nextStart = nextRows[0]?.scheduled_start ? new Date(nextRows[0].scheduled_start) : null;
+      if (nextStart && new Date(endVal) >= nextStart) {
+        return res.status(409).json({
+          error: `Wave ${waveNumber} end must be strictly before Wave ${waveNumber + 1} start (${nextStart.toISOString()}). Reschedule Wave ${waveNumber + 1} first.`,
+        });
+      }
+    }
+
     // start < end (within same wave)
     if (startVal && endVal && new Date(startVal) >= new Date(endVal)) {
       return res.status(400).json({ error: "Scheduled end must be after start" });
@@ -127,6 +144,22 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
         tierPrices ? JSON.stringify(tierPrices) : null,
       ],
     );
+
+    // Pre-push schedule on-chain when both future dates are set — eliminates auto-trigger startup delay.
+    // The contract's waveStartTime gate then opens exactly at the scheduled second.
+    // Auto-trigger still runs as fallback but no longer needs to push TX at wave start time.
+    if (startVal && endVal && new Date(startVal) > now && !wave.wave_closed &&
+        process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL && process.env.FIXED_PRIVATE_KEY) {
+      try {
+        const startUnix = Math.floor(new Date(startVal).getTime() / 1000);
+        const endUnix   = Math.floor(new Date(endVal).getTime() / 1000);
+        await contractSetWaveSchedule(waveNumber, startUnix, endUnix);
+        logger.info(`[waves-save] Wave ${waveNumber} schedule pre-pushed on-chain (start=${startVal})`);
+      } catch (e) {
+        // Non-fatal: auto-trigger will push at trigger time as fallback
+        logger.warn(`[waves-save] Wave ${waveNumber} on-chain pre-push failed — auto-trigger will retry`, e);
+      }
+    }
 
     const { rows } = await pool.query("SELECT * FROM nft_waves WHERE id = $1::uuid", [id]);
     res.json({ ok: true, wave: rows[0] });
