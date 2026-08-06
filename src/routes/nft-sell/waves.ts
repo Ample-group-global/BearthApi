@@ -5,7 +5,6 @@ import {
   contractSetWaveSchedule,
   contractSetWavePrice,
   contractTreasuryClose,
-  contractAuctionMint,
   contractGetWaveInfo,
   contractSetAllowlistRoot,
   resyncFromBlock,
@@ -287,42 +286,6 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/waves/:num/auction-listing — record OpenSea auction details
-// Body: { listingId: string, startPriceEth: string, auctionEndTime?: string }
-router.post("/:num/auction-listing", requireAdmin, async (req, res, next) => {
-  try {
-    const num           = parseInt(req.params.num, 10);
-    const { listingId, startPriceEth, auctionEndTime } = req.body as {
-      listingId: string; startPriceEth: string; auctionEndTime?: string;
-    };
-    if (isNaN(num) || num < 3 || num > 7)
-      return res.status(400).json({ error: "Auction listings are for Waves 3–7 only" });
-    if (!listingId || !startPriceEth)
-      return res.status(400).json({ error: "listingId and startPriceEth required" });
-
-    await pool.query("SELECT nft_wave_set_auction_listing($1,$2,$3,$4)", [num, listingId, parseFloat(startPriceEth), auctionEndTime ?? null]);
-    res.json({ ok: true });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /api/nft-sell/waves/:num/auction-mint — mint & transfer after auction (Waves 3–7)
-// Body: { to: string, qty: number }
-router.post("/:num/auction-mint", requireAdmin, async (req, res, next) => {
-  try {
-    const num = parseInt(req.params.num, 10);
-    const { to, qty } = req.body as { to: string; qty: number };
-    if (isNaN(num) || num < 3 || num > 7)
-      return res.status(400).json({ error: "auctionMint is for Waves 3–7 only" });
-    if (!to || !qty || qty < 1)
-      return res.status(400).json({ error: "to (address) and qty (>=1) required" });
-    const receipt = await contractAuctionMint(to, num, qty);
-    res.json({ ok: true, txHash: receipt.hash });
-  } catch (err) {
-    next(err);
-  }
-});
 
 
 // ── Strategy extensions ────────────────────────────────────────────────────────

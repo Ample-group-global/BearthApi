@@ -590,16 +590,6 @@ export async function contractWithdraw(): Promise<ethers.TransactionReceipt> {
   return callContract("withdraw", []);
 }
 
-export async function contractAuctionMint(
-  to: string,
-  waveNum: number,
-  qty: number
-): Promise<ethers.TransactionReceipt> {
-  if (!ethers.isAddress(to)) throw new Error("Invalid recipient address");
-  if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1–7");
-  if (qty < 1) throw new Error("Quantity must be at least 1");
-  return callContract("auctionMint", [to, waveNum, qty]);
-}
 
 export async function contractSetTokenPrice(
   tokenId: number,

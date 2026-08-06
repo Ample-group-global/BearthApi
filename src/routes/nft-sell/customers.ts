@@ -5,6 +5,7 @@ import {
   contractSetPurchaseLimitConfig,
   contractGetWalletInfo,
   contractGetCollectionInfo,
+  contractBlockAccount,
 } from "../../services/contract.service";
 import { requireAdmin } from "../../adminAuth";
 
@@ -68,14 +69,33 @@ router.put("/:address/vip", requireAdmin, async (req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/customers/:address/pause-account — not supported in current contract
-router.post("/:address/pause-account", requireAdmin, (_req, res) => {
-  res.status(501).json({ error: "Individual account pausing is not supported in BearthGenesisNFT. Use contract-level pause() instead." });
+// POST /api/nft-sell/customers/:address/block-account — block a wallet from minting and transfers
+// Body: (none)
+// Effect: sets blockedAccounts[address]=true on-chain; blocked wallets cannot mint or transfer
+router.post("/:address/block-account", requireAdmin, async (req, res, next) => {
+  try {
+    const address = req.params.address;
+    if (!address.match(/^0x[0-9a-fA-F]{40}$/))
+      return res.status(400).json({ error: "Invalid Ethereum address" });
+    const receipt = await contractBlockAccount(address, true);
+    res.json({ ok: true, txHash: receipt.hash });
+  } catch (err) {
+    next(err);
+  }
 });
 
-// POST /api/nft-sell/customers/:address/unpause-account — not supported in current contract
-router.post("/:address/unpause-account", requireAdmin, (_req, res) => {
-  res.status(501).json({ error: "Individual account pausing is not supported in BearthGenesisNFT. Use contract-level unpause() instead." });
+// POST /api/nft-sell/customers/:address/unblock-account — unblock a previously blocked wallet
+// Body: (none)
+router.post("/:address/unblock-account", requireAdmin, async (req, res, next) => {
+  try {
+    const address = req.params.address;
+    if (!address.match(/^0x[0-9a-fA-F]{40}$/))
+      return res.status(400).json({ error: "Invalid Ethereum address" });
+    const receipt = await contractBlockAccount(address, false);
+    res.json({ ok: true, txHash: receipt.hash });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // PUT /api/nft-sell/customers/limits — update purchase limits on-chain
