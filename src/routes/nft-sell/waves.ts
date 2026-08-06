@@ -205,6 +205,21 @@ router.post("/:num/reveal", requireAdmin, async (req, res, next) => {
     if (!uri?.startsWith("ipfs://"))
       return res.status(400).json({ error: "uri must start with ipfs://" });
 
+    // Pre-flight off-chain guard: wave must be closed and reveal date must have been set
+    // These checks prevent a wasted on-chain TX that would revert anyway.
+    const { rows: waveCheck } = await pool.query(
+      "SELECT wave_number, wave_closed, reveal_scheduled_at, is_revealed FROM nft_waves WHERE wave_number = $1",
+      [num],
+    );
+    const wv = waveCheck[0];
+    if (!wv) return res.status(404).json({ error: `Wave ${num} not found` });
+    if (wv.is_revealed)
+      return res.status(409).json({ error: `Wave ${num} has already been revealed.` });
+    if (!wv.wave_closed)
+      return res.status(409).json({ error: `Wave ${num} must be closed before it can be revealed. Wait for the wave end time to pass.` });
+    if (!wv.reveal_scheduled_at)
+      return res.status(409).json({ error: `Wave ${num} has no reveal date set. Set a reveal date first via the Waves page.` });
+
     // Store URI in DB first so executeWaveReveal can pick it up
     await pool.query(
       "UPDATE nft_waves SET wave_reveal_uri = $1 WHERE wave_number = $2",
