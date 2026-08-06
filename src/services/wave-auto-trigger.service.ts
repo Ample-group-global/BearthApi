@@ -63,12 +63,15 @@ async function checkAndTriggerWaves(): Promise<void> {
           logger.warn(`[wave-auto-trigger] Wave ${num} on-chain start failed (will still mark triggered to prevent retry loops)`, e);
         }
         // Always mark triggered regardless of TX outcome — prevents infinite retry loops
+        // Respect 'paused' — if admin paused the wave, keep that status; only set 'active' otherwise
         try {
           await pool.query(
-            `UPDATE nft_waves SET wave_start_triggered = TRUE, status = 'active', updated_at = NOW() WHERE wave_number = $1`,
+            `UPDATE nft_waves SET wave_start_triggered = TRUE,
+              status = CASE WHEN status = 'paused' THEN 'paused' ELSE 'active' END,
+              updated_at = NOW() WHERE wave_number = $1`,
             [num],
           );
-          console.log(`[wave-auto-trigger] Wave ${num} started`);
+          console.log(`[wave-auto-trigger] Wave ${num} started (status=${wave.status === 'paused' ? 'paused' : 'active'})`);
         } catch (dbErr) {
           logger.warn(`[wave-auto-trigger] Wave ${num} DB mark failed`, dbErr);
         }
