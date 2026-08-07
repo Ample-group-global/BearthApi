@@ -166,6 +166,22 @@ router.put("/:num/schedule", requireAdmin, async (req, res, next) => {
     }
 
     const receipt = await contractSetWaveSchedule(num, startUnix, endUnix);
+
+    // Persist schedule to DB so auto-trigger picks up the right timestamps
+    const startIso = new Date(startUnix * 1000).toISOString();
+    const endIso   = new Date(endUnix   * 1000).toISOString();
+    await pool.query(
+      `UPDATE nft_waves
+          SET scheduled_start        = $2,
+              scheduled_end          = $3,
+              wave_start_triggered   = FALSE,
+              wave_end_triggered     = FALSE,
+              last_tx_hash           = $4,
+              updated_at             = NOW()
+        WHERE wave_number = $1`,
+      [num, startIso, endIso, receipt.hash],
+    );
+
     res.json({ ok: true, txHash: receipt.hash });
   } catch (err) {
     next(err);

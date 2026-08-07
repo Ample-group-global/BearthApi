@@ -145,20 +145,17 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       ],
     );
 
-    // Pre-push schedule on-chain when both future dates are set — eliminates auto-trigger startup delay.
-    // The contract's waveStartTime gate then opens exactly at the scheduled second.
-    // Auto-trigger still runs as fallback but no longer needs to push TX at wave start time.
+    // Fire-and-forget on-chain pre-push — runs in background so the DB-save response
+    // returns immediately (Sepolia TX takes 30-120s; blocking would timeout API clients).
+    // P2-04 / nft-sell/waves PUT /:num/schedule is the explicit on-chain push path.
+    // Auto-trigger also pushes at wave start time as a final fallback.
     if (startVal && endVal && new Date(startVal) > now && !wave.wave_closed &&
         process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL && process.env.FIXED_PRIVATE_KEY) {
-      try {
-        const startUnix = Math.floor(new Date(startVal).getTime() / 1000);
-        const endUnix   = Math.floor(new Date(endVal).getTime() / 1000);
-        await contractSetWaveSchedule(waveNumber, startUnix, endUnix);
-        logger.info(`[waves-save] Wave ${waveNumber} schedule pre-pushed on-chain (start=${startVal})`);
-      } catch (e) {
-        // Non-fatal: auto-trigger will push at trigger time as fallback
-        logger.warn(`[waves-save] Wave ${waveNumber} on-chain pre-push failed — auto-trigger will retry`, e);
-      }
+      const startUnix = Math.floor(new Date(startVal).getTime() / 1000);
+      const endUnix   = Math.floor(new Date(endVal).getTime() / 1000);
+      contractSetWaveSchedule(waveNumber, startUnix, endUnix)
+        .then(() => logger.info(`[waves-save] Wave ${waveNumber} schedule pre-pushed on-chain (start=${startVal})`))
+        .catch(e => logger.warn(`[waves-save] Wave ${waveNumber} on-chain pre-push failed — auto-trigger will retry`, e));
     }
 
     const { rows } = await pool.query("SELECT * FROM nft_waves WHERE id = $1::uuid", [id]);
