@@ -21,6 +21,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       clearSchedule,
       revealScheduledAt,
       tierPrices,
+      unsoldStrategy,
     } = req.body as {
       defaultPriceEth?:    number | null;
       saleMethod?:         string | null;
@@ -31,12 +32,13 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       clearSchedule?:      boolean;
       revealScheduledAt?:  string | null;
       tierPrices?:         { legendary?: number; epic?: number; rare?: number; common?: number } | null;
+      unsoldStrategy?:     'auto_treasury' | 'manual';
     };
 
     if (!id) return res.status(400).json({ error: "Wave id required" });
 
     const { rows: existing } = await pool.query(
-      "SELECT id, wave_number, status, scheduled_start, scheduled_end, wave_closed FROM nft_waves WHERE id = $1::uuid",
+      "SELECT id, wave_number, status, scheduled_start, scheduled_end, wave_closed, price_locked, is_revealed FROM nft_waves WHERE id = $1::uuid",
       [id],
     );
     if (!existing.length) return res.status(404).json({ error: "Wave not found" });
@@ -60,7 +62,38 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       });
     }
 
-    // Rule: once scheduled_start has arrived the schedule is LOCKED — no date changes
+    // Rule: reveal date cannot be rescheduled once the wave is already revealed
+    if (revealScheduledAt !== undefined && revealScheduledAt !== null && wave.is_revealed) {
+      return res.status(409).json({
+        error: `Wave ${waveNumber} has already been revealed — the reveal date cannot be changed.`,
+      });
+    }
+
+    // Rule: price cannot be changed on a closed wave
+    if (defaultPriceEth !== undefined && defaultPriceEth !== null && wave.wave_closed) {
+      return res.status(409).json({
+        error: `Wave ${waveNumber} is closed — price cannot be changed after the wave ends.`,
+      });
+    }
+
+    // Rule: price cannot be changed once locked (first sale occurred)
+    if (defaultPriceEth !== undefined && defaultPriceEth !== null && wave.price_locked) {
+      return res.status(409).json({
+        error: `Wave ${waveNumber} price is locked — the first sale has already occurred. Price cannot be changed.`,
+      });
+    }
+
+    // Rule: unsold strategy cannot be changed once the wave is revealed
+    if (unsoldStrategy !== undefined && wave.is_revealed) {
+      return res.status(409).json({
+        error: `Wave ${waveNumber} has already been revealed — unsold strategy cannot be changed.`,
+      });
+    }
+    if (unsoldStrategy !== undefined && !['auto_treasury', 'manual'].includes(unsoldStrategy)) {
+      return res.status(400).json({ error: "unsoldStrategy must be 'auto_treasury' or 'manual'" });
+    }
+
+        // Rule: once scheduled_start has arrived the schedule is LOCKED — no date changes
     // reveal_scheduled_at is excluded; it has its own guard above
     const isDateChange = clearSchedule === true ||
       (scheduledStart !== undefined && scheduledStart !== null) ||
@@ -127,6 +160,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
         notes                = COALESCE($7, notes),
         reveal_scheduled_at  = $8,
         tier_prices          = COALESCE($9::jsonb, tier_prices),
+        unsold_strategy      = COALESCE($10, unsold_strategy),
         wave_start_triggered = CASE WHEN $4 IS DISTINCT FROM scheduled_start THEN FALSE ELSE wave_start_triggered END,
         wave_end_triggered   = CASE WHEN $5 IS DISTINCT FROM scheduled_end   THEN FALSE ELSE wave_end_triggered   END,
         wave_reveal_triggered= CASE WHEN $8 IS DISTINCT FROM reveal_scheduled_at THEN FALSE ELSE wave_reveal_triggered END,
@@ -142,6 +176,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
         notes           ?? null,
         revealScheduledAt ?? null,
         tierPrices ? JSON.stringify(tierPrices) : null,
+        unsoldStrategy  ?? null,
       ],
     );
 

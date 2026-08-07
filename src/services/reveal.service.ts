@@ -72,8 +72,14 @@ export async function executeWaveReveal(waveNum: number): Promise<string | null>
   // ── Level 1: Create pool (auto, before VRF) ────────────────────────────────
   await createWavePool(waveNum);
 
-  // ── No contract env → DB-only mode (dev) ──────────────────────────────────
+  // ── No contract env → DB-only mode (dev only, never mainnet) ─────────────
   if (!process.env.CONTRACT_ADDRESS || !process.env.ETH_RPC_URL || !process.env.FIXED_PRIVATE_KEY) {
+    if (process.env.NETWORK === "mainnet") {
+      throw new Error(
+        `Wave ${waveNum}: CONTRACT_ADDRESS, ETH_RPC_URL, and FIXED_PRIVATE_KEY are all required on mainnet. ` +
+        `DB-only reveal is not allowed in production.`,
+      );
+    }
     console.log(`[reveal] Wave ${waveNum}: no contract env vars — DB-only reveal (dev mode)`);
     await _updateWaveRevealedInDB(wave.id, waveNum, revealUri, null, null, null);
     await _syncRevealedMetadata(waveNum);
@@ -134,7 +140,14 @@ export async function executeWaveReveal(waveNum: number): Promise<string | null>
   }
 
   // ── Level 2 direct path (no coordinator) ──────────────────────────────────
-  console.log(`[reveal] Wave ${waveNum}: direct revealWave() — no VRF coordinator`);
+  // Mainnet requires Chainlink VRF for unbiasable randomness — prevrandao is miner-influenceable.
+  if (process.env.NETWORK === "mainnet") {
+    throw new Error(
+      `Wave ${waveNum}: REVEAL_COORDINATOR_ADDRESS is required on mainnet. ` +
+      `Deploy BearthRevealCoordinator and set the env var before triggering reveal.`,
+    );
+  }
+  console.log(`[reveal] Wave ${waveNum}: direct revealWave() — no VRF coordinator (testnet only)`);
   const tx = await (nft.revealWave as (n: number, uri: string) => Promise<ethers.TransactionResponse>)(
     waveNum, revealUri,
   );

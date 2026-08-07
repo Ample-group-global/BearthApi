@@ -4,9 +4,9 @@ import { ethers } from "ethers";
 const router = Router();
 const ETH_ADDR = /^0x[a-fA-F0-9]{40}$/;
 
-const RPC_URL         = process.env.ETH_RPC_URL      || "https://ethereum-sepolia-rpc.publicnode.com";
-const CONTRACT_ADDR   = process.env.CONTRACT_ADDRESS  || "";
-const UPGRADE_ADDR    = process.env.UPGRADE_NFT_ADDRESS || "";
+const RPC_URL         = process.env.ETH_RPC_URL         ?? "";
+const CONTRACT_ADDR   = process.env.CONTRACT_ADDRESS    ?? "";
+const UPGRADE_ADDR    = process.env.UPGRADE_NFT_ADDRESS ?? "";
 
 const NFT_ABI = [
   "function balanceOf(address owner) external view returns (uint256)",
@@ -15,6 +15,7 @@ const NFT_ABI = [
 ];
 
 function getProvider() {
+  if (!RPC_URL) throw new Error("ETH_RPC_URL is required — set it in .env (no testnet fallback on any network)");
   return new ethers.JsonRpcProvider(RPC_URL);
 }
 
