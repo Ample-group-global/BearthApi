@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAdmin } from "../adminAuth";
 import * as nftService from "../services/nft.service";
+import pool from "../pool";
 
 const router = Router();
 
@@ -77,6 +78,32 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
     });
     if (!record) { res.status(404).json({ error: "NFT not found" }); return; }
     res.json(record);
+  } catch (e) { next(e); }
+});
+
+// POST /api/nfts/trait-stats — batch rarity % for a set of traits
+router.post("/trait-stats", async (req, res, next) => {
+  try {
+    const { traits } = req.body ?? {};
+    if (!traits || typeof traits !== "object" || Array.isArray(traits)) {
+      res.status(400).json({ error: "traits object required" }); return;
+    }
+    const entries = Object.entries(traits as Record<string, string>);
+    if (!entries.length) { res.json({ total: 0, stats: {} }); return; }
+
+    const { rows: [{ total }] } = await pool.query<{ total: string }>(
+      "SELECT COUNT(*) AS total FROM nft_records",
+    );
+    const stats: Record<string, Record<string, number>> = {};
+    await Promise.all(entries.map(async ([layer, value]) => {
+      const { rows } = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) FROM nft_records WHERE traits @> $1::jsonb`,
+        [JSON.stringify({ [layer]: value })],
+      );
+      if (!stats[layer]) stats[layer] = {};
+      stats[layer][value] = Number(rows[0].count);
+    }));
+    res.json({ total: Number(total), stats });
   } catch (e) { next(e); }
 });
 

@@ -1,4 +1,4 @@
-import pool from "../pool";
+﻿import pool from "../pool";
 import { toCamel } from "../utils/camel";
 
 const SORT_COLS: Record<string, string> = {
@@ -57,10 +57,11 @@ export async function listNft(params: {
        nr.delivery_status_id, nr.delivery_status_code, nr.delivery_status_name,
        nr.wave_id, w.wave_number, w.name AS wave_name,
        w.quantity AS wave_quantity,
-       w.wave_starting_index,
+       w.starting_index AS wave_starting_index,
        w.scheduled_start AS wave_scheduled_start,
        w.scheduled_end   AS wave_scheduled_end,
        w.reveal_scheduled_at AS wave_reveal_scheduled_at,
+       w.last_tx_hash AS wave_reveal_tx_hash,
        nr.price_eth,
        COALESCE(nr.price_eth, w.default_price_eth) AS effective_price_eth,
        COUNT(*) OVER() AS total_count

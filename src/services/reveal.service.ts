@@ -142,7 +142,22 @@ export async function executeWaveReveal(waveNum: number): Promise<string | null>
   if (!receipt) throw new Error(`No receipt for revealWave(${waveNum})`);
   console.log(`[reveal] Wave ${waveNum}: revealed directly, tx: ${receipt.hash}`);
 
-  await _updateWaveRevealedInDB(wave.id, waveNum, revealUri, receipt.hash, null, null);
+  // Read startingIndex from block.prevrandao — the contract sets it identically on-chain
+  let startingIndex: number | null = null;
+  try {
+    const waveQty = Number(await nft.waveQty(waveNum));
+    const block   = await signer.provider!.getBlock(receipt.blockNumber);
+    if (block?.prevRandao != null) {
+      startingIndex = Number(BigInt(block.prevRandao.toString()) % BigInt(waveQty));
+      console.log(`[reveal] Wave ${waveNum}: startingIndex=${startingIndex} (prevRandao=${block.prevRandao})`);
+    } else {
+      console.warn(`[reveal] Wave ${waveNum}: prevRandao unavailable from RPC — startingIndex null`);
+    }
+  } catch (e: any) {
+    console.warn(`[reveal] Wave ${waveNum}: could not compute startingIndex — ${e.message}`);
+  }
+
+  await _updateWaveRevealedInDB(wave.id, waveNum, revealUri, receipt.hash, null, startingIndex);
   _syncRevealedMetadata(waveNum).catch(e =>
     console.warn(`[reveal] Wave ${waveNum}: metadata sync failed — ${e.message}`),
   );
@@ -261,8 +276,10 @@ export async function _syncRevealedMetadata(waveNum: number): Promise<void> {
     image_ipfs_hash: string | null; metadata_ipfs_hash: string | null;
     metadata_uri: string | null; blind_box_uri: string | null;
     traits: Record<string, string> | null;
+    rarity_tier: string | null; rarity_score: number | null; rarity_rank: number | null;
   }>(
-    `SELECT id, image_ipfs_hash, metadata_ipfs_hash, metadata_uri, blind_box_uri, traits
+    `SELECT id, image_ipfs_hash, metadata_ipfs_hash, metadata_uri, blind_box_uri, traits,
+            rarity_tier, rarity_score, rarity_rank
      FROM nft_records WHERE id = ANY($1::uuid[])`,
     [rotatedPool.map(p => p.nft_record_id)],
   );
@@ -297,13 +314,17 @@ export async function _syncRevealedMetadata(waveNum: number): Promise<void> {
          metadata_uri       = $4,
          blind_box_uri      = COALESCE($5, blind_box_uri),
          traits             = $6,
+         rarity_tier        = COALESCE($8, rarity_tier),
+         rarity_score       = COALESCE($9, rarity_score),
+         rarity_rank        = COALESCE($10, rarity_rank),
          is_revealed        = TRUE,
          revealed_at        = NOW(),
          delivery_status_id = COALESCE($7::uuid, delivery_status_id),
          updated_at         = NOW()
        WHERE id = $1::uuid`,
       [token.id, artwork.image_ipfs_hash, artwork.metadata_ipfs_hash,
-       artwork.metadata_uri, artwork.blind_box_uri, artwork.traits, revealedId],
+       artwork.metadata_uri, artwork.blind_box_uri, artwork.traits, revealedId,
+       artwork.rarity_tier, artwork.rarity_score, artwork.rarity_rank],
     );
     usedSourceIds.push(entry.nft_record_id);
     synced++;
@@ -360,8 +381,10 @@ async function _syncRevealedMetadataLegacy(
   const { rows: artworkRows } = await pool.query<{
     serial_number: string; image_ipfs_hash: string | null; metadata_ipfs_hash: string | null;
     metadata_uri: string | null; blind_box_uri: string | null; traits: Record<string, string> | null;
+    rarity_tier: string | null; rarity_score: number | null; rarity_rank: number | null;
   }>(
-    `SELECT serial_number, image_ipfs_hash, metadata_ipfs_hash, metadata_uri, blind_box_uri, traits
+    `SELECT serial_number, image_ipfs_hash, metadata_ipfs_hash, metadata_uri, blind_box_uri, traits,
+            rarity_tier, rarity_score, rarity_rank
      FROM nft_records WHERE serial_number=ANY($1::text[])`,
     [editionSerials],
   );
@@ -374,10 +397,15 @@ async function _syncRevealedMetadataLegacy(
     await pool.query(
       `UPDATE nft_records SET
          image_ipfs_hash=$2, metadata_ipfs_hash=$3, metadata_uri=$4,
-         blind_box_uri=COALESCE($5, blind_box_uri), traits=$6, updated_at=NOW()
+         blind_box_uri=COALESCE($5, blind_box_uri), traits=$6,
+         rarity_tier=COALESCE($7, rarity_tier),
+         rarity_score=COALESCE($8, rarity_score),
+         rarity_rank=COALESCE($9, rarity_rank),
+         is_revealed=TRUE, revealed_at=NOW(), updated_at=NOW()
        WHERE id=$1::uuid`,
       [id, artwork.image_ipfs_hash, artwork.metadata_ipfs_hash,
-           artwork.metadata_uri, artwork.blind_box_uri, artwork.traits],
+           artwork.metadata_uri, artwork.blind_box_uri, artwork.traits,
+           artwork.rarity_tier, artwork.rarity_score, artwork.rarity_rank],
     );
     synced++;
   }

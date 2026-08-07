@@ -9,7 +9,7 @@ import {
   contractSetAllowlistRoot,
   resyncFromBlock,
 } from "../../services/contract.service";
-import { executeWaveReveal } from "../../services/reveal.service";
+import { executeWaveReveal, _syncRevealedMetadata } from "../../services/reveal.service";
 import { buildMerkleTree } from "../../merkle";
 import { requireAdmin } from "../../adminAuth";
 
@@ -244,6 +244,86 @@ router.post("/:num/reveal", requireAdmin, async (req, res, next) => {
     // Execute reveal with Fisher-Yates random token assignment
     const txHash = await executeWaveReveal(num);
     res.json({ ok: true, txHash, waveNumber: num });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/nft-sell/waves/:num/resync-reveal
+// Fixes wave DB state after a reveal where startingIndex was null or wrong.
+// Back-computes startingIndex from on-chain tokenURI, syncs schedule dates, re-runs metadata sync.
+router.post("/:num/resync-reveal", requireAdmin, async (req, res, next) => {
+  try {
+    const num = parseInt(req.params.num, 10);
+    if (isNaN(num) || num < 1 || num > 7)
+      return res.status(400).json({ error: "Wave number must be 1–7" });
+
+    const RPC_URL = process.env.ETH_RPC_URL;
+    const CONTRACT_ADDR = process.env.CONTRACT_ADDRESS;
+    if (!RPC_URL || !CONTRACT_ADDR)
+      return res.status(500).json({ error: "ETH_RPC_URL / CONTRACT_ADDRESS not set" });
+
+    const provider = new ethers.JsonRpcProvider(RPC_URL);
+    const abi = [
+      "function waveStartTime(uint256) external view returns (uint256)",
+      "function waveEndTime(uint256) external view returns (uint256)",
+      "function waveQty(uint256) external view returns (uint256)",
+      "function tokenURI(uint256) external view returns (string)",
+      "function waveRevealed(uint256) external view returns (bool)",
+    ];
+    const nft = new ethers.Contract(CONTRACT_ADDR, abi, provider);
+
+    // Read on-chain wave info
+    const [startTime, endTime, waveQty, isRevealed] = await Promise.all([
+      nft.waveStartTime(num) as Promise<bigint>,
+      nft.waveEndTime(num)   as Promise<bigint>,
+      nft.waveQty(num)       as Promise<bigint>,
+      nft.waveRevealed(num)  as Promise<boolean>,
+    ]);
+
+    const scheduledStart = startTime > 0n ? new Date(Number(startTime) * 1000).toISOString() : null;
+    const scheduledEnd   = endTime   > 0n ? new Date(Number(endTime)   * 1000).toISOString() : null;
+    const qty            = Number(waveQty);
+
+    // Back-compute startingIndex from tokenURI of the first sold token (reliable, no eth_getLogs)
+    let startingIndex: number | null = null;
+    if (isRevealed && qty > 0) {
+      const { rows: tokenRows } = await pool.query<{ token_id: number }>(
+        `SELECT token_id FROM nft_records WHERE on_chain_wave_num=$1 AND token_id IS NOT NULL ORDER BY token_id ASC LIMIT 1`,
+        [num],
+      );
+      if (tokenRows.length) {
+        const tokenId = tokenRows[0].token_id;
+        try {
+          const uri = await nft.tokenURI(tokenId) as string;
+          // uri format: ipfs://CID/some/path/METADATA_ID
+          const metadataId = parseInt(uri.split("/").pop() ?? "", 10);
+          if (!isNaN(metadataId)) {
+            // (tokenId + startingIndex) % qty + 1 = metadataId
+            startingIndex = ((metadataId - 1 - (tokenId % qty)) + qty) % qty;
+          }
+        } catch { /* non-fatal */ }
+      }
+    }
+
+    // Update wave DB record
+    await pool.query(
+      `UPDATE nft_waves SET
+         scheduled_start  = COALESCE($2, scheduled_start),
+         scheduled_end    = COALESCE($3, scheduled_end),
+         quantity         = CASE WHEN $4 > 0 THEN $4 ELSE quantity END,
+         starting_index   = COALESCE($5, starting_index),
+         updated_at       = NOW()
+       WHERE wave_number = $1`,
+      [num, scheduledStart, scheduledEnd, qty, startingIndex],
+    );
+
+    // Re-run metadata sync so artwork/rarity/traits copy correctly with new startingIndex
+    if (isRevealed) {
+      await _syncRevealedMetadata(num);
+    }
+
+    res.json({ ok: true, waveNumber: num, scheduledStart, scheduledEnd, qty, startingIndex });
   } catch (err) {
     next(err);
   }
