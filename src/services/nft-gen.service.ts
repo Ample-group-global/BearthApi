@@ -504,11 +504,14 @@ export async function syncGeneratedItemsToNftRecords(jobId: string): Promise<num
       metadata_ipfs_hash:  item.ipfs_metadata_cid,
       metadata_uri:        `ipfs://${item.ipfs_metadata_cid}`,
       traits,
+      rarity_score:        meta.score != null ? Number(meta.score) : null,
+      rarity_rank:         meta.rank  != null ? Number(meta.rank)  : null,
+      rarity_tier:         meta.tier  != null ? String(meta.tier)  : null,
     };
   });
 
   const { rowCount } = await pool.query(
-    `INSERT INTO nft_records (serial_number, stage_id, delivery_status_id, image_ipfs_hash, metadata_ipfs_hash, metadata_uri, traits)
+    `INSERT INTO nft_records (serial_number, stage_id, delivery_status_id, image_ipfs_hash, metadata_ipfs_hash, metadata_uri, traits, rarity_score, rarity_rank, rarity_tier)
      SELECT
        x.serial_number,
        x.stage_id::uuid,
@@ -516,16 +519,23 @@ export async function syncGeneratedItemsToNftRecords(jobId: string): Promise<num
        x.image_ipfs_hash,
        x.metadata_ipfs_hash,
        x.metadata_uri,
-       x.traits
+       x.traits,
+       x.rarity_score,
+       x.rarity_rank,
+       x.rarity_tier
      FROM json_to_recordset($1::json) AS x(
        serial_number text, stage_id text, delivery_status_id text,
-       image_ipfs_hash text, metadata_ipfs_hash text, metadata_uri text, traits jsonb
+       image_ipfs_hash text, metadata_ipfs_hash text, metadata_uri text, traits jsonb,
+       rarity_score numeric, rarity_rank int, rarity_tier text
      )
      ON CONFLICT (serial_number) DO UPDATE SET
        image_ipfs_hash    = EXCLUDED.image_ipfs_hash,
        metadata_ipfs_hash = EXCLUDED.metadata_ipfs_hash,
        metadata_uri       = EXCLUDED.metadata_uri,
        traits             = EXCLUDED.traits,
+       rarity_score       = COALESCE(EXCLUDED.rarity_score, nft_records.rarity_score),
+       rarity_rank        = COALESCE(EXCLUDED.rarity_rank,  nft_records.rarity_rank),
+       rarity_tier        = COALESCE(EXCLUDED.rarity_tier,  nft_records.rarity_tier),
        updated_at         = NOW()`,
     [JSON.stringify(rows)],
   );
@@ -603,6 +613,7 @@ export async function syncFromFilebaseBucket(bucket: string): Promise<{ synced: 
     serial_number: string; stage_id: string; delivery_status_id: string;
     image_ipfs_hash: string; metadata_ipfs_hash: string; metadata_uri: string;
     blind_box_uri: string | null; traits: Record<string, unknown>;
+    rarity_score: number | null; rarity_rank: number | null; rarity_tier: string | null;
   };
 
   const fbRows: ItemRow[] = [];
@@ -625,6 +636,9 @@ export async function syncFromFilebaseBucket(bucket: string): Promise<{ synced: 
         metadata_uri:       `ipfs://${metaCid}`,
         blind_box_uri:      blindUri,
         traits:             parseFilebaseTraits(metaJson),
+        rarity_score:       metaJson.rarity_score != null ? Number(metaJson.rarity_score) : null,
+        rarity_rank:        metaJson.rarity_rank  != null ? Number(metaJson.rarity_rank)  : null,
+        rarity_tier:        metaJson.rarity_tier  != null ? String(metaJson.rarity_tier)  : null,
       } as ItemRow;
     }));
     for (const r of results) { if (r) fbRows.push(r); else skipped++; }
@@ -638,13 +652,15 @@ export async function syncFromFilebaseBucket(bucket: string): Promise<{ synced: 
     const { rowCount } = await pool.query(
       `INSERT INTO nft_records
          (serial_number, stage_id, delivery_status_id, image_ipfs_hash, metadata_ipfs_hash,
-          metadata_uri, blind_box_uri, traits)
+          metadata_uri, blind_box_uri, traits, rarity_score, rarity_rank, rarity_tier)
        SELECT x.serial_number, x.stage_id::uuid, x.delivery_status_id::uuid,
-              x.image_ipfs_hash, x.metadata_ipfs_hash, x.metadata_uri, x.blind_box_uri, x.traits
+              x.image_ipfs_hash, x.metadata_ipfs_hash, x.metadata_uri, x.blind_box_uri, x.traits,
+              x.rarity_score, x.rarity_rank, x.rarity_tier
        FROM json_to_recordset($1::json) AS x(
          serial_number text, stage_id text, delivery_status_id text,
          image_ipfs_hash text, metadata_ipfs_hash text, metadata_uri text,
-         blind_box_uri text, traits jsonb
+         blind_box_uri text, traits jsonb,
+         rarity_score numeric, rarity_rank int, rarity_tier text
        )
        ON CONFLICT (serial_number) DO UPDATE SET
          image_ipfs_hash    = EXCLUDED.image_ipfs_hash,
@@ -652,6 +668,9 @@ export async function syncFromFilebaseBucket(bucket: string): Promise<{ synced: 
          metadata_uri       = EXCLUDED.metadata_uri,
          blind_box_uri      = EXCLUDED.blind_box_uri,
          traits             = EXCLUDED.traits,
+         rarity_score       = COALESCE(EXCLUDED.rarity_score, nft_records.rarity_score),
+         rarity_rank        = COALESCE(EXCLUDED.rarity_rank,  nft_records.rarity_rank),
+         rarity_tier        = COALESCE(EXCLUDED.rarity_tier,  nft_records.rarity_tier),
          updated_at         = NOW()`,
       [JSON.stringify(chunk)],
     );
@@ -706,11 +725,14 @@ export async function syncAllGeneratedItemsToNftRecords(): Promise<number> {
       metadata_ipfs_hash: item.ipfs_metadata_cid,
       metadata_uri:       `ipfs://${item.ipfs_metadata_cid}`,
       traits,
+      rarity_score:       meta.score != null ? Number(meta.score) : null,
+      rarity_rank:        meta.rank  != null ? Number(meta.rank)  : null,
+      rarity_tier:        meta.tier  != null ? String(meta.tier)  : null,
     };
   });
 
   const { rowCount } = await pool.query(
-    `INSERT INTO nft_records (serial_number, stage_id, delivery_status_id, image_ipfs_hash, metadata_ipfs_hash, metadata_uri, traits)
+    `INSERT INTO nft_records (serial_number, stage_id, delivery_status_id, image_ipfs_hash, metadata_ipfs_hash, metadata_uri, traits, rarity_score, rarity_rank, rarity_tier)
      SELECT
        x.serial_number,
        x.stage_id::uuid,
@@ -718,16 +740,23 @@ export async function syncAllGeneratedItemsToNftRecords(): Promise<number> {
        x.image_ipfs_hash,
        x.metadata_ipfs_hash,
        x.metadata_uri,
-       x.traits
+       x.traits,
+       x.rarity_score,
+       x.rarity_rank,
+       x.rarity_tier
      FROM json_to_recordset($1::json) AS x(
        serial_number text, stage_id text, delivery_status_id text,
-       image_ipfs_hash text, metadata_ipfs_hash text, metadata_uri text, traits jsonb
+       image_ipfs_hash text, metadata_ipfs_hash text, metadata_uri text, traits jsonb,
+       rarity_score numeric, rarity_rank int, rarity_tier text
      )
      ON CONFLICT (serial_number) DO UPDATE SET
        image_ipfs_hash    = EXCLUDED.image_ipfs_hash,
        metadata_ipfs_hash = EXCLUDED.metadata_ipfs_hash,
        metadata_uri       = EXCLUDED.metadata_uri,
        traits             = EXCLUDED.traits,
+       rarity_score       = COALESCE(EXCLUDED.rarity_score, nft_records.rarity_score),
+       rarity_rank        = COALESCE(EXCLUDED.rarity_rank,  nft_records.rarity_rank),
+       rarity_tier        = COALESCE(EXCLUDED.rarity_tier,  nft_records.rarity_tier),
        updated_at         = NOW()`,
     [JSON.stringify(rows)],
   );

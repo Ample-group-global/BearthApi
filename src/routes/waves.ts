@@ -38,7 +38,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
     if (!id) return res.status(400).json({ error: "Wave id required" });
 
     const { rows: existing } = await pool.query(
-      "SELECT id, wave_number, status, scheduled_start, scheduled_end, wave_closed, price_locked, is_revealed FROM nft_waves WHERE id = $1::uuid",
+      "SELECT id, wave_number, status, scheduled_start, scheduled_end, wave_closed, wave_start_triggered, wave_reveal_triggered, price_locked, is_revealed FROM nft_waves WHERE id = $1::uuid",
       [id],
     );
     if (!existing.length) return res.status(404).json({ error: "Wave not found" });
@@ -49,8 +49,15 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
     const existingEnd   = wave.scheduled_end   ? new Date(wave.scheduled_end)   : null;
     const now = new Date();
 
-    const startVal = clearSchedule ? null : (scheduledStart ?? null);
-    const endVal   = clearSchedule ? null : (scheduledEnd   ?? null);
+    // Track which fields were explicitly present in the request body.
+    // Absent (undefined) fields must never overwrite existing DB values.
+    const updateStart  = clearSchedule === true || scheduledStart !== undefined;
+    const updateEnd    = clearSchedule === true || scheduledEnd   !== undefined;
+    const updateReveal = revealScheduledAt !== undefined;
+
+    const startVal  = clearSchedule ? null : (scheduledStart ?? null);
+    const endVal    = clearSchedule ? null : (scheduledEnd   ?? null);
+    const revealVal = revealScheduledAt ?? null;
 
     // effective end = incoming value if provided, otherwise the current DB value
     const effectiveEnd = endVal ? new Date(endVal) : existingEnd;
@@ -62,7 +69,12 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       });
     }
 
-    // Rule: reveal date cannot be rescheduled once the wave is already revealed
+    // Rule: reveal date cannot be rescheduled once the reveal is triggered or already done
+    if (revealScheduledAt !== undefined && revealScheduledAt !== null && wave.wave_reveal_triggered) {
+      return res.status(409).json({
+        error: `Wave ${waveNumber} reveal is already in progress — the reveal date cannot be changed.`,
+      });
+    }
     if (revealScheduledAt !== undefined && revealScheduledAt !== null && wave.is_revealed) {
       return res.status(409).json({
         error: `Wave ${waveNumber} has already been revealed — the reveal date cannot be changed.`,
@@ -154,29 +166,32 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       `UPDATE nft_waves SET
         default_price_eth    = COALESCE($2, default_price_eth),
         sale_method          = COALESCE($3, sale_method),
-        scheduled_start      = $4,
-        scheduled_end        = $5,
+        scheduled_start      = CASE WHEN $11::boolean THEN $4::timestamptz ELSE scheduled_start END,
+        scheduled_end        = CASE WHEN $12::boolean THEN $5::timestamptz ELSE scheduled_end END,
         status               = COALESCE($6, status),
         notes                = COALESCE($7, notes),
-        reveal_scheduled_at  = $8,
+        reveal_scheduled_at  = CASE WHEN $13::boolean THEN $8::timestamptz ELSE reveal_scheduled_at END,
         tier_prices          = COALESCE($9::jsonb, tier_prices),
         unsold_strategy      = COALESCE($10, unsold_strategy),
-        wave_start_triggered = CASE WHEN $4 IS DISTINCT FROM scheduled_start THEN FALSE ELSE wave_start_triggered END,
-        wave_end_triggered   = CASE WHEN $5 IS DISTINCT FROM scheduled_end   THEN FALSE ELSE wave_end_triggered   END,
-        wave_reveal_triggered= CASE WHEN $8 IS DISTINCT FROM reveal_scheduled_at THEN FALSE ELSE wave_reveal_triggered END,
+        wave_start_triggered = CASE WHEN $11::boolean AND $4::timestamptz IS DISTINCT FROM scheduled_start THEN FALSE ELSE wave_start_triggered END,
+        wave_end_triggered   = CASE WHEN $12::boolean AND $5::timestamptz IS DISTINCT FROM scheduled_end   THEN FALSE ELSE wave_end_triggered   END,
+        wave_reveal_triggered= CASE WHEN $13::boolean AND $8::timestamptz IS DISTINCT FROM reveal_scheduled_at THEN FALSE ELSE wave_reveal_triggered END,
         updated_at           = NOW()
        WHERE id = $1::uuid`,
       [
-        id,
-        defaultPriceEth ?? null,
-        saleMethod      ?? null,
-        startVal,
-        endVal,
-        status          ?? null,
-        notes           ?? null,
-        revealScheduledAt ?? null,
-        tierPrices ? JSON.stringify(tierPrices) : null,
-        unsoldStrategy  ?? null,
+        id,                                          // $1
+        defaultPriceEth ?? null,                     // $2
+        saleMethod      ?? null,                     // $3
+        startVal,                                    // $4
+        endVal,                                      // $5
+        status          ?? null,                     // $6
+        notes           ?? null,                     // $7
+        revealVal,                                   // $8
+        tierPrices ? JSON.stringify(tierPrices) : null, // $9
+        unsoldStrategy  ?? null,                     // $10
+        updateStart,                                 // $11
+        updateEnd,                                   // $12
+        updateReveal,                                // $13
       ],
     );
 

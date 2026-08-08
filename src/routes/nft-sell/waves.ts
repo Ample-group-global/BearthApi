@@ -134,15 +134,26 @@ router.put("/:num/schedule", requireAdmin, async (req, res, next) => {
 
     const now = Date.now();
 
-    // Rule 6: once scheduled_start has arrived the on-chain schedule is LOCKED
+    // Lock rule: schedule cannot be changed once the wave is active, minted, or closed
     const { rows: curRows } = await pool.query(
-      "SELECT scheduled_start FROM nft_waves WHERE wave_number = $1",
+      "SELECT scheduled_start, wave_start_triggered, wave_closed FROM nft_waves WHERE wave_number = $1",
       [num],
     );
-    const curStart = curRows[0]?.scheduled_start ? new Date(curRows[0].scheduled_start).getTime() : null;
+    const cur = curRows[0];
+    if (cur?.wave_closed) {
+      return res.status(409).json({
+        error: `Wave ${num} is already closed — schedule cannot be changed.`,
+      });
+    }
+    if (cur?.wave_start_triggered) {
+      return res.status(409).json({
+        error: `Wave ${num} is already active — schedule cannot be changed once the wave has started.`,
+      });
+    }
+    const curStart = cur?.scheduled_start ? new Date(cur.scheduled_start).getTime() : null;
     if (curStart && now >= curStart) {
       return res.status(409).json({
-        error: `Wave ${num} schedule is locked — the start date has already arrived. No changes allowed.`,
+        error: `Wave ${num} schedule is locked — the start time has already arrived.`,
       });
     }
 
@@ -419,18 +430,8 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
           error: `Wave ${num} has not been revealed yet. Reveal the wave first before moving to treasury.`,
         });
       }
-      // 0-minted wave: reveal internally using stored URI or the one supplied in body
-      const uri = revealUri ?? waveRow.wave_reveal_uri;
-      if (!uri || !uri.startsWith('ipfs://')) {
-        return res.status(409).json({
-          error: `Wave ${num} has no reveal URI set. Provide revealUri in the request body (ipfs://...) or set it via Manage → Save Settings.`,
-        });
-      }
-      // Store URI if newly provided, then reveal
-      if (revealUri && revealUri !== waveRow.wave_reveal_uri) {
-        await pool.query("UPDATE nft_waves SET wave_reveal_uri = $1 WHERE wave_number = $2", [revealUri, num]);
-      }
-      await executeWaveReveal(num);
+      // 0-minted wave: skip reveal — contract allows treasury-close without waveRevealed
+      // when waveSoldCount == 0 (no customers need to see artwork)
     }
 
     const receipt = await contractTreasuryClose(num, recipient ?? null);

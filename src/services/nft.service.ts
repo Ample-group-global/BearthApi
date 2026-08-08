@@ -1,4 +1,4 @@
-﻿import pool from "../pool";
+import pool from "../pool";
 import { toCamel } from "../utils/camel";
 
 const SORT_COLS: Record<string, string> = {
@@ -11,6 +11,8 @@ const SORT_COLS: Record<string, string> = {
   is_revealed:     "nr.is_revealed",
   delivery_status: "nr.delivery_status_code",
   delivered_at:    "nr.delivered_at",
+  rarity_score:    "nr.rarity_score",
+  rarity_rank:     "nr.rarity_rank",
 };
 
 export async function listNft(params: {
@@ -24,6 +26,7 @@ export async function listNft(params: {
   mintedFrom?: string | null;
   mintedTo?: string | null;
   mintType?: string | null;
+  rarityTier?: string | null;
   limit?: number;
   offset?: number;
   sortBy?: string | null;
@@ -32,7 +35,7 @@ export async function listNft(params: {
   const {
     search = null, deliveryStatusCode = null, stageCode = null,
     revealed = null, minted = null, waveId = null, waveNumber = null,
-    mintedFrom = null, mintedTo = null, mintType = null,
+    mintedFrom = null, mintedTo = null, mintType = null, rarityTier = null,
     limit = 20, offset = 0, sortBy = null, sortDir = null,
   } = params;
 
@@ -77,31 +80,38 @@ export async function listNft(params: {
        AND ($10::DATE IS NULL OR nr.minted_at >= $10::DATE)
        AND ($11::DATE IS NULL OR nr.minted_at <  ($11::DATE + interval '1 day'))
        AND ($12::VARCHAR IS NULL OR nr.mint_type = $12)
+       AND ($13::VARCHAR IS NULL OR LOWER(nr.rarity_tier) = LOWER($13))
      ORDER BY ${orderBy}
      LIMIT $7 OFFSET $8`,
-    [search, deliveryStatusCode, stageCode, revealed, waveId, waveNumber, limit, offset, minted, mintedFrom, mintedTo, mintType],
+    [search, deliveryStatusCode, stageCode, revealed, waveId, waveNumber, limit, offset, minted, mintedFrom, mintedTo, mintType, rarityTier],
   );
   const { rows: statsRows } = await pool.query(
     `SELECT
-      COUNT(*)                                                            AS total_all,
+      COUNT(*)                                                                AS total_all,
+      COUNT(*) FILTER (WHERE nr.delivery_status_code = 'pending')            AS pre_mint_count,
+      COUNT(*) FILTER (WHERE nr.delivery_status_code = 'treasury_pending')   AS reserved_count,
+      COUNT(*) FILTER (WHERE nr.delivery_status_code = 'treasury_wallet')    AS treasury_wallet_count,
       COUNT(*) FILTER (WHERE nr.token_id IS NOT NULL AND NOT nr.is_revealed) AS blind_count,
-      COUNT(*) FILTER (WHERE nr.is_revealed)                             AS revealed_count,
-      COUNT(*) FILTER (WHERE nr.token_id IS NOT NULL)                    AS minted_count,
-      COUNT(*) FILTER (WHERE nr.delivery_status_code = 'sold')          AS sold_count,
-      COUNT(*) FILTER (WHERE nr.delivery_status_code = 'delivered')     AS delivered_count
+      COUNT(*) FILTER (WHERE nr.is_revealed AND nr.token_id IS NOT NULL)     AS revealed_count,
+      COUNT(*) FILTER (WHERE nr.token_id IS NOT NULL)                        AS minted_count,
+      COUNT(*) FILTER (WHERE nr.delivery_status_code = 'sold')               AS sold_count,
+      COUNT(*) FILTER (WHERE nr.delivery_status_code = 'delivered')          AS delivered_count
     FROM v_nft_records nr`,
   );
   const st = statsRows[0] ?? {};
 
   return {
-    nftRecords:    toCamel(rows),
-    total:         Number(rows[0]?.total_count ?? 0),
-    totalAll:      Number(st.total_all        ?? 0),
-    blindCount:    Number(st.blind_count      ?? 0),
-    revealedCount: Number(st.revealed_count   ?? 0),
-    mintedCount:   Number(st.minted_count     ?? 0),
-    soldCount:     Number(st.sold_count       ?? 0),
-    deliveredCount:Number(st.delivered_count  ?? 0),
+    nftRecords:          toCamel(rows),
+    total:               Number(rows[0]?.total_count      ?? 0),
+    totalAll:            Number(st.total_all              ?? 0),
+    preMintCount:        Number(st.pre_mint_count         ?? 0),
+    reservedCount:       Number(st.reserved_count         ?? 0),
+    treasuryWalletCount: Number(st.treasury_wallet_count  ?? 0),
+    blindCount:          Number(st.blind_count            ?? 0),
+    revealedCount:       Number(st.revealed_count         ?? 0),
+    mintedCount:         Number(st.minted_count           ?? 0),
+    soldCount:           Number(st.sold_count             ?? 0),
+    deliveredCount:      Number(st.delivered_count        ?? 0),
     limit,
     offset,
   };

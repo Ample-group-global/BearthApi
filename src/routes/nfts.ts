@@ -1,20 +1,21 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { requireAdmin } from "../adminAuth";
 import * as nftService from "../services/nft.service";
 import pool from "../pool";
 
 const router = Router();
 
-// GET /api/nfts — list with filters, pagination, sorting
+// GET /api/nfts â€” list with filters, pagination, sorting
 router.get("/", async (req, res, next) => {
   try {
     const {
       search, delivery_status, stage, revealed, minted,
-      wave_id, wave_number, minted_from, minted_to, mint_type,
+      wave_id, wave_number, minted_from, minted_to, mint_type, rarity_tier,
       limit, offset, sort_by, sort_dir,
     } = req.query as Record<string, string>;
 
-    const VALID_MINT_TYPES = new Set(["free", "paid", "admin", "treasury"]);
+    const VALID_MINT_TYPES  = new Set(["free", "paid", "admin", "treasury"]);
+    const VALID_RARITY_TIERS = new Set(["legendary", "epic", "rare", "common"]);
 
     const result = await nftService.listNft({
       search:             search  || null,
@@ -27,6 +28,7 @@ router.get("/", async (req, res, next) => {
       mintedFrom:         minted_from || null,
       mintedTo:           minted_to   || null,
       mintType:           (mint_type && VALID_MINT_TYPES.has(mint_type)) ? mint_type : null,
+      rarityTier:         (rarity_tier && VALID_RARITY_TIERS.has(rarity_tier.toLowerCase())) ? rarity_tier.toLowerCase() : null,
       limit:              limit  ? Number(limit)  : 20,
       offset:             offset ? Number(offset) : 0,
       sortBy:             sort_by  || null,
@@ -36,7 +38,7 @@ router.get("/", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// POST /api/nfts — create single NFT record
+// POST /api/nfts â€” create single NFT record
 router.post("/", requireAdmin, async (req, res, next) => {
   try {
     const { serialNumber, stageId, nftTypeId, deliveryStatusId, notes } = req.body ?? {};
@@ -48,7 +50,7 @@ router.post("/", requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// POST /api/nfts/bulk — bulk create
+// POST /api/nfts/bulk â€” bulk create
 router.post("/bulk", requireAdmin, async (req, res, next) => {
   try {
     const { records } = req.body ?? {};
@@ -69,7 +71,7 @@ router.get("/:id", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// PUT /api/nfts/:id — update
+// PUT /api/nfts/:id â€” update
 router.put("/:id", requireAdmin, async (req, res, next) => {
   try {
     const { stageId, nftTypeId, deliveryStatusId, notes, waveId, priceEth, clearPriceEth } = req.body ?? {};
@@ -81,7 +83,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// POST /api/nfts/trait-stats — batch rarity % for a set of traits
+// POST /api/nfts/trait-stats â€” batch rarity % for a set of traits
 router.post("/trait-stats", async (req, res, next) => {
   try {
     const { traits } = req.body ?? {};
@@ -118,4 +120,139 @@ router.post("/:id/confirm-delivery", requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+
+// PUT /api/nfts/:id/sbt — toggle per-token SBT (soulbound) status on-chain
+// Body: { enabled: boolean }  — token_id is resolved from the DB record UUID
+router.put("/:id/sbt", requireAdmin, async (req, res, next) => {
+  try {
+    const { enabled } = req.body as { enabled: boolean };
+    if (typeof enabled !== "boolean")
+      return res.status(400).json({ error: "enabled (boolean) required" });
+    const { rows } = await pool.query<{ token_id: number | null }>(
+      "SELECT token_id FROM nft_records WHERE id = $1::uuid",
+      [req.params.id],
+    );
+    if (!rows[0]) return res.status(404).json({ error: "NFT not found" });
+    if (!rows[0].token_id) return res.status(400).json({ error: "Token not yet minted on-chain" });
+    const { contractSetTokenSBT } = await import("../services/contract.service");
+    const receipt = await contractSetTokenSBT(rows[0].token_id, enabled);
+    // DB update is handled automatically via TokenSBTChanged event listener
+    res.json({ ok: true, txHash: receipt.hash });
+  } catch (err) { next(err); }
+});
+
+// POST /api/nfts/bulk-transfer — transfer treasury-held tokens to a recipient wallet
+// Body: { tokenIds: number[], recipient: string }
+// Max 50 tokens per call; treasury wallet (FIXED_PRIVATE_KEY) must own all tokens
+router.post("/bulk-transfer", requireAdmin, async (req, res, next) => {
+  try {
+    const { tokenIds, recipient } = req.body as { tokenIds: number[]; recipient: string };
+
+    if (!Array.isArray(tokenIds) || tokenIds.length === 0)
+      return res.status(400).json({ error: "tokenIds array is required" });
+    if (tokenIds.length > 50)
+      return res.status(400).json({ error: "Maximum 50 tokens per batch" });
+    if (!/^0x[0-9a-fA-F]{40}$/.test(recipient))
+      return res.status(400).json({ error: "recipient must be a valid Ethereum address" });
+
+    // Verify all tokens are treasury-held (delivery_status = 'treasury_wallet')
+    const { rows: statusRows } = await pool.query<{ token_id: number; code: string }>(
+      `SELECT nr.token_id, lv.code
+         FROM nft_records nr
+         JOIN lookup_values lv ON lv.id = nr.delivery_status_id
+        WHERE nr.token_id = ANY($1::int[])`,
+      [tokenIds],
+    );
+
+    const statusMap = new Map(statusRows.map((r: { token_id: number; code: string }) => [r.token_id, r.code]));
+    const nonTreasury = tokenIds.filter(id => statusMap.get(id) !== "treasury_wallet");
+    if (nonTreasury.length > 0)
+      return res.status(400).json({
+        error: `Tokens not in treasury_wallet status: ${nonTreasury.join(", ")}. Only treasury-held NFTs can be transferred via this endpoint.`,
+      });
+
+    const { contractTransferFromBatch } = await import("../services/contract.service");
+    const results = await contractTransferFromBatch(tokenIds, recipient);
+
+    const transferredIds = results.map((r: { tokenId: number; txHash: string }) => r.tokenId);
+    if (transferredIds.length > 0) {
+      await pool.query(
+        `UPDATE nft_records
+            SET delivery_status_id = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = 'transferred'),
+                delivered_at       = NOW(),
+                owner_address      = $2,
+                updated_at         = NOW()
+          WHERE token_id = ANY($1::int[])`,
+        [transferredIds, recipient.toLowerCase()],
+      );
+    }
+
+    res.json({ ok: true, transferred: transferredIds, txHashes: results.map((r: { tokenId: number; txHash: string }) => r.txHash) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/nfts/testnet-reset — full DB reset for testnet wave testing only.
+// Blocked on mainnet. Resets nft_records, nft_waves, nft_wave_pool, customer_wallets to pre-mint state.
+router.post("/testnet-reset", requireAdmin, async (req, res, next) => {
+  try {
+    const network = process.env.NEXT_PUBLIC_CONTRACT_NET ?? process.env.CONTRACT_NET ?? "";
+    if (network === "mainnet") {
+      res.status(403).json({ error: "testnet-reset is blocked on mainnet" }); return;
+    }
+
+    await pool.query(`
+      UPDATE nft_records SET
+        wave_id              = NULL,
+        token_id             = NULL,
+        mint_type            = NULL,
+        is_revealed          = FALSE,
+        revealed_at          = NULL,
+        delivered_at         = NULL,
+        minted_at            = NULL,
+        mint_tx_hash         = NULL,
+        owner_address        = NULL,
+        synced_at            = NULL,
+        delivery_status_id   = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = 'pending'),
+        updated_at           = NOW()
+    `);
+
+    await pool.query(`
+      UPDATE nft_waves SET
+        scheduled_start       = NULL,
+        scheduled_end         = NULL,
+        wave_start_triggered  = FALSE,
+        wave_end_triggered    = FALSE,
+        wave_reveal_triggered = FALSE,
+        wave_closed           = FALSE,
+        is_revealed           = FALSE,
+        wave_revealed_at      = NULL,
+        wave_reveal_uri       = NULL,
+        starting_index        = NULL,
+        reveal_scheduled_at   = NULL,
+        close_action          = NULL,
+        treasury_recipient    = NULL,
+        treasury_minted_count = 0,
+        price_locked          = FALSE,
+        sold_count            = 0,
+        last_tx_hash          = NULL,
+        updated_at            = NOW()
+    `);
+
+    await pool.query("TRUNCATE nft_wave_pool");
+
+    await pool.query(`
+      UPDATE customer_wallets SET
+        wallet_total_minted = 0,
+        wl_claimed          = FALSE,
+        last_tx_hash        = NULL,
+        synced_at           = NULL
+    `);
+
+    res.json({ ok: true, message: "Testnet DB reset complete." });
+  } catch (err) { next(err); }
+});
 export default router;
+
+
