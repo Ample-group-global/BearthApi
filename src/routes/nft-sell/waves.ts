@@ -606,5 +606,40 @@ router.put("/:num/artist-config", requireAdmin, async (req, res, next) => {
   }
 });
 
+// POST /api/nft-sell/waves/:num/whitelist-required
+// Toggle per-wave whitelist restriction on-chain + sync to DB.
+router.post("/:num/whitelist-required", requireAdmin, async (req, res, next) => {
+  try {
+    const num = parseInt(req.params.num, 10);
+    if (isNaN(num) || num < 1 || num > 7)
+      return res.status(400).json({ error: "Wave number must be 1-7" });
+    const { required } = req.body as { required?: boolean };
+    if (typeof required !== "boolean")
+      return res.status(400).json({ error: "required must be a boolean" });
+    const { contractSetWaveWhitelistRequired } = await import("../../services/contract.service");
+    const receipt = await contractSetWaveWhitelistRequired(num, required);
+    await pool.query(
+      "UPDATE nft_waves SET whitelist_required = $2, updated_at = NOW() WHERE wave_number = $1",
+      [num, required],
+    );
+    res.json({ ok: true, txHash: receipt.hash, waveNumber: num, whitelistRequired: required });
+  } catch (err) { next(err); }
+});
+
+// POST /api/nft-sell/waves/whitelist-approved
+// Batch approve/revoke wallets for restricted waves on-chain.
+router.post("/whitelist-approved", requireAdmin, async (req, res, next) => {
+  try {
+    const { wallets, approved } = req.body as { wallets?: string[]; approved?: boolean };
+    if (!Array.isArray(wallets) || !wallets.length)
+      return res.status(400).json({ error: "wallets must be a non-empty array" });
+    if (typeof approved !== "boolean")
+      return res.status(400).json({ error: "approved must be a boolean" });
+    const { contractSetWaveWhitelistApprovedBatch } = await import("../../services/contract.service");
+    const receipt = await contractSetWaveWhitelistApprovedBatch(wallets, approved);
+    res.json({ ok: true, txHash: receipt.hash, walletCount: wallets.length, approved });
+  } catch (err) { next(err); }
+});
+
 export default router;
 

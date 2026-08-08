@@ -1,9 +1,9 @@
-import { ethers, type Contract, type EventLog } from "ethers";
+﻿import { ethers, type Contract, type EventLog } from "ethers";
 import pool from "../pool";
 import BearthNFT_ABI from "../abi/BearthGenesisNFT.abi.json";
 import { getProvider } from "../utils/contract-factory";
 
-// ── Contract singletons ───────────────────────────────────────────────────────
+// â”€â”€ Contract singletons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 let _contractRO: Contract | null = null;
 let _contractSigned: Contract | null = null;
@@ -21,8 +21,8 @@ export function getContractWithSigner(): Contract {
   if (!_contractSigned) {
     const addr = process.env.CONTRACT_ADDRESS;
     // CONTRACT_PRIVATE_KEY is the per-environment signer key:
-    //   IT/Sepolia  → set CONTRACT_PRIVATE_KEY = SEPOLIA_PRIVATE_KEY value
-    //   Mainnet     → set CONTRACT_PRIVATE_KEY = FIXED_PRIVATE_KEY value
+    //   IT/Sepolia  â†’ set CONTRACT_PRIVATE_KEY = SEPOLIA_PRIVATE_KEY value
+    //   Mainnet     â†’ set CONTRACT_PRIVATE_KEY = FIXED_PRIVATE_KEY value
     // Falls back to FIXED_PRIVATE_KEY for backward compatibility.
     const privateKey = process.env.CONTRACT_PRIVATE_KEY ?? process.env.FIXED_PRIVATE_KEY;
     if (!addr)       throw new Error("CONTRACT_ADDRESS env var is required");
@@ -33,41 +33,41 @@ export function getContractWithSigner(): Contract {
   return _contractSigned;
 }
 
-// ── Contract custom error → human-readable messages ──────────────────────────
+// â”€â”€ Contract custom error â†’ human-readable messages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const CONTRACT_ERROR_MESSAGES: Record<string, string> = {
   // Wave / supply
   WaveSoldOut:              "This wave is sold out",
-  SupplyExceeded:           "Collection is sold out — 9,999 max supply reached",
+  SupplyExceeded:           "Collection is sold out â€” 9,999 max supply reached",
   WaveNotStarted:           "This wave has not started yet",
   WaveEnded:                "This wave has ended",
   WaveNotScheduled:         "This wave has not been scheduled yet",
   WaveAlreadyClosed:        "This wave has already been closed",
   WavePriceLocked:          "Wave price cannot be changed after the first sale",
-  WaveStillActive:          "Wave is still active — wait for it to end before closing",
-  InvalidWaveNumber:        "Invalid wave number — must be 1 to 7",
+  WaveStillActive:          "Wave is still active â€” wait for it to end before closing",
+  InvalidWaveNumber:        "Invalid wave number â€” must be 1 to 7",
   // Mint
   AlreadyClaimed:           "This wallet has already claimed its free mint",
   NotAllowlisted:           "This wallet is not on the allowlist",
   WrongPayment:             "Incorrect ETH amount sent",
   PurchaseLimitExceeded:    "Purchase limit exceeded for this wallet",
   WalletBlocked:            "This wallet has been blocked from minting",
-  InvalidQuantity:          "Invalid quantity — must be at least 1",
+  InvalidQuantity:          "Invalid quantity â€” must be at least 1",
   TokenAlreadyMinted:       "Token has already been minted",
   // Phase / state
   WrongPhase:               "This action is not available in the current phase",
   InvalidPhase:             "Cannot move to an earlier phase",
   // Params
   ZeroAddress:              "Address cannot be zero",
-  InvalidTime:              "Invalid time — end must be after start and in the future",
-  InvalidURI:               "Invalid URI — must not be empty",
-  InvalidRarityTier:        "Invalid rarity tier — must be 1 (Common) to 4 (Legendary)",
-  InvalidRoyaltyParams:     "Invalid royalty — receiver cannot be zero and BPS must be 0–1000",
+  InvalidTime:              "Invalid time â€” end must be after start and in the future",
+  InvalidURI:               "Invalid URI â€” must not be empty",
+  InvalidRarityTier:        "Invalid rarity tier â€” must be 1 (Common) to 4 (Legendary)",
+  InvalidRoyaltyParams:     "Invalid royalty â€” receiver cannot be zero and BPS must be 0â€“1000",
   ArrayLengthMismatch:      "Array length mismatch between tokenIds and values",
   TokenDoesNotExist:        "Token does not exist",
   InvalidEmergencyTransfer: "Invalid emergency transfer parameters",
   // Transfer / SBT
-  TransferNotAllowed:       "Transfer not allowed — SBT mode is on or account is blocked",
+  TransferNotAllowed:       "Transfer not allowed â€” SBT mode is on or account is blocked",
   SBTCannotBeApproved:      "Cannot approve an SBT token",
   MarketplaceNotAllowed:    "This marketplace is not approved by the transfer validator",
   // Finance
@@ -104,7 +104,7 @@ function decodeContractError(err: unknown): string | null {
   }
 }
 
-// ── Transaction helper ────────────────────────────────────────────────────────
+// â”€â”€ Transaction helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function callContract(
   methodName: string,
@@ -127,7 +127,7 @@ export async function callContract(
   }
 }
 
-// ── DB sync: one event at a time ──────────────────────────────────────────────
+// â”€â”€ DB sync: one event at a time â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function syncEvent(
   eventName: string,
@@ -253,7 +253,7 @@ async function syncEvent(
           await pool.query("SELECT nft_record_sync_mint($1,$2,$3,$4)", [Number(tokenId), to.toLowerCase(), waveNumN, txHash]);
           break;
         }
-        if (to === ethers.ZeroAddress) break; // burn — token deleted, no action needed
+        if (to === ethers.ZeroAddress) break; // burn â€” token deleted, no action needed
         await pool.query("SELECT nft_record_sync_transfer($1,$2,$3,$4)", [Number(tokenId), to.toLowerCase(), null, txHash]);
         break;
       }
@@ -277,7 +277,7 @@ async function syncEvent(
   }
 }
 
-// ── Sync from tx receipt (used after callContract) ────────────────────────────
+// â”€â”€ Sync from tx receipt (used after callContract) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function syncReceiptLogs(receipt: ethers.TransactionReceipt): Promise<void> {
   const contract = getContractReadOnly();
@@ -294,12 +294,12 @@ async function syncReceiptLogs(receipt: ethers.TransactionReceipt): Promise<void
         log.index
       );
     } catch {
-      // Unknown event from another contract in the same tx — skip
+      // Unknown event from another contract in the same tx â€” skip
     }
   }
 }
 
-// ── Event listener (local dev / persistent server only) ──────────────────────
+// â”€â”€ Event listener (local dev / persistent server only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function startEventListeners(): void {
   if (process.env.VERCEL) return;
@@ -342,7 +342,7 @@ export function startEventListeners(): void {
   console.log(`[contract.service] Event listeners started on ${process.env.CONTRACT_ADDRESS} (${registered}/${watchedEvents.length} events)`);
 }
 
-// ── Full resync from block history ────────────────────────────────────────────
+// â”€â”€ Full resync from block history â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -355,7 +355,7 @@ export async function resyncFromBlock(fromBlock = 0): Promise<{ synced: number; 
   const CHUNK     = 500;
 
   const latestBlock = await provider.getBlockNumber();
-  // Default to last 20 000 blocks (~2–3 days on Sepolia) so the function stays well within
+  // Default to last 20 000 blocks (~2â€“3 days on Sepolia) so the function stays well within
   // Vercel's 300 s serverless timeout.  Pass an explicit block number to reach further back.
   const startBlock = fromBlock === 0
     ? Math.max(0, latestBlock - 20_000)
@@ -376,7 +376,7 @@ export async function resyncFromBlock(fromBlock = 0): Promise<{ synced: number; 
         toBlock:   end,
       });
     } catch (chunkErr) {
-      // Log the failure but continue — a single RPC hiccup should not abort the entire resync
+      // Log the failure but continue â€” a single RPC hiccup should not abort the entire resync
       console.error(`[resync] getLogs chunk ${cursor}-${end} failed, skipping:`, chunkErr);
       skippedChunks++;
       cursor = end + 1;
@@ -406,14 +406,14 @@ export async function resyncFromBlock(fromBlock = 0): Promise<{ synced: number; 
   return { synced, scannedBlocks: latestBlock - startBlock + 1, skippedChunks };
 }
 
-// ── Admin write functions ─────────────────────────────────────────────────────
+// â”€â”€ Admin write functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function contractSetWaveSchedule(
   waveNum: number,
   startUnix: number,
   endUnix: number
 ): Promise<ethers.TransactionReceipt> {
-  if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1–7");
+  if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1â€“7");
   if (endUnix <= startUnix)        throw new Error("End time must be after start time");
   return callContract("setWaveSchedule", [waveNum, startUnix, endUnix]);
 }
@@ -422,9 +422,9 @@ export async function contractSetWavePrice(
   waveNum: number,
   priceWei: bigint
 ): Promise<ethers.TransactionReceipt> {
-  if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1–7");
+  if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1â€“7");
   const { rows } = await pool.query("SELECT price_locked FROM nft_waves WHERE wave_number=$1", [waveNum]);
-  if (rows[0]?.price_locked) throw new Error(`Wave ${waveNum} price is locked — first sale has occurred`);
+  if (rows[0]?.price_locked) throw new Error(`Wave ${waveNum} price is locked â€” first sale has occurred`);
   return callContract("setWavePrice", [waveNum, priceWei]);
 }
 
@@ -432,7 +432,7 @@ export async function contractTreasuryClose(
   waveNum:   number,
   recipient: string | null
 ): Promise<ethers.TransactionReceipt> {
-  if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1–7");
+  if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1â€“7");
   let to = recipient;
   if (!to) {
     to = await getContractReadOnly().treasuryWallet() as string;
@@ -452,7 +452,7 @@ export async function contractSetRoyalty(
   receiverAddress: string,
   feeBps: number
 ): Promise<ethers.TransactionReceipt> {
-  if (feeBps < 0 || feeBps > 1000) throw new Error("Royalty basis points must be 0–1000 (max 10%)");
+  if (feeBps < 0 || feeBps > 1000) throw new Error("Royalty basis points must be 0â€“1000 (max 10%)");
   if (!ethers.isAddress(receiverAddress)) throw new Error("Invalid receiver address");
   return callContract("setRoyalty", [receiverAddress, feeBps]);
 }
@@ -478,6 +478,23 @@ export async function contractSetPurchaseLimitConfig(
 ): Promise<ethers.TransactionReceipt> {
   if (normalMaxPerWallet < 1) throw new Error("Max per wallet must be at least 1");
   return callContract("setPurchaseLimitConfig", [enabled, normalMaxPerWallet]);
+}
+
+export async function contractSetWaveWhitelistRequired(
+  waveNum: number,
+  required: boolean
+): Promise<ethers.TransactionReceipt> {
+  if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1-7");
+  return callContract("setWaveWhitelistRequired", [waveNum, required]);
+}
+
+export async function contractSetWaveWhitelistApprovedBatch(
+  wallets: string[],
+  approved: boolean
+): Promise<ethers.TransactionReceipt> {
+  if (!wallets.length) throw new Error("Wallet list is empty");
+  if (!wallets.every(w => ethers.isAddress(w))) throw new Error("One or more addresses are invalid");
+  return callContract("setWaveWhitelistApprovedBatch", [wallets, approved]);
 }
 
 export async function contractSetPhase(
@@ -513,7 +530,7 @@ export async function contractAuctionMint(
   qty: number
 ): Promise<ethers.TransactionReceipt> {
   if (!ethers.isAddress(to))       throw new Error("Invalid recipient address");
-  if (waveNum < 1 || waveNum > 7)  throw new Error("Wave number must be 1–7");
+  if (waveNum < 1 || waveNum > 7)  throw new Error("Wave number must be 1â€“7");
   if (qty < 1)                     throw new Error("Quantity must be at least 1");
   return callContract("auctionMint", [to, waveNum, qty]);
 }
@@ -524,7 +541,7 @@ export async function contractSetTokenPrice(
 ): Promise<ethers.TransactionReceipt> {
   const { rows } = await pool.query("SELECT rarity_price_locked FROM nft_records WHERE token_id=$1", [tokenId]);
   if (rows[0]?.rarity_price_locked) {
-    throw new Error(`Token ${tokenId} rarity price is locked — already sold to a customer`);
+    throw new Error(`Token ${tokenId} rarity price is locked â€” already sold to a customer`);
   }
   return callContract("setTokenPrice", [tokenId, priceWei]);
 }
@@ -534,7 +551,7 @@ export async function contractSetRarityBatch(
   rarities: number[]
 ): Promise<ethers.TransactionReceipt> {
   if (tokenIds.length !== rarities.length) throw new Error("tokenIds and rarities length mismatch");
-  if (rarities.some(r => r < 1 || r > 4))  throw new Error("Rarity must be 1–4 (Common/Rare/Epic/Legendary)");
+  if (rarities.some(r => r < 1 || r > 4))  throw new Error("Rarity must be 1â€“4 (Common/Rare/Epic/Legendary)");
   return callContract("setRarityBatch", [tokenIds, rarities]);
 }
 
@@ -625,11 +642,11 @@ export async function contractBreedMint(
 ): Promise<ethers.TransactionReceipt> {
   if (!ethers.isAddress(to))            throw new Error("Invalid recipient address");
   if (!burnIds.length)                  throw new Error("burnIds must not be empty");
-  if (outputRarity < 1 || outputRarity > 4) throw new Error("outputRarity must be 1–4");
+  if (outputRarity < 1 || outputRarity > 4) throw new Error("outputRarity must be 1â€“4");
   return callContract("breedMint", [to, outputRarity, burnIds]);
 }
 
-// ── Read helpers ──────────────────────────────────────────────────────────────
+// â”€â”€ Read helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function contractGetCollectionInfo(): Promise<{
   currentPhase: number;
@@ -705,7 +722,7 @@ export async function contractRevealWave(
   waveNum: number,
   uri: string
 ): Promise<ethers.TransactionReceipt> {
-  if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1–7");
+  if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1â€“7");
   if (!uri?.startsWith("ipfs://"))  throw new Error("URI must start with ipfs://");
   return callContract("revealWave", [waveNum, uri]);
 }
@@ -726,7 +743,7 @@ export async function contractGetWalletInfo(address: string): Promise<{
   return { totalMinted, isVip, wlClaimed, balance };
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function argsToPayload(args: unknown[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -735,3 +752,4 @@ function argsToPayload(args: unknown[]): Record<string, unknown> {
   });
   return out;
 }
+
