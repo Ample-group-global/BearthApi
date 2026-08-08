@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import pool from "../pool";
 import { requireAdmin } from "../adminAuth";
 import { _syncRevealedMetadata } from "../services/reveal.service";
@@ -7,7 +7,7 @@ import { logger } from "../logger";
 
 const router = Router();
 
-// PUT /api/waves/:id — update wave DB fields (schedule, price, status, tier prices, reveal date)
+// PUT /api/waves/:id â€” update wave DB fields (schedule, price, status, tier prices, reveal date)
 router.put("/:id", requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -22,6 +22,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       revealScheduledAt,
       tierPrices,
       unsoldStrategy,
+      whitelistRequired,
     } = req.body as {
       defaultPriceEth?:    number | null;
       saleMethod?:         string | null;
@@ -33,6 +34,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       revealScheduledAt?:  string | null;
       tierPrices?:         { legendary?: number; epic?: number; rare?: number; common?: number } | null;
       unsoldStrategy?:     'auto_treasury' | 'manual';
+      whitelistRequired?:   boolean;
     };
 
     if (!id) return res.status(400).json({ error: "Wave id required" });
@@ -72,51 +74,51 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
     // Rule: reveal date cannot be rescheduled once the reveal is triggered or already done
     if (revealScheduledAt !== undefined && revealScheduledAt !== null && wave.wave_reveal_triggered) {
       return res.status(409).json({
-        error: `Wave ${waveNumber} reveal is already in progress — the reveal date cannot be changed.`,
+        error: `Wave ${waveNumber} reveal is already in progress â€” the reveal date cannot be changed.`,
       });
     }
     if (revealScheduledAt !== undefined && revealScheduledAt !== null && wave.is_revealed) {
       return res.status(409).json({
-        error: `Wave ${waveNumber} has already been revealed — the reveal date cannot be changed.`,
+        error: `Wave ${waveNumber} has already been revealed â€” the reveal date cannot be changed.`,
       });
     }
 
     // Rule: price cannot be changed on a closed wave
     if (defaultPriceEth !== undefined && defaultPriceEth !== null && wave.wave_closed) {
       return res.status(409).json({
-        error: `Wave ${waveNumber} is closed — price cannot be changed after the wave ends.`,
+        error: `Wave ${waveNumber} is closed â€” price cannot be changed after the wave ends.`,
       });
     }
 
     // Rule: price cannot be changed once locked (first sale occurred)
     if (defaultPriceEth !== undefined && defaultPriceEth !== null && wave.price_locked) {
       return res.status(409).json({
-        error: `Wave ${waveNumber} price is locked — the first sale has already occurred. Price cannot be changed.`,
+        error: `Wave ${waveNumber} price is locked â€” the first sale has already occurred. Price cannot be changed.`,
       });
     }
 
     // Rule: unsold strategy cannot be changed once the wave is revealed
     if (unsoldStrategy !== undefined && wave.is_revealed) {
       return res.status(409).json({
-        error: `Wave ${waveNumber} has already been revealed — unsold strategy cannot be changed.`,
+        error: `Wave ${waveNumber} has already been revealed â€” unsold strategy cannot be changed.`,
       });
     }
     if (unsoldStrategy !== undefined && !['auto_treasury', 'manual'].includes(unsoldStrategy)) {
       return res.status(400).json({ error: "unsoldStrategy must be 'auto_treasury' or 'manual'" });
     }
 
-        // Rule: once scheduled_start has arrived the schedule is LOCKED — no date changes
+        // Rule: once scheduled_start has arrived the schedule is LOCKED â€” no date changes
     // reveal_scheduled_at is excluded; it has its own guard above
     const isDateChange = clearSchedule === true ||
       (scheduledStart !== undefined && scheduledStart !== null) ||
       (scheduledEnd   !== undefined && scheduledEnd   !== null);
     if (isDateChange && existingStart && now >= existingStart) {
       return res.status(409).json({
-        error: `Wave ${waveNumber} schedule is locked — the start date (${existingStart.toISOString()}) has already arrived. No date changes are allowed.`,
+        error: `Wave ${waveNumber} schedule is locked â€” the start date (${existingStart.toISOString()}) has already arrived. No date changes are allowed.`,
       });
     }
 
-    // Sequential gate — Wave N's start must be strictly after Wave N-1's end.
+    // Sequential gate â€” Wave N's start must be strictly after Wave N-1's end.
     // We enforce date ordering only (not "Wave N-1 must be physically closed"),
     // so all waves can be pre-scheduled upfront as long as timestamps are valid.
     if (waveNumber > 1 && (startVal || endVal)) {
@@ -127,7 +129,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       const prevEnd = prevRows[0]?.scheduled_end ? new Date(prevRows[0].scheduled_end) : null;
       if (!prevEnd) {
         return res.status(409).json({
-          error: `Wave ${waveNumber - 1} has no schedule yet — set Wave ${waveNumber - 1} schedule first.`,
+          error: `Wave ${waveNumber - 1} has no schedule yet â€” set Wave ${waveNumber - 1} schedule first.`,
         });
       }
       if (startVal && new Date(startVal) <= prevEnd) {
@@ -137,7 +139,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       }
     }
 
-    // Forward sequential gate — Wave N's end must be strictly before Wave N+1's start (if scheduled).
+    // Forward sequential gate â€” Wave N's end must be strictly before Wave N+1's start (if scheduled).
     // This prevents overlaps when Wave N's end is updated after Wave N+1 was already scheduled.
     if (endVal && waveNumber < 7) {
       const { rows: nextRows } = await pool.query(
@@ -173,6 +175,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
         reveal_scheduled_at  = CASE WHEN $13::boolean THEN $8::timestamptz ELSE reveal_scheduled_at END,
         tier_prices          = COALESCE($9::jsonb, tier_prices),
         unsold_strategy      = COALESCE($10, unsold_strategy),
+        whitelist_required   = COALESCE($14, whitelist_required),
         wave_start_triggered = CASE WHEN $11::boolean AND $4::timestamptz IS DISTINCT FROM scheduled_start THEN FALSE ELSE wave_start_triggered END,
         wave_end_triggered   = CASE WHEN $12::boolean AND $5::timestamptz IS DISTINCT FROM scheduled_end   THEN FALSE ELSE wave_end_triggered   END,
         wave_reveal_triggered= CASE WHEN $13::boolean AND $8::timestamptz IS DISTINCT FROM reveal_scheduled_at THEN FALSE ELSE wave_reveal_triggered END,
@@ -192,10 +195,11 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
         updateStart,                                 // $11
         updateEnd,                                   // $12
         updateReveal,                                // $13
+        whitelistRequired ?? null,                   // $14
       ],
     );
 
-    // Fire-and-forget on-chain pre-push — runs in background so the DB-save response
+    // Fire-and-forget on-chain pre-push â€” runs in background so the DB-save response
     // returns immediately (Sepolia TX takes 30-120s; blocking would timeout API clients).
     // P2-04 / nft-sell/waves PUT /:num/schedule is the explicit on-chain push path.
     // Auto-trigger also pushes at wave start time as a final fallback.
@@ -205,7 +209,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       const endUnix   = Math.floor(new Date(endVal).getTime() / 1000);
       contractSetWaveSchedule(waveNumber, startUnix, endUnix)
         .then(() => logger.info(`[waves-save] Wave ${waveNumber} schedule pre-pushed on-chain (start=${startVal})`))
-        .catch(e => logger.warn(`[waves-save] Wave ${waveNumber} on-chain pre-push failed — auto-trigger will retry`, e));
+        .catch(e => logger.warn(`[waves-save] Wave ${waveNumber} on-chain pre-push failed â€” auto-trigger will retry`, e));
     }
 
     const { rows } = await pool.query("SELECT * FROM nft_waves WHERE id = $1::uuid", [id]);
@@ -215,7 +219,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
   }
 });
 
-// POST /api/waves/:waveNumber/sync-metadata — re-fetch IPFS metadata for all tokens in a revealed wave
+// POST /api/waves/:waveNumber/sync-metadata â€” re-fetch IPFS metadata for all tokens in a revealed wave
 router.post("/:waveNumber/sync-metadata", requireAdmin, async (req, res, next) => {
   try {
     const waveNum = parseInt(req.params.waveNumber, 10);
@@ -230,3 +234,4 @@ router.post("/:waveNumber/sync-metadata", requireAdmin, async (req, res, next) =
 });
 
 export default router;
+

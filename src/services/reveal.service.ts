@@ -23,33 +23,25 @@ function getCoordinatorContract(signer: ethers.Wallet): ethers.Contract | null {
   return new ethers.Contract(addr, CoordinatorABI, signer);
 }
 
-// ── Level 1: Pool Creation ─────────────────────────────────────────────────────
-// Randomly selects waveQty artworks from available nft_records (not minted, not
-// in any other pool) and stores them in nft_wave_pool.
-// Called automatically inside executeWaveReveal — no manual admin step needed.
-
-export async function createWavePool(waveNum: number): Promise<number> {
-  const { rows } = await pool.query<{ count: number }>(
-    "SELECT nft_wave_create_pool($1) AS count",
-    [waveNum],
-  );
-  const count = Number(rows[0]?.count ?? 0);
-  console.log(`[reveal] Wave ${waveNum}: pool created — ${count} artworks selected`);
-  return count;
-}
-
-// ── Main reveal entry point ────────────────────────────────────────────────────
-// Two-level randomization:
-//   Level 1 — createWavePool(): randomly picks waveQty artworks from 1–9999
-//   Level 2 — VRF startingIndex: randomly assigns pool artworks to sold token IDs
-//
-// VRF path (REVEAL_COORDINATOR_ADDRESS set):
-//   coordinator.requestReveal() → Chainlink VRF → setWaveStartingIndex → revealWave
-//
-// Direct path (no coordinator — dev/testnet without LINK):
-//   revealWave() directly; block.prevrandao becomes startingIndex on-chain
-
+/**
+ * Execute wave reveal — industry-standard Chainlink VRF flow:
+ *
+ * When REVEAL_COORDINATOR_ADDRESS is set (production):
+ *   1. Compute provenance hash = keccak256(baseUri) — proves URI committed before randomness
+ *   2. Call coordinator.requestReveal(waveNum, uri) — fires Chainlink VRF request
+ *   3. Wait for WaveRevealed event on NFT contract (Chainlink fulfills in 1–3 blocks)
+ *   4. VRF callback: sets startingIndex on NFT → calls revealWave → tokenURI shuffled
+ *
+ * When coordinator not set (dev / testnet without LINK subscription):
+ *   - Calls revealWave() directly on NFT contract (no shuffle, sequential tokenURI)
+ *
+ * tokenURI formula after reveal: (tokenId + startingIndex) % waveQty + 1 → metadata file
+ * Fisher-Yates DB shuffle has been removed — randomness is now on-chain and verifiable.
+ *
+ * Returns txHash of the reveal transaction.
+ */
 export async function executeWaveReveal(waveNum: number): Promise<string | null> {
+  // Load wave from DB
   const { rows: waveRows } = await pool.query<{
     id:              string;
     wave_number:     number;
@@ -69,20 +61,10 @@ export async function executeWaveReveal(waveNum: number): Promise<string | null>
     );
   }
 
-  // ── Level 1: Create pool (auto, before VRF) ────────────────────────────────
-  await createWavePool(waveNum);
-
-  // ── No contract env → DB-only mode (dev only, never mainnet) ─────────────
+  // No contract env vars → DB-only mode (dev without blockchain)
   if (!process.env.CONTRACT_ADDRESS || !process.env.ETH_RPC_URL || !process.env.FIXED_PRIVATE_KEY) {
-    if (process.env.NETWORK === "mainnet") {
-      throw new Error(
-        `Wave ${waveNum}: CONTRACT_ADDRESS, ETH_RPC_URL, and FIXED_PRIVATE_KEY are all required on mainnet. ` +
-        `DB-only reveal is not allowed in production.`,
-      );
-    }
     console.log(`[reveal] Wave ${waveNum}: no contract env vars — DB-only reveal (dev mode)`);
     await _updateWaveRevealedInDB(wave.id, waveNum, revealUri, null, null, null);
-    await _syncRevealedMetadata(waveNum);
     return null;
   }
 
@@ -90,91 +72,82 @@ export async function executeWaveReveal(waveNum: number): Promise<string | null>
   const nft         = getGenesisContract(signer);
   const coordinator = getCoordinatorContract(signer);
 
-  // ── Level 2 VRF path ──────────────────────────────────────────────────────
+  // ── VRF path (coordinator deployed) ────────────────────────────────────────
   if (coordinator) {
     console.log(`[reveal] Wave ${waveNum}: VRF path via coordinator ${await coordinator.getAddress()}`);
 
+    // Provenance hash: keccak256(revealUri) committed before randomness is known
     const provenanceHash = ethers.keccak256(ethers.toUtf8Bytes(revealUri));
     console.log(`[reveal] Wave ${waveNum}: provenance hash = ${provenanceHash}`);
 
+    // Request VRF reveal
     const requestTx = await (coordinator.requestReveal as (
       waveNum: number, uri: string
     ) => Promise<ethers.TransactionResponse>)(waveNum, revealUri);
 
     const requestReceipt = await requestTx.wait(1);
     if (!requestReceipt) throw new Error("No receipt for requestReveal tx");
-    console.log(`[reveal] Wave ${waveNum}: VRF request submitted, tx: ${requestReceipt.hash}`);
+    const requestTxHash = requestReceipt.hash;
+    console.log(`[reveal] Wave ${waveNum}: VRF request submitted, tx: ${requestTxHash}`);
 
+    // Extract requestId from RevealRequested event
     let vrfRequestId: string | null = null;
     for (const log of requestReceipt.logs) {
       try {
         const parsed = coordinator.interface.parseLog(log);
         if (parsed?.name === "RevealRequested") {
-          vrfRequestId = parsed.args[1].toString();
+          vrfRequestId = parsed.args[1].toString(); // requestId
+          console.log(`[reveal] Wave ${waveNum}: VRF requestId = ${vrfRequestId}`);
           break;
         }
-      } catch { /* skip */ }
+      } catch { /* skip unparseable logs */ }
     }
 
+    // Update DB with pending VRF state
     await pool.query(
-      `UPDATE nft_waves SET provenance_hash=$2, vrf_request_id=$3, vrf_requested_at=NOW(), updated_at=NOW() WHERE wave_number=$1`,
+      `UPDATE nft_waves SET
+         provenance_hash  = $2,
+         vrf_request_id   = $3,
+         vrf_requested_at = NOW(),
+         updated_at       = NOW()
+       WHERE wave_number = $1`,
       [waveNum, provenanceHash, vrfRequestId],
     );
 
+    // Wait for WaveRevealed on NFT contract.
+    // Pass fromBlock so we also catch events already emitted in the same tx
+    // (mock coordinator fulfills synchronously; real VRF takes 1–3 blocks).
     console.log(`[reveal] Wave ${waveNum}: waiting for WaveRevealed event (up to 10 min)…`);
     const txHash = await _waitForWaveRevealed(nft, waveNum, 10 * 60 * 1000, requestReceipt.blockNumber);
     console.log(`[reveal] Wave ${waveNum}: revealed on-chain, tx: ${txHash}`);
 
+    // Read starting index from coordinator (canonical value set by VRF callback)
     let startingIndexNum: number | null = null;
     try {
       const si = await (coordinator.waveStartingIndex as (n: number) => Promise<bigint>)(waveNum);
       startingIndexNum = Number(si);
       console.log(`[reveal] Wave ${waveNum}: startingIndex = ${startingIndexNum}`);
-    } catch { /* non-fatal */ }
+    } catch { /* coordinator may not expose this if fulfill failed */ }
 
     await _updateWaveRevealedInDB(wave.id, waveNum, revealUri, txHash, provenanceHash, startingIndexNum);
-    _syncRevealedMetadata(waveNum).catch(e =>
-      console.warn(`[reveal] Wave ${waveNum}: metadata sync failed — ${e.message}`),
-    );
+    await _syncRevealedMetadata(waveNum);
     return txHash;
   }
 
-  // ── Level 2 direct path (no coordinator) ──────────────────────────────────
-  // Mainnet requires Chainlink VRF for unbiasable randomness — prevrandao is miner-influenceable.
-  if (process.env.NETWORK === "mainnet") {
-    throw new Error(
-      `Wave ${waveNum}: REVEAL_COORDINATOR_ADDRESS is required on mainnet. ` +
-      `Deploy BearthRevealCoordinator and set the env var before triggering reveal.`,
-    );
-  }
-  console.log(`[reveal] Wave ${waveNum}: direct revealWave() — no VRF coordinator (testnet only)`);
+  // ── Direct path (no coordinator — dev / sequential reveal) ─────────────────
+  console.log(`[reveal] Wave ${waveNum}: direct revealWave() — no VRF coordinator set`);
   const tx = await (nft.revealWave as (n: number, uri: string) => Promise<ethers.TransactionResponse>)(
-    waveNum, revealUri,
+    waveNum,
+    revealUri,
   );
   const receipt = await tx.wait(1);
   if (!receipt) throw new Error(`No receipt for revealWave(${waveNum})`);
-  console.log(`[reveal] Wave ${waveNum}: revealed directly, tx: ${receipt.hash}`);
+  const txHash = receipt.hash;
+  console.log(`[reveal] Wave ${waveNum}: revealed directly, tx: ${txHash}`);
 
-  // Read startingIndex from block.prevrandao — the contract sets it identically on-chain
-  let startingIndex: number | null = null;
-  try {
-    const waveQty = Number(await nft.waveQty(waveNum));
-    const block   = await signer.provider!.getBlock(receipt.blockNumber);
-    if (block?.prevRandao != null) {
-      startingIndex = Number(BigInt(block.prevRandao.toString()) % BigInt(waveQty));
-      console.log(`[reveal] Wave ${waveNum}: startingIndex=${startingIndex} (prevRandao=${block.prevRandao})`);
-    } else {
-      console.warn(`[reveal] Wave ${waveNum}: prevRandao unavailable from RPC — startingIndex null`);
-    }
-  } catch (e: any) {
-    console.warn(`[reveal] Wave ${waveNum}: could not compute startingIndex — ${e.message}`);
-  }
-
-  await _updateWaveRevealedInDB(wave.id, waveNum, revealUri, receipt.hash, null, startingIndex);
-  _syncRevealedMetadata(waveNum).catch(e =>
-    console.warn(`[reveal] Wave ${waveNum}: metadata sync failed — ${e.message}`),
-  );
-  return receipt.hash;
+  await _updateWaveRevealedInDB(wave.id, waveNum, revealUri, txHash, null, null);
+  await _syncRevealedMetadata(waveNum);
+  return txHash;
 }
 
 // ── Wait for WaveRevealed event ────────────────────────────────────────────────
@@ -185,18 +158,23 @@ async function _waitForWaveRevealed(
   timeoutMs: number,
   fromBlock?: number,
 ): Promise<string> {
+  // Check past events first — handles coordinators that fulfill synchronously
+  // (mock coordinator fires WaveRevealed in the same tx as requestReveal).
   if (fromBlock !== undefined) {
     const pastEvents = await nft.queryFilter(
       nft.filters.WaveRevealed(targetWaveNum),
       fromBlock,
     ) as ethers.EventLog[];
-    if (pastEvents.length > 0) return pastEvents[pastEvents.length - 1].transactionHash;
+    if (pastEvents.length > 0) {
+      return pastEvents[pastEvents.length - 1].transactionHash;
+    }
   }
 
+  // Not yet emitted — listen for it (real Chainlink VRF path, 1–3 blocks).
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       nft.off("WaveRevealed", listener);
-      reject(new Error(`Wave ${targetWaveNum}: VRF timed out after ${timeoutMs / 1000}s`));
+      reject(new Error(`Wave ${targetWaveNum}: VRF fulfillment timed out after ${timeoutMs / 1000}s`));
     }, timeoutMs);
 
     const listener = (waveNum: bigint, _uri: string, _ts: bigint, event: ethers.EventLog) => {
@@ -206,6 +184,7 @@ async function _waitForWaveRevealed(
         resolve(event.transactionHash);
       }
     };
+
     nft.on("WaveRevealed", listener);
   });
 }
@@ -213,111 +192,125 @@ async function _waitForWaveRevealed(
 // ── DB update ──────────────────────────────────────────────────────────────────
 
 async function _updateWaveRevealedInDB(
-  waveId: string, waveNum: number, revealUri: string,
-  txHash: string | null, provenanceHash: string | null, startingIndex: number | null,
+  waveId:         string,
+  waveNum:        number,
+  revealUri:      string,
+  txHash:         string | null,
+  provenanceHash: string | null,
+  startingIndex:  number | null,
 ): Promise<void> {
+  // 1. Mark the wave as revealed
   await pool.query(
     `UPDATE nft_waves SET
-        is_revealed      = TRUE,
-        wave_revealed    = TRUE,
-        wave_reveal_uri  = $2,
-        wave_revealed_at = NOW(),
-        last_tx_hash     = COALESCE($3, last_tx_hash),
-        provenance_hash  = COALESCE($4, provenance_hash),
-        starting_index   = COALESCE($5, starting_index),
-        vrf_fulfilled_at = CASE WHEN $3 IS NOT NULL THEN NOW() ELSE vrf_fulfilled_at END,
-        updated_at       = NOW()
+        is_revealed       = TRUE,
+        wave_revealed     = TRUE,
+        wave_reveal_uri   = $2,
+        wave_revealed_at  = NOW(),
+        last_tx_hash      = COALESCE($3, last_tx_hash),
+        provenance_hash   = COALESCE($4, provenance_hash),
+        starting_index    = COALESCE($5, starting_index),
+        vrf_fulfilled_at  = CASE WHEN $3 IS NOT NULL THEN NOW() ELSE vrf_fulfilled_at END,
+        updated_at        = NOW()
       WHERE id = $1::uuid`,
     [waveId, revealUri, txHash, provenanceHash, startingIndex],
   );
-  console.log(`[reveal] Wave ${waveNum} reveal state written to DB`);
+
+  // 2. Customer-minted NFTs (free/paid): mark as revealed in their own records
+  const { rowCount: revealedRows } = await pool.query(
+    `UPDATE nft_records
+        SET is_revealed        = TRUE,
+            revealed_at        = NOW(),
+            delivery_status_id = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = 'revealed'),
+            updated_at         = NOW()
+      WHERE wave_id  = $1::uuid
+        AND token_id IS NOT NULL
+        AND mint_type IN ('free', 'paid')`,
+    [waveId],
+  );
+
+  // 3. Unsold NFTs (no token_id): set to treasury_pending so admin can mint & move them
+  const { rowCount: pendingRows } = await pool.query(
+    `UPDATE nft_records
+        SET delivery_status_id = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = 'treasury_pending'),
+            updated_at         = NOW()
+      WHERE wave_id  = $1::uuid
+        AND token_id IS NULL
+        AND delivery_status_id NOT IN (
+          SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('treasury_pending','treasury_wallet','delivered','transferred')
+        )`,
+    [waveId],
+  );
+
+  console.log(`[reveal] Wave ${waveNum} reveal state synced to DB — ${revealedRows ?? 0} customer NFTs marked revealed, ${pendingRows ?? 0} unsold → treasury_pending`);
 }
 
-// ── Pool-based artwork sync ────────────────────────────────────────────────────
-// Applies VRF rotation to the wave pool and assigns each pool artwork to a
-// sold token row in nft_records.
+// ── Post-reveal metadata sync ──────────────────────────────────────────────────
+// Applies the on-chain shuffle formula to each minted token so nft_records shows
+// the correct (randomly-assigned) artwork.
 //
-// rotatedPool[j] = pool[(j + startingIndex) % poolSize]
-// Token at wave rank i (sorted by token_id ascending) gets rotatedPool[i]
-// rotatedPool[0..soldCount-1]   → artwork copied to token rows, status → revealed
-// rotatedPool[soldCount..N-1]   → status → treasury_pending (no token yet)
-// Pool table entries deleted after sync.
+// On-chain formula:  artworkEdition = (tokenId + startingIndex) % waveQty + 1
+// The artwork data (image, traits) for edition N is already in nft_records
+// (row with serial_number = '#N'), so no S3 calls are needed here.
+//
+// Read-all-then-write prevents conflicts when multiple tokens swap artwork data.
 
 export async function _syncRevealedMetadata(waveNum: number): Promise<void> {
+  // Load wave: need quantity and startingIndex (set by VRF callback or direct reveal)
   const { rows: waveRows } = await pool.query<{
-    id: string; quantity: number; starting_index: number | null;
+    quantity:       number;
+    starting_index: number | null;
   }>(
-    "SELECT id, quantity, starting_index FROM nft_waves WHERE wave_number = $1",
+    `SELECT quantity, starting_index FROM nft_waves WHERE wave_number = $1`,
     [waveNum],
   );
   if (!waveRows.length) return;
-  const { id: waveId, quantity: waveQty, starting_index: startingIndex } = waveRows[0];
+  const { quantity: waveQty, starting_index: startingIndex } = waveRows[0];
 
-  // Load pool
-  const { rows: poolRows } = await pool.query<{
-    pool_index: number; nft_record_id: string; serial_number: string;
-  }>(
-    "SELECT pool_index, nft_record_id, serial_number FROM nft_wave_pool WHERE wave_number=$1 ORDER BY pool_index ASC",
+  // All minted tokens for this wave
+  const { rows: mintedTokens } = await pool.query<{ id: string; token_id: number }>(
+    `SELECT id, token_id FROM nft_records WHERE on_chain_wave_num = $1 AND token_id IS NOT NULL`,
     [waveNum],
   );
-
-  if (!poolRows.length) {
-    console.warn(`[reveal] Wave ${waveNum}: no pool found — falling back to sequential formula`);
-    await _syncRevealedMetadataLegacy(waveNum, waveQty, startingIndex);
+  if (!mintedTokens.length) {
+    console.log(`[reveal] Wave ${waveNum}: no minted tokens to sync metadata for`);
     return;
   }
 
-  // Load sold tokens sorted by token_id (wave rank order)
-  const { rows: soldTokens } = await pool.query<{ id: string; token_id: number }>(
-    `SELECT id, token_id FROM nft_records
-     WHERE on_chain_wave_num=$1 AND token_id IS NOT NULL ORDER BY token_id ASC`,
-    [waveNum],
-  );
+  console.log(`[reveal] Wave ${waveNum}: syncing artwork for ${mintedTokens.length} tokens (startingIndex=${startingIndex ?? "none"})…`);
 
-  const poolSize  = poolRows.length;
-  const soldCount = soldTokens.length;
-  const si        = Number(startingIndex ?? 0);
+  // Compute which artwork edition each token maps to
+  const assignments = mintedTokens.map(({ id, token_id }) => {
+    const artworkEdition = startingIndex != null
+      ? ((token_id + startingIndex) % waveQty) + 1
+      : token_id; // no shuffle (direct reveal / dev mode) — token maps to same edition number
+    return { id, token_id, artworkEdition };
+  });
 
-  console.log(`[reveal] Wave ${waveNum}: pool=${poolSize}, sold=${soldCount}, startingIndex=${si}`);
-
-  // VRF rotation: rotatedPool[j] = pool[(j + si) % poolSize]
-  const rotatedPool = Array.from({ length: poolSize }, (_, j) => poolRows[(j + si) % poolSize]);
-
-  // Pre-fetch all artwork data (read snapshot before any writes)
+  // Phase 1: read all artwork data from pre-loaded rows BEFORE any writes
+  const editionSerials = [...new Set(assignments.map(a => `#${a.artworkEdition}`))];
   const { rows: artworkRows } = await pool.query<{
-    id: string;
-    image_ipfs_hash: string | null; metadata_ipfs_hash: string | null;
-    metadata_uri: string | null; blind_box_uri: string | null;
-    traits: Record<string, string> | null;
-    rarity_tier: string | null; rarity_score: number | null; rarity_rank: number | null;
+    serial_number:      string;
+    image_ipfs_hash:    string | null;
+    metadata_ipfs_hash: string | null;
+    metadata_uri:       string | null;
+    blind_box_uri:      string | null;
+    traits:             Record<string, string> | null;
   }>(
-    `SELECT id, image_ipfs_hash, metadata_ipfs_hash, metadata_uri, blind_box_uri, traits,
-            rarity_tier, rarity_score, rarity_rank
-     FROM nft_records WHERE id = ANY($1::uuid[])`,
-    [rotatedPool.map(p => p.nft_record_id)],
+    `SELECT serial_number, image_ipfs_hash, metadata_ipfs_hash, metadata_uri, blind_box_uri, traits
+     FROM nft_records
+     WHERE serial_number = ANY($1::text[])`,
+    [editionSerials],
   );
-  const artworkMap = new Map(artworkRows.map(r => [r.id, r]));
+  const artworkMap = new Map(artworkRows.map(r => [r.serial_number, r]));
 
-  // Delivery status IDs
-  const { rows: statusRows } = await pool.query<{ code: string; id: string }>(
-    `SELECT code, id FROM lookup_values
-     WHERE category='delivery_status' AND code=ANY($1::text[])`,
-    [["revealed", "treasury_pending"]],
-  );
-  const statusId          = new Map(statusRows.map(r => [r.code, r.id]));
-  const revealedId        = statusId.get("revealed")         ?? null;
-  const treasuryPendingId = statusId.get("treasury_pending") ?? null;
-
-  // ── Phase 1: Copy pool artwork → sold token rows ─────────────────────────
-  const usedSourceIds: string[] = [];
+  // Phase 2: write shuffled artwork to each minted token's row
   let synced = 0;
-
-  for (let i = 0; i < soldCount; i++) {
-    const token   = soldTokens[i];
-    const entry   = rotatedPool[i];
-    const artwork = artworkMap.get(entry.nft_record_id);
+  let missing = 0;
+  for (const { id, token_id, artworkEdition } of assignments) {
+    const artwork = artworkMap.get(`#${artworkEdition}`);
     if (!artwork) {
-      console.warn(`[reveal] Wave ${waveNum} token ${token.token_id}: no artwork for ${entry.serial_number}`);
+      missing++;
+      console.warn(`[reveal] Wave ${waveNum} token ${token_id}: no artwork found for edition #${artworkEdition}`);
       continue;
     }
     await pool.query(
@@ -327,100 +320,12 @@ export async function _syncRevealedMetadata(waveNum: number): Promise<void> {
          metadata_uri       = $4,
          blind_box_uri      = COALESCE($5, blind_box_uri),
          traits             = $6,
-         rarity_tier        = COALESCE($8, rarity_tier),
-         rarity_score       = COALESCE($9, rarity_score),
-         rarity_rank        = COALESCE($10, rarity_rank),
-         is_revealed        = TRUE,
-         revealed_at        = NOW(),
-         delivery_status_id = COALESCE($7::uuid, delivery_status_id),
          updated_at         = NOW()
        WHERE id = $1::uuid`,
-      [token.id, artwork.image_ipfs_hash, artwork.metadata_ipfs_hash,
-       artwork.metadata_uri, artwork.blind_box_uri, artwork.traits, revealedId,
-       artwork.rarity_tier, artwork.rarity_score, artwork.rarity_rank],
-    );
-    usedSourceIds.push(entry.nft_record_id);
-    synced++;
-  }
-
-  // Mark source artwork rows as revealed (donated their data to a token)
-  if (usedSourceIds.length > 0 && revealedId) {
-    await pool.query(
-      `UPDATE nft_records SET delivery_status_id=$2::uuid, updated_at=NOW()
-       WHERE id=ANY($1::uuid[])`,
-      [usedSourceIds, revealedId],
-    );
-  }
-
-  // ── Phase 2: Unsold pool entries → treasury_pending ──────────────────────
-  const unsoldEntries = rotatedPool.slice(soldCount);
-  if (unsoldEntries.length > 0) {
-    const unsoldIds = unsoldEntries.map(e => e.nft_record_id);
-    await pool.query(
-      `UPDATE nft_records SET
-         delivery_status_id = COALESCE($2::uuid, delivery_status_id),
-         wave_id            = $3::uuid,
-         updated_at         = NOW()
-       WHERE id = ANY($1::uuid[])`,
-      [unsoldIds, treasuryPendingId, waveId],
-    );
-    console.log(`[reveal] Wave ${waveNum}: ${unsoldEntries.length} artworks → treasury_pending`);
-  }
-
-  // ── Phase 3: Delete pool (cleanup) ───────────────────────────────────────
-  await pool.query("DELETE FROM nft_wave_pool WHERE wave_number=$1", [waveNum]);
-
-  console.log(`[reveal] Wave ${waveNum}: sync done — ${synced} revealed, ${unsoldEntries.length} treasury_pending`);
-}
-
-// ── Legacy fallback: sequential formula (no pool) ─────────────────────────────
-
-async function _syncRevealedMetadataLegacy(
-  waveNum: number, waveQty: number, startingIndex: number | null,
-): Promise<void> {
-  const { rows: mintedTokens } = await pool.query<{ id: string; token_id: number }>(
-    `SELECT id, token_id FROM nft_records WHERE on_chain_wave_num=$1 AND token_id IS NOT NULL`,
-    [waveNum],
-  );
-  if (!mintedTokens.length) return;
-
-  const assignments = mintedTokens.map(({ id, token_id }) => ({
-    id,
-    token_id,
-    artworkEdition: startingIndex != null ? ((token_id + startingIndex) % waveQty) + 1 : token_id,
-  }));
-
-  const editionSerials = [...new Set(assignments.map(a => `#${a.artworkEdition}`))];
-  const { rows: artworkRows } = await pool.query<{
-    serial_number: string; image_ipfs_hash: string | null; metadata_ipfs_hash: string | null;
-    metadata_uri: string | null; blind_box_uri: string | null; traits: Record<string, string> | null;
-    rarity_tier: string | null; rarity_score: number | null; rarity_rank: number | null;
-  }>(
-    `SELECT serial_number, image_ipfs_hash, metadata_ipfs_hash, metadata_uri, blind_box_uri, traits,
-            rarity_tier, rarity_score, rarity_rank
-     FROM nft_records WHERE serial_number=ANY($1::text[])`,
-    [editionSerials],
-  );
-  const artworkMap = new Map(artworkRows.map(r => [r.serial_number, r]));
-
-  let synced = 0;
-  for (const { id, token_id, artworkEdition } of assignments) {
-    const artwork = artworkMap.get(`#${artworkEdition}`);
-    if (!artwork) { console.warn(`[reveal] Wave ${waveNum} token ${token_id}: no artwork #${artworkEdition}`); continue; }
-    await pool.query(
-      `UPDATE nft_records SET
-         image_ipfs_hash=$2, metadata_ipfs_hash=$3, metadata_uri=$4,
-         blind_box_uri=COALESCE($5, blind_box_uri), traits=$6,
-         rarity_tier=COALESCE($7, rarity_tier),
-         rarity_score=COALESCE($8, rarity_score),
-         rarity_rank=COALESCE($9, rarity_rank),
-         is_revealed=TRUE, revealed_at=NOW(), updated_at=NOW()
-       WHERE id=$1::uuid`,
       [id, artwork.image_ipfs_hash, artwork.metadata_ipfs_hash,
-           artwork.metadata_uri, artwork.blind_box_uri, artwork.traits,
-           artwork.rarity_tier, artwork.rarity_score, artwork.rarity_rank],
+           artwork.metadata_uri, artwork.blind_box_uri, artwork.traits],
     );
     synced++;
   }
-  console.log(`[reveal] Wave ${waveNum} (legacy): ${synced} tokens synced`);
+  console.log(`[reveal] Wave ${waveNum}: artwork sync complete — ${synced} updated, ${missing} missing`);
 }

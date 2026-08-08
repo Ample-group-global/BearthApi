@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { requirePermission } from "../../adminAuth";
 import * as nftService from "../../services/nft.service";
 import pool from "../../pool";
@@ -72,7 +72,7 @@ router.get("/:id", async (req, res, next) => {
 // POST /api/nfts/:id/treasury-move
 // Per-token treasury flow for a reserved (unminted) NFT.
 // Calls contractTreasuryClose for the NFT's wave (mints all unsold in wave to recipient).
-// Body: { recipient?: string } — 0x address or omit to use contract's treasury wallet.
+// Body: { recipient?: string } â€” 0x address or omit to use contract's treasury wallet.
 router.post("/:id/treasury-move", async (req, res, next) => {
   try {
     requirePermission(req, "nft.edit");
@@ -92,7 +92,7 @@ router.post("/:id/treasury-move", async (req, res, next) => {
       res.status(400).json({ error: `NFT is not in treasury_pending status (current: ${delivery_status_code})` }); return;
     }
     if (token_id != null) {
-      res.status(400).json({ error: "NFT already minted — use the reveal or treasury-move endpoint instead" }); return;
+      res.status(400).json({ error: "NFT already minted â€” use the reveal or treasury-move endpoint instead" }); return;
     }
     if (wave_number == null) {
       res.status(400).json({ error: "NFT has no wave assigned" }); return;
@@ -105,6 +105,21 @@ router.post("/:id/treasury-move", async (req, res, next) => {
 
     const { contractTreasuryClose } = await import("../../services/contract.service");
     const receipt = await contractTreasuryClose(wave_number, recipient ?? null);
+
+    // Update DB: all unminted treasury_pending NFTs in this wave -> treasury_wallet/transferred
+    const deliveryCode = recipient ? "transferred" : "treasury_wallet";
+    await pool.query(
+      `UPDATE nft_records nr
+          SET delivery_status_id = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = \),
+              delivered_at       = NOW(),
+              updated_at         = NOW()
+        WHERE nr.wave_id = (SELECT id FROM nft_waves WHERE wave_number = \)
+          AND nr.token_id IS NULL
+          AND nr.delivery_status_id IN (
+            SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('treasury_pending','pool_assigned')
+          )`,
+      [wave_number, deliveryCode],
+    );
     res.json({ ok: true, txHash: receipt.hash, waveNumber: wave_number });
   } catch (e) { next(e); }
 });

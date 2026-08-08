@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { ethers } from "ethers";
 import pool from "../../pool";
 import {
@@ -19,7 +19,7 @@ function withChainTimeout<T>(p: Promise<T>, ms = 8000): Promise<T | null> {
   return Promise.race([p, new Promise<null>(resolve => setTimeout(() => resolve(null), ms))]);
 }
 
-// GET /api/nft-sell/waves — list all 7 waves (on-chain enriched, DB fallback)
+// GET /api/nft-sell/waves â€” list all 7 waves (on-chain enriched, DB fallback)
 router.get("/", async (_req, res, next) => {
   try {
     const { rows } = await pool.query("SELECT nft_wave_get_all() AS waves");
@@ -54,7 +54,7 @@ router.get("/", async (_req, res, next) => {
   }
 });
 
-// GET /api/nft-sell/waves/schedule-status — auto-trigger timeline for scheduler page
+// GET /api/nft-sell/waves/schedule-status â€” auto-trigger timeline for scheduler page
 router.get("/schedule-status", async (_req, res, next) => {
   try {
     const { rows } = await pool.query("SELECT * FROM v_wave_schedule_status");
@@ -64,7 +64,7 @@ router.get("/schedule-status", async (_req, res, next) => {
   }
 });
 
-// GET /api/nft-sell/waves/treasury-nfts — list all treasury-held tokens (unsold → owner wallet)
+// GET /api/nft-sell/waves/treasury-nfts â€” list all treasury-held tokens (unsold â†’ owner wallet)
 router.get("/treasury-nfts", async (_req, res, next) => {
   try {
     const { rows } = await pool.query("SELECT nft_treasury_nfts_list()", []);
@@ -75,25 +75,25 @@ router.get("/treasury-nfts", async (_req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/waves/resync — replay all events from block history to rebuild DB.
+// POST /api/nft-sell/waves/resync â€” replay all events from block history to rebuild DB.
 // Returns immediately; resync runs in background so auth/other pools stay healthy.
 router.post("/resync", requireAdmin, async (req, res, next) => {
   try {
     const fromBlock = parseInt(req.body.fromBlock ?? "0", 10);
-    // Fire-and-forget: don't await — prevents pool starvation during long scans
+    // Fire-and-forget: don't await â€” prevents pool starvation during long scans
     resyncFromBlock(fromBlock).catch(e => console.error("[resync] background error", e));
-    res.json({ ok: true, started: true, message: "Resync started in background — check server logs for progress" });
+    res.json({ ok: true, started: true, message: "Resync started in background â€” check server logs for progress" });
   } catch (err) {
     next(err);
   }
 });
 
-// GET /api/nft-sell/waves/:num — single wave (DB + on-chain)
+// GET /api/nft-sell/waves/:num â€” single wave (DB + on-chain)
 router.get("/:num", async (req, res, next) => {
   try {
     const num = parseInt(req.params.num, 10);
     if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1–7" });
+      return res.status(400).json({ error: "Wave number must be 1â€“7" });
 
     const { rows } = await pool.query("SELECT nft_wave_get($1) AS wave", [num]);
     const wave = rows[0]?.wave;
@@ -119,7 +119,7 @@ router.get("/:num", async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/waves/:num/schedule — set wave start/end time on-chain
+// PUT /api/nft-sell/waves/:num/schedule â€” set wave start/end time on-chain
 // Body: { startUnix: number, endUnix: number }
 router.put("/:num/schedule", requireAdmin, async (req, res, next) => {
   try {
@@ -128,7 +128,7 @@ router.put("/:num/schedule", requireAdmin, async (req, res, next) => {
     const endUnix   = parseInt(req.body.endUnix, 10);
 
     if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1–7" });
+      return res.status(400).json({ error: "Wave number must be 1â€“7" });
     if (!startUnix || !endUnix || endUnix <= startUnix)
       return res.status(400).json({ error: "Valid startUnix and endUnix (end > start) required" });
 
@@ -142,18 +142,18 @@ router.put("/:num/schedule", requireAdmin, async (req, res, next) => {
     const cur = curRows[0];
     if (cur?.wave_closed) {
       return res.status(409).json({
-        error: `Wave ${num} is already closed — schedule cannot be changed.`,
+        error: `Wave ${num} is already closed â€” schedule cannot be changed.`,
       });
     }
     if (cur?.wave_start_triggered) {
       return res.status(409).json({
-        error: `Wave ${num} is already active — schedule cannot be changed once the wave has started.`,
+        error: `Wave ${num} is already active â€” schedule cannot be changed once the wave has started.`,
       });
     }
     const curStart = cur?.scheduled_start ? new Date(cur.scheduled_start).getTime() : null;
     if (curStart && now >= curStart) {
       return res.status(409).json({
-        error: `Wave ${num} schedule is locked — the start time has already arrived.`,
+        error: `Wave ${num} schedule is locked â€” the start time has already arrived.`,
       });
     }
 
@@ -166,7 +166,7 @@ router.put("/:num/schedule", requireAdmin, async (req, res, next) => {
       const prevEndMs = prevRows[0]?.scheduled_end ? new Date(prevRows[0].scheduled_end).getTime() : null;
       if (!prevEndMs) {
         return res.status(409).json({
-          error: `Wave ${num - 1} has no schedule yet — set Wave ${num - 1} schedule first.`,
+          error: `Wave ${num - 1} has no schedule yet â€” set Wave ${num - 1} schedule first.`,
         });
       }
       if (startUnix * 1000 <= prevEndMs) {
@@ -199,7 +199,7 @@ router.put("/:num/schedule", requireAdmin, async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/waves/:num/price — set wave price (only before first sale)
+// PUT /api/nft-sell/waves/:num/price â€” set wave price (only before first sale)
 // Body: { priceEth: string }  e.g. "0.0303"
 router.put("/:num/price", requireAdmin, async (req, res, next) => {
   try {
@@ -207,7 +207,7 @@ router.put("/:num/price", requireAdmin, async (req, res, next) => {
     const priceStr = req.body.priceEth as string;
 
     if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1–7" });
+      return res.status(400).json({ error: "Wave number must be 1â€“7" });
     if (!priceStr || isNaN(parseFloat(priceStr)))
       return res.status(400).json({ error: "priceEth (string) required, e.g. '0.0303'" });
 
@@ -219,7 +219,7 @@ router.put("/:num/price", requireAdmin, async (req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/waves/:num/reveal — admin manually reveals a specific wave
+// POST /api/nft-sell/waves/:num/reveal â€” admin manually reveals a specific wave
 // Body: { uri: string }  e.g. "ipfs://Qm..."
 // This path uses executeWaveReveal for random token assignment (Fisher-Yates shuffle)
 router.post("/:num/reveal", requireAdmin, async (req, res, next) => {
@@ -227,7 +227,7 @@ router.post("/:num/reveal", requireAdmin, async (req, res, next) => {
     const num = parseInt(req.params.num, 10);
     const { uri } = req.body as { uri: string };
     if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1–7" });
+      return res.status(400).json({ error: "Wave number must be 1â€“7" });
     if (!uri?.startsWith("ipfs://"))
       return res.status(400).json({ error: "uri must start with ipfs://" });
 
@@ -271,9 +271,10 @@ router.post("/:num/reveal", requireAdmin, async (req, res, next) => {
                   delivered_at       = NOW(),
                   updated_at         = NOW()
             WHERE nr.wave_id = (SELECT id FROM nft_waves WHERE wave_number = $1)
-              AND nr.delivery_status_id IN (
-                SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('treasury_pending','pool_assigned','pending')
-              )`,
+              AND nr.token_id IS NULL
+          AND nr.delivery_status_id IN (
+            SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('treasury_pending','pool_assigned')
+          )`,
           [num],
         );
         await pool.query(
@@ -310,7 +311,7 @@ router.post("/:num/resync-reveal", requireAdmin, async (req, res, next) => {
   try {
     const num = parseInt(req.params.num, 10);
     if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1–7" });
+      return res.status(400).json({ error: "Wave number must be 1â€“7" });
 
     const RPC_URL = process.env.ETH_RPC_URL;
     const CONTRACT_ADDR = process.env.CONTRACT_ADDRESS;
@@ -355,7 +356,7 @@ router.post("/:num/resync-reveal", requireAdmin, async (req, res, next) => {
           const metadataId = parseInt(raw, 10);
           if (!isNaN(metadataId)) {
             // metadataId = _waveFirstTokenId[wave] + (tokenId - firstTokenId + si) % qty
-            // → si = (metadataId - tokenId + qty) % qty  (firstTokenId terms cancel)
+            // â†’ si = (metadataId - tokenId + qty) % qty  (firstTokenId terms cancel)
             startingIndex = ((metadataId - tokenId) % qty + qty) % qty;
           }
         } catch { /* non-fatal */ }
@@ -394,7 +395,7 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
   try {
     const num = parseInt(req.params.num, 10);
     if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1–7" });
+      return res.status(400).json({ error: "Wave number must be 1â€“7" });
 
     const { recipient, revealUri } = req.body as { recipient?: string; revealUri?: string };
     if (recipient && !/^0x[0-9a-fA-F]{40}$/.test(recipient))
@@ -430,7 +431,7 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
           error: `Wave ${num} has not been revealed yet. Reveal the wave first before moving to treasury.`,
         });
       }
-      // 0-minted wave: skip reveal — contract allows treasury-close without waveRevealed
+      // 0-minted wave: skip reveal â€” contract allows treasury-close without waveRevealed
       // when waveSoldCount == 0 (no customers need to see artwork)
     }
 
@@ -444,8 +445,9 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
               delivered_at       = NOW(),
               updated_at         = NOW()
         WHERE nr.wave_id = (SELECT id FROM nft_waves WHERE wave_number = $1)
+          AND nr.token_id IS NULL
           AND nr.delivery_status_id IN (
-            SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('treasury_pending','pool_assigned','pending')
+            SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('treasury_pending','pool_assigned')
           )`,
       [num, deliveryCode],
     );
@@ -471,14 +473,14 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
 });
 
 
-// ── Strategy extensions ────────────────────────────────────────────────────────
+// â”€â”€ Strategy extensions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-// GET /api/nft-sell/waves/:num/holder-snapshot — list current holders for a wave
+// GET /api/nft-sell/waves/:num/holder-snapshot â€” list current holders for a wave
 router.get("/:num/holder-snapshot", async (req, res, next) => {
   try {
     const num = parseInt(req.params.num, 10);
     if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1–7" });
+      return res.status(400).json({ error: "Wave number must be 1â€“7" });
 
     const { rows } = await pool.query("SELECT nft_holder_snapshot($1)", [num]);
     const addresses: string[] = rows[0]?.nft_holder_snapshot ?? [];
@@ -488,12 +490,12 @@ router.get("/:num/holder-snapshot", async (req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/waves/:num/holder-merkle — generate Merkle from holders + set allowlist root on-chain
+// POST /api/nft-sell/waves/:num/holder-merkle â€” generate Merkle from holders + set allowlist root on-chain
 router.post("/:num/holder-merkle", requireAdmin, async (req, res, next) => {
   try {
     const num = parseInt(req.params.num, 10);
     if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1–7" });
+      return res.status(400).json({ error: "Wave number must be 1â€“7" });
 
     const { rows } = await pool.query("SELECT nft_holder_snapshot($1)", [num]);
     const addresses: string[] = rows[0]?.nft_holder_snapshot ?? [];
@@ -518,7 +520,7 @@ router.post("/:num/holder-merkle", requireAdmin, async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/waves/:num/holder-priority — set holder priority window in DB
+// PUT /api/nft-sell/waves/:num/holder-priority â€” set holder priority window in DB
 // Body: { start: string (ISO), end: string (ISO) }
 router.put("/:num/holder-priority", requireAdmin, async (req, res, next) => {
   try {
@@ -526,7 +528,7 @@ router.put("/:num/holder-priority", requireAdmin, async (req, res, next) => {
     const { start, end } = req.body as { start: string; end: string };
 
     if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1–7" });
+      return res.status(400).json({ error: "Wave number must be 1â€“7" });
     if (!start || !end)
       return res.status(400).json({ error: "start and end (ISO datetime) required" });
 
@@ -537,7 +539,7 @@ router.put("/:num/holder-priority", requireAdmin, async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/waves/:num/flash-sale — toggle flash sale + set discount
+// PUT /api/nft-sell/waves/:num/flash-sale â€” toggle flash sale + set discount
 // Body: { is_flash_sale: boolean, flash_discount_pct?: number }
 router.put("/:num/flash-sale", requireAdmin, async (req, res, next) => {
   try {
@@ -547,7 +549,7 @@ router.put("/:num/flash-sale", requireAdmin, async (req, res, next) => {
     };
 
     if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1–7" });
+      return res.status(400).json({ error: "Wave number must be 1â€“7" });
     if (is_flash_sale === undefined)
       return res.status(400).json({ error: "is_flash_sale boolean required" });
     if (is_flash_sale && (!flash_discount_pct || flash_discount_pct <= 0))
@@ -560,7 +562,7 @@ router.put("/:num/flash-sale", requireAdmin, async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/waves/:num/tier-prices — set per-rarity tier prices
+// PUT /api/nft-sell/waves/:num/tier-prices â€” set per-rarity tier prices
 // Body: { tier_prices: { legendary?: number, epic?: number, rare?: number, common?: number } }
 router.put("/:num/tier-prices", requireAdmin, async (req, res, next) => {
   try {
@@ -570,7 +572,7 @@ router.put("/:num/tier-prices", requireAdmin, async (req, res, next) => {
     };
 
     if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1–7" });
+      return res.status(400).json({ error: "Wave number must be 1â€“7" });
     if (!tier_prices || typeof tier_prices !== "object")
       return res.status(400).json({ error: "tier_prices object required" });
 
@@ -581,7 +583,7 @@ router.put("/:num/tier-prices", requireAdmin, async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/waves/:num/artist-config — set artist edition config
+// PUT /api/nft-sell/waves/:num/artist-config â€” set artist edition config
 router.put("/:num/artist-config", requireAdmin, async (req, res, next) => {
   try {
     const num = parseInt(req.params.num, 10);
@@ -591,11 +593,11 @@ router.put("/:num/artist-config", requireAdmin, async (req, res, next) => {
     };
 
     if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1–7" });
+      return res.status(400).json({ error: "Wave number must be 1â€“7" });
     if (!artist_name || !artist_wallet)
       return res.status(400).json({ error: "artist_name and artist_wallet required" });
     if (artist_royalty_bps === undefined || artist_royalty_bps < 0 || artist_royalty_bps > 1000)
-      return res.status(400).json({ error: "artist_royalty_bps must be 0–1000" });
+      return res.status(400).json({ error: "artist_royalty_bps must be 0â€“1000" });
 
     const { rows } = await pool.query("SELECT nft_wave_update_artist_config($1,$2,$3,$4,$5)", [num, artist_name, artist_wallet.toLowerCase(), artist_royalty_bps, is_artist_edition ?? true]);
     res.json({ ok: true, wave: rows[0]?.nft_wave_update_artist_config });
@@ -605,3 +607,4 @@ router.put("/:num/artist-config", requireAdmin, async (req, res, next) => {
 });
 
 export default router;
+

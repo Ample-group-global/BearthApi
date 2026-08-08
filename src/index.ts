@@ -1,4 +1,4 @@
-// Load .env.local if DATABASE_URL is not already set (e.g. started without --env-file)
+﻿// Load .env.local if DATABASE_URL is not already set (e.g. started without --env-file)
 import { config as loadEnv } from "dotenv";
 if (!process.env.DATABASE_URL) loadEnv({ path: ".env.local" });
 
@@ -39,6 +39,7 @@ import nftSellUpgradeRouter         from "./routes/nft-sell/upgrade";
 import nftSellUpgradeNFTRouter      from "./routes/nft-sell/upgrade-nft";
 import nftSellSchedulerRouter       from "./routes/nft-sell/scheduler";
 import nftSellRewardTokenRouter     from "./routes/nft-sell/reward-token";
+import nftSellActivityLogRouter     from "./routes/nft-sell/activity-log";
 import walletsRouter from "./routes/wallets";
 import nftChainRouter from "./routes/nft-chain";
 import nftsRouter from "./routes/nfts";
@@ -55,14 +56,14 @@ const app = express();
 const PORT = Number(process.env.PORT ?? 8000);
 
 // Prevent unhandled promise rejections from crashing the process.
-// IMPORTANT: never log the full error object — ethers.js attaches a `payload`
+// IMPORTANT: never log the full error object â€” ethers.js attaches a `payload`
 // field with the entire JSON-RPC request body. Serialising it synchronously to
 // stderr blocks the Node.js event loop when hundreds of RPC timeouts fire during
 // a blockchain resync, making Express unable to serve any HTTP request.
 process.on("unhandledRejection", (reason) => {
   if (reason instanceof Error) {
     const msg = reason.message ?? "";
-    // Suppress ethers.js / free-RPC noise — caught by resync try/catch;
+    // Suppress ethers.js / free-RPC noise â€” caught by resync try/catch;
     // the unhandledRejection fires at the provider layer before our catch runs.
     if (
       msg.includes("request timed out") ||
@@ -77,14 +78,14 @@ process.on("uncaughtException", (err) => {
   logger.error("[process] Uncaught exception", err);
 });
 
-// ── Middleware ────────────────────────────────────────────────────────────────
+// â”€â”€ Middleware â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const corsOrigins = (process.env.CORS_ORIGINS ?? "http://localhost:3000").split(",").map(s => s.trim());
 app.use(cors({ origin: corsOrigins, credentials: true }));
 app.use(express.json({ limit: "10mb" }));
 app.use(rateLimit({ windowMs: 60_000, limit: 500, standardHeaders: "draft-7", legacyHeaders: false }));
 
-// ── Swagger UI ────────────────────────────────────────────────────────────────
+// â”€â”€ Swagger UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // swagger-ui-express uses express.static() which doesn't work on Vercel serverless
 // (asset requests return HTML). Serve assets from CDN instead.
 
@@ -107,7 +108,7 @@ app.get("/api/docs", (_req, res) => {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>BearthApi — API Docs</title>
+  <title>BearthApi â€” API Docs</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
 </head>
 <body>
@@ -129,7 +130,7 @@ app.get("/api/docs", (_req, res) => {
 </html>`);
 });
 
-// ── Routes ────────────────────────────────────────────────────────────────────
+// â”€â”€ Routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 app.use("/api/auth", authRouter);
 app.use("/api/whitelist", whitelistRouter);
@@ -171,6 +172,7 @@ app.use("/api/nft-sell/upgrade",         nftSellUpgradeRouter);
 app.use("/api/nft-sell/upgrade-nft",    nftSellUpgradeNFTRouter);
 app.use("/api/nft-sell/scheduler",       nftSellSchedulerRouter);
 app.use("/api/nft-sell/reward-token",    nftSellRewardTokenRouter);
+app.use("/api/nft-sell/activity-log",   nftSellActivityLogRouter);
 app.use("/api/wallets",                  walletsRouter);
 app.get("/api/health", async (_req, res) => {
   try {
@@ -185,12 +187,12 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
-// ── Error handler (must be last) ──────────────────────────────────────────────
+// â”€â”€ Error handler (must be last) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 app.use(errorHandler);
 
-// ── Local dev only: start persistent server + recalc merkle root ──────────────
-// On Vercel (serverless) we just export the app — no listen(), no startup logic.
+// â”€â”€ Local dev only: start persistent server + recalc merkle root â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// On Vercel (serverless) we just export the app â€” no listen(), no startup logic.
 
 if (!process.env.VERCEL) {
   async function recalcMerkleOnStartup() {
@@ -229,3 +231,4 @@ if (!process.env.VERCEL) {
 
 // Vercel uses this as the serverless function handler
 export default app;
+
