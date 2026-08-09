@@ -1,7 +1,8 @@
 ﻿import { Router } from "express";
-import { requireAdmin } from "../adminAuth";
+import { requireAdmin, requireRole } from "../adminAuth";
 import * as nftService from "../services/nft.service";
 import pool from "../pool";
+import { logNftActivity } from "../services/nft-log.service";
 
 const router = Router();
 
@@ -135,7 +136,17 @@ router.put("/:id/sbt", requireAdmin, async (req, res, next) => {
     if (!rows[0]) return res.status(404).json({ error: "NFT not found" });
     if (!rows[0].token_id) return res.status(400).json({ error: "Token not yet minted on-chain" });
     const { contractSetTokenSBT } = await import("../services/contract.service");
+    const { userId: sbtActorId } = requireRole(req);
     const receipt = await contractSetTokenSBT(rows[0].token_id, enabled);
+    logNftActivity({
+      tokenId:     rows[0].token_id,
+      action:      enabled ? "soulbound_set" : "soulbound_remove",
+      source:      "on_chain",
+      platform:    "bearth_admin",
+      actorUserId: sbtActorId,
+      txHash:      receipt.hash,
+      details:     { enabled },
+    });
     // DB update is handled automatically via TokenSBTChanged event listener
     res.json({ ok: true, txHash: receipt.hash });
   } catch (err) { next(err); }

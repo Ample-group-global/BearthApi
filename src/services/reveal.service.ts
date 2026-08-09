@@ -1,4 +1,5 @@
 import pool from "../pool";
+import { logNftActivity } from "./nft-log.service";
 import { ethers } from "ethers";
 import GenesisABI from "../abi/BearthGenesisNFT.abi.json";
 import CoordinatorABI from "../abi/BearthRevealCoordinator.abi.json";
@@ -427,6 +428,15 @@ export async function repairTreasuryMintsForWave(waveNum: number): Promise<{ ass
           WHERE id = $1::uuid AND token_id IS NULL`,
       [unassigned[i].id, chainTokenIds[i], waveNum, tokenIdToTxHash.get(chainTokenIds[i]) ?? null],
     );
+    logNftActivity({
+      nftRecordId: unassigned[i].id,
+      tokenId:     chainTokenIds[i],
+      action:      "wave_assigned",
+      source:      "on_chain",
+      platform:    "bearth",
+      txHash:      tokenIdToTxHash.get(chainTokenIds[i]) ?? undefined,
+      details:     { waveNumber: waveNum, repairRun: true },
+    });
     toReveal.push(unassigned[i].id);
     assigned++;
   }

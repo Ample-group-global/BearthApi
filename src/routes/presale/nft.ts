@@ -3,6 +3,7 @@ import { requirePermission } from "../../adminAuth";
 import * as nftService from "../../services/nft.service";
 import pool from "../../pool";
 import { repairTreasuryMintsForWave } from "../../services/reveal.service";
+import { logNftActivity } from "../../services/nft-log.service";
 
 const router = Router();
 
@@ -76,7 +77,7 @@ router.get("/:id", async (req, res, next) => {
 // Body: { recipient?: string } â€” 0x address or omit to use contract's treasury wallet.
 router.post("/:id/treasury-move", async (req, res, next) => {
   try {
-    requirePermission(req, "nft.edit");
+    const { userId: actorId } = requirePermission(req, "nft.edit");
 
     // Validate NFT is reserved and unminted
     const { rows } = await pool.query<{ wave_number: number | null; delivery_status_code: string; token_id: number | null }>(
@@ -133,6 +134,15 @@ router.post("/:id/treasury-move", async (req, res, next) => {
           )`,
       [wave_number, deliveryCode, txHash],
     );
+    logNftActivity({
+      action:      "treasury_move",
+      source:      "on_chain",
+      platform:    "bearth_admin",
+      actorUserId: actorId,
+      txHash:      txHash ?? undefined,
+      details:     { waveNumber: wave_number, deliveryCode, recipient: recipient ?? null },
+    });
+
     // Fire-and-forget repair: assigns token_ids from on-chain Transfer events,
     // marks is_revealed=true, syncs artwork — fixes what nft_record_sync_mint misses
     repairTreasuryMintsForWave(wave_number).catch(e =>

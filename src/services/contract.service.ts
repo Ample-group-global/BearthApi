@@ -2,6 +2,7 @@
 import pool from "../pool";
 import BearthNFT_ABI from "../abi/BearthGenesisNFT.abi.json";
 import { getProvider } from "../utils/contract-factory";
+import { logNftActivity } from "./nft-log.service";
 
 // â”€â”€ Contract singletons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -89,7 +90,7 @@ const CONTRACT_ERROR_MESSAGES: Record<string, string> = {
 
 function decodeContractError(err: unknown): string | null {
   if (!(err instanceof Error)) return null;
-  const raw = err as Record<string, unknown>;
+  const raw = err as unknown as Record<string, unknown>;
   const data =
     (raw["data"] as string | undefined) ??
     ((raw["info"] as Record<string, unknown> | undefined)?.["error"] as Record<string, unknown> | undefined)?.["data"] as string | undefined;
@@ -128,6 +129,22 @@ export async function callContract(
 }
 
 // â”€â”€ DB sync: one event at a time â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+const KNOWN_MARKETPLACES: Record<string, string> = {
+  "0x0000000000000068f116a894984e2db1123eb395": "opensea",
+  "0x00000000000000adc04c56bf30ac9d3c0aaf14dc": "opensea",
+  "0x000000000000ad05ccc4f10045630fb830b95127": "blur",
+  "0x0000000000e655fae4d56241588680f86e3b2377": "looksrare",
+};
+
+async function detectMarketplace(txHash: string): Promise<{ platform: string; source: "on_chain" | "external" }> {
+  try {
+    const tx = await getProvider().getTransaction(txHash);
+    const to = tx?.to?.toLowerCase() ?? "";
+    const platform = KNOWN_MARKETPLACES[to] ?? "bearth";
+    return { platform, source: platform === "bearth" ? "on_chain" : "external" };
+  } catch { return { platform: "bearth", source: "on_chain" }; }
+}
 
 async function syncEvent(
   eventName: string,
@@ -246,15 +263,19 @@ async function syncEvent(
 
       case "Transfer": {
         const [from, to, tokenId] = args as [string, string, bigint];
+        const tokenIdN = Number(tokenId);
         if (from === ethers.ZeroAddress) {
-          // Mint: look up the token's wave on-chain and create the DB record
+          // Mint event — sync DB record and log
           const waveNum: bigint = await getContractReadOnly().tokenWave(tokenId);
           const waveNumN = Number(waveNum);
-          await pool.query("SELECT nft_record_sync_mint($1,$2,$3,$4)", [Number(tokenId), to.toLowerCase(), waveNumN, txHash]);
+          await pool.query("SELECT nft_record_sync_mint($1,$2,$3,$4)", [tokenIdN, to.toLowerCase(), waveNumN, txHash]);
+          logNftActivity({ tokenId: tokenIdN, action: "mint", source: "on_chain", platform: "bearth", toWallet: to.toLowerCase(), txHash, blockNumber, details: { waveNumber: waveNumN } });
           break;
         }
-        if (to === ethers.ZeroAddress) break; // burn â€” token deleted, no action needed
-        await pool.query("SELECT nft_record_sync_transfer($1,$2,$3,$4)", [Number(tokenId), to.toLowerCase(), null, txHash]);
+        if (to === ethers.ZeroAddress) break; // burn — no action needed
+        await pool.query("SELECT nft_record_sync_transfer($1,$2,$3,$4)", [tokenIdN, to.toLowerCase(), null, txHash]);
+        const { platform: mktPlatform, source: mktSource } = await detectMarketplace(txHash);
+        logNftActivity({ tokenId: tokenIdN, action: mktSource === "external" ? "sale" : "transfer", source: mktSource, platform: mktPlatform, fromWallet: from.toLowerCase(), toWallet: to.toLowerCase(), txHash, blockNumber });
         break;
       }
 
@@ -318,7 +339,7 @@ export function startEventListeners(): void {
   const abiEventNames = new Set(
     contract.interface.fragments
       .filter((f) => f.type === "event")
-      .map((f) => (f as { name: string }).name),
+      .map((f) => (f as unknown as { name: string }).name),
   );
 
   let registered = 0;
