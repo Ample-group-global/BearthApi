@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requirePermission } from "../../adminAuth";
 import * as nftService from "../../services/nft.service";
 import pool from "../../pool";
+import { repairTreasuryMintsForWave } from "../../services/reveal.service";
 
 const router = Router();
 
@@ -130,6 +131,12 @@ router.post("/:id/treasury-move", async (req, res, next) => {
           )`,
       [wave_number, deliveryCode],
     );
+    // Fire-and-forget repair: assigns token_ids from on-chain Transfer events,
+    // marks is_revealed=true, syncs artwork — fixes what nft_record_sync_mint misses
+    repairTreasuryMintsForWave(wave_number).catch(e =>
+      console.error(`[treasury-move] repair background error:`, e)
+    );
+
     res.json({ ok: true, txHash, waveNumber: wave_number });
   } catch (e) { next(e); }
 });

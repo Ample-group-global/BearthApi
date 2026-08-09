@@ -329,3 +329,123 @@ export async function _syncRevealedMetadata(waveNum: number): Promise<void> {
   }
   console.log(`[reveal] Wave ${waveNum}: artwork sync complete — ${synced} updated, ${missing} missing`);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// repairTreasuryMintsForWave
+//
+// Called fire-and-forget after contractTreasuryClose to:
+//   1. Scan Transfer mint events (from=0x0) to the treasury recipient address
+//   2. Assign those token_ids to the wave's unassigned treasury records (FIFO)
+//   3. Mark them is_revealed=true + mint_type='treasury'
+//   4. Run _syncRevealedMetadata to populate artwork
+//
+// Safe to re-run — idempotent: records that already have a token_id are skipped.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function repairTreasuryMintsForWave(waveNum: number): Promise<{ assigned: number; revealed: number }> {
+  const CONTRACT_ADDR = process.env.CONTRACT_ADDRESS!;
+  const RPC_URL       = process.env.ETH_RPC_URL ?? process.env.ETH_RPC_URL_MAINNET ?? "";
+  if (!CONTRACT_ADDR || !RPC_URL) {
+    console.warn(`[treasury-repair] Wave ${waveNum}: skipped — ETH_RPC_URL or CONTRACT_ADDRESS not set`);
+    return { assigned: 0, revealed: 0 };
+  }
+
+  // 1. Load wave
+  const { rows: waveRows } = await pool.query<{ id: string; starting_index: number | null }>(
+    `SELECT id, starting_index FROM nft_waves WHERE wave_number = $1`,
+    [waveNum],
+  );
+  if (!waveRows.length) return { assigned: 0, revealed: 0 };
+  const { id: waveId, starting_index: startingIndex } = waveRows[0];
+
+  // 2. Unassigned treasury records — numeric FIFO order
+  const { rows: unassigned } = await pool.query<{ id: string }>(
+    `SELECT nr.id
+         FROM nft_records nr
+         JOIN lookup_values lv ON lv.id = nr.delivery_status_id
+        WHERE nr.wave_id = $1::uuid
+          AND nr.token_id IS NULL
+          AND lv.code IN ('transferred', 'treasury_wallet')
+        ORDER BY REGEXP_REPLACE(nr.serial_number, '[^0-9]', '', 'g')::INTEGER ASC`,
+    [waveId],
+  );
+  if (!unassigned.length) {
+    console.log(`[treasury-repair] Wave ${waveNum}: no unassigned treasury records — already repaired`);
+    return { assigned: 0, revealed: 0 };
+  }
+
+  // 3. Scan Transfer mint events (from=0x0) to treasury recipients
+  const provider        = new ethers.JsonRpcProvider(RPC_URL);
+  const TRANSFER_TOPIC  = ethers.id("Transfer(address,address,uint256)");
+  const ZERO_PADDED     = ethers.zeroPadValue(ethers.ZeroAddress, 32);
+
+  const { rows: recipientRows } = await pool.query<{ addr: string }>(
+    `SELECT DISTINCT treasury_recipient AS addr FROM nft_waves
+       WHERE wave_number = $1 AND treasury_recipient IS NOT NULL`,
+    [waveNum],
+  );
+
+  const tokenIdSet  = new Set<number>();
+  const latestBlock = await provider.getBlockNumber();
+  const fromBlock   = Math.max(0, latestBlock - 150_000);
+  const CHUNK       = 2_000;
+
+  for (const { addr } of recipientRows) {
+    const paddedTo = ethers.zeroPadValue(addr.toLowerCase(), 32);
+    let cursor = fromBlock;
+    while (cursor <= latestBlock) {
+      const end = Math.min(cursor + CHUNK - 1, latestBlock);
+      try {
+        const logs = await provider.getLogs({
+          address:   CONTRACT_ADDR,
+          topics:    [TRANSFER_TOPIC, ZERO_PADDED, paddedTo],
+          fromBlock: cursor,
+          toBlock:   end,
+        });
+        for (const log of logs) tokenIdSet.add(Number(BigInt(log.topics[3])));
+      } catch { /* skip failed chunk */ }
+      cursor = end + 1;
+    }
+  }
+
+  const chainTokenIds = [...tokenIdSet].sort((a, b) => a - b);
+
+  // 4. Assign token_ids (FIFO)
+  let assigned = 0;
+  const toReveal: string[] = [];
+  for (let i = 0; i < Math.min(chainTokenIds.length, unassigned.length); i++) {
+    await pool.query(
+      `UPDATE nft_records
+            SET token_id          = $2,
+                on_chain_wave_num = $3,
+                mint_type         = 'treasury',
+                synced_at         = NOW(),
+                updated_at        = NOW()
+          WHERE id = $1::uuid AND token_id IS NULL`,
+      [unassigned[i].id, chainTokenIds[i], waveNum],
+    );
+    toReveal.push(unassigned[i].id);
+    assigned++;
+  }
+
+  // 5. Mark revealed (preserve delivery_status)
+  let revealed = 0;
+  if (toReveal.length) {
+    const { rowCount } = await pool.query(
+      `UPDATE nft_records
+            SET is_revealed = TRUE,
+                revealed_at = COALESCE(revealed_at, NOW()),
+                updated_at  = NOW()
+          WHERE id = ANY($1::uuid[])`,
+      [toReveal],
+    );
+    revealed = rowCount ?? 0;
+  }
+
+  // 6. Sync artwork metadata
+  if (assigned > 0 && startingIndex != null) {
+    await _syncRevealedMetadata(waveNum);
+  }
+
+  console.log(`[treasury-repair] Wave ${waveNum}: assigned=${assigned}, revealed=${revealed}`);
+  return { assigned, revealed };
+}
