@@ -1,4 +1,4 @@
-﻿import { Router } from "express";
+import { Router } from "express";
 import { requirePermission } from "../../adminAuth";
 import * as nftService from "../../services/nft.service";
 import pool from "../../pool";
@@ -103,24 +103,34 @@ router.post("/:id/treasury-move", async (req, res, next) => {
       res.status(400).json({ error: "recipient must be a valid Ethereum address" }); return;
     }
 
+    const deliveryCode = recipient ? "transferred" : "treasury_wallet";
+
     const { contractTreasuryClose } = await import("../../services/contract.service");
-    const receipt = await contractTreasuryClose(wave_number, recipient ?? null);
+    // Call contract — if wave already closed on-chain (prior session), skip tx and just sync DB
+    let txHash: string | null = null;
+    try {
+      const receipt = await contractTreasuryClose(wave_number, recipient ?? null);
+      txHash = receipt.hash;
+    } catch (err) {
+      const msg = String((err as any)?.reason ?? (err as any)?.message ?? "");
+      if (!msg.includes("WaveAlreadyClosed") && !msg.includes("already been closed")) throw err;
+      // Wave already closed on-chain — fall through to DB sync
+    }
 
     // Update DB: all unminted treasury_pending NFTs in this wave -> treasury_wallet/transferred
-    const deliveryCode = recipient ? "transferred" : "treasury_wallet";
     await pool.query(
       `UPDATE nft_records nr
-          SET delivery_status_id = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = \),
+          SET delivery_status_id = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = $2),
               delivered_at       = NOW(),
               updated_at         = NOW()
-        WHERE nr.wave_id = (SELECT id FROM nft_waves WHERE wave_number = \)
+        WHERE nr.wave_id = (SELECT id FROM nft_waves WHERE wave_number = $1)
           AND nr.token_id IS NULL
           AND nr.delivery_status_id IN (
             SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('treasury_pending','pool_assigned')
           )`,
       [wave_number, deliveryCode],
     );
-    res.json({ ok: true, txHash: receipt.hash, waveNumber: wave_number });
+    res.json({ ok: true, txHash, waveNumber: wave_number });
   } catch (e) { next(e); }
 });
 

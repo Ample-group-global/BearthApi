@@ -281,7 +281,7 @@ export async function _syncRevealedMetadata(waveNum: number): Promise<void> {
   // Compute which artwork edition each token maps to
   const assignments = mintedTokens.map(({ id, token_id }) => {
     const artworkEdition = startingIndex != null
-      ? ((token_id + startingIndex) % waveQty) + 1
+      ? ((token_id - 1 + startingIndex) % waveQty) + 1   // ERC721A tokens start at 1, not 0
       : token_id; // no shuffle (direct reveal / dev mode) — token maps to same edition number
     return { id, token_id, artworkEdition };
   });
