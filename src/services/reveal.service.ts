@@ -418,6 +418,7 @@ export async function repairTreasuryMintsForWave(waveNum: number): Promise<{ ass
             SET token_id          = $2,
                 on_chain_wave_num = $3,
                 mint_type         = 'treasury',
+                minted_at         = COALESCE(minted_at, NOW()),
                 synced_at         = NOW(),
                 updated_at        = NOW()
           WHERE id = $1::uuid AND token_id IS NULL`,

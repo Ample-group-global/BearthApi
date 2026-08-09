@@ -123,13 +123,15 @@ router.post("/:id/treasury-move", async (req, res, next) => {
       `UPDATE nft_records nr
           SET delivery_status_id = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = $2),
               delivered_at       = NOW(),
+              minted_at          = COALESCE(minted_at, NOW()),
+              mint_tx_hash       = COALESCE(mint_tx_hash, $3),
               updated_at         = NOW()
         WHERE nr.wave_id = (SELECT id FROM nft_waves WHERE wave_number = $1)
           AND nr.token_id IS NULL
           AND nr.delivery_status_id IN (
             SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('treasury_pending','pool_assigned')
           )`,
-      [wave_number, deliveryCode],
+      [wave_number, deliveryCode, txHash],
     );
     // Fire-and-forget repair: assigns token_ids from on-chain Transfer events,
     // marks is_revealed=true, syncs artwork — fixes what nft_record_sync_mint misses
