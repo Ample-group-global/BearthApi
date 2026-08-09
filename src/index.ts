@@ -48,6 +48,7 @@ import filebaseRouter from "./routes/filebase";
 import { startEventListeners } from "./services/contract.service";
 import { startWaveAutoTrigger } from "./services/wave-auto-trigger.service";
 import pool from "./pool";
+import { runPendingMigrations } from "./services/auto-migrate.service";
 import { buildMerkleTree } from "./merkle";
 import { errorHandler } from "./errorHandler";
 import { logger } from "./logger";
@@ -217,16 +218,24 @@ if (!process.env.VERCEL) {
     }
   }
 
-  app.listen(PORT, () => {
-    console.log(`BearthApi listening on port ${PORT}`);
-    recalcMerkleOnStartup().catch(e => console.warn("Startup Merkle recalc failed:", e));
-    if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL) {
-      // Delay 30 s so the auth pool is free for login requests on fresh startup
-      // before the Sepolia event listeners begin polling.
-      setTimeout(() => startEventListeners(), 30_000);
-    }
-    startWaveAutoTrigger();
-  });
+  // Auto-apply any pending DB patch files, then start the server
+  (async () => {
+    await runPendingMigrations().catch(e => {
+      console.error("[migrate] FATAL: migration failed on startup:", e.message);
+      process.exit(1);
+    });
+
+    app.listen(PORT, () => {
+      console.log(`BearthApi listening on port ${PORT}`);
+      recalcMerkleOnStartup().catch(e => console.warn("Startup Merkle recalc failed:", e));
+      if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL) {
+        // Delay 30 s so the auth pool is free for login requests on fresh startup
+        // before the Sepolia event listeners begin polling.
+        setTimeout(() => startEventListeners(), 30_000);
+      }
+      startWaveAutoTrigger();
+    });
+  })();
 }
 
 // Vercel uses this as the serverless function handler
