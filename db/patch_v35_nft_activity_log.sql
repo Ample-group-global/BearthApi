@@ -3,7 +3,9 @@
 -- source: 'on_chain' | 'off_chain' | 'external'
 -- platform: 'bearth' | 'bearth_admin' | 'opensea' | 'blur' | 'looksrare' | 'other'
 
-CREATE TABLE IF NOT EXISTS nft_activity_log (
+DROP TABLE IF EXISTS nft_activity_log CASCADE;
+
+CREATE TABLE nft_activity_log (
   id             UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   nft_record_id  UUID          REFERENCES nft_records(id) ON DELETE SET NULL,
   token_id       INTEGER,
