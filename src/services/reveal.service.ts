@@ -368,12 +368,9 @@ export async function repairTreasuryMintsForWave(waveNum: number): Promise<{ ass
         ORDER BY REGEXP_REPLACE(nr.serial_number, '[^0-9]', '', 'g')::INTEGER ASC`,
     [waveId],
   );
-  if (!unassigned.length) {
-    console.log(`[treasury-repair] Wave ${waveNum}: no unassigned treasury records — already repaired`);
-    return { assigned: 0, revealed: 0 };
-  }
-
   // 3. Scan Transfer mint events (from=0x0) to treasury recipients
+  // Note: always scan even when unassigned=0 so we can backfill mint_tx_hash
+  // for already-assigned records that were processed before tx hash capture was added
   const provider        = new ethers.JsonRpcProvider(RPC_URL);
   const TRANSFER_TOPIC  = ethers.id("Transfer(address,address,uint256)");
   const ZERO_PADDED     = ethers.zeroPadValue(ethers.ZeroAddress, 32);
@@ -384,7 +381,8 @@ export async function repairTreasuryMintsForWave(waveNum: number): Promise<{ ass
     [waveNum],
   );
 
-  const tokenIdSet  = new Set<number>();
+  const tokenIdSet    = new Set<number>();
+  const tokenIdToTxHash = new Map<number, string>();
   const latestBlock = await provider.getBlockNumber();
   const fromBlock   = Math.max(0, latestBlock - 150_000);
   const CHUNK       = 2_000;
@@ -401,7 +399,11 @@ export async function repairTreasuryMintsForWave(waveNum: number): Promise<{ ass
           fromBlock: cursor,
           toBlock:   end,
         });
-        for (const log of logs) tokenIdSet.add(Number(BigInt(log.topics[3])));
+        for (const log of logs) {
+          const tokenId = Number(BigInt(log.topics[3]));
+          tokenIdSet.add(tokenId);
+          tokenIdToTxHash.set(tokenId, log.transactionHash);
+        }
       } catch { /* skip failed chunk */ }
       cursor = end + 1;
     }
@@ -419,13 +421,38 @@ export async function repairTreasuryMintsForWave(waveNum: number): Promise<{ ass
                 on_chain_wave_num = $3,
                 mint_type         = 'treasury',
                 minted_at         = COALESCE(minted_at, NOW()),
+                mint_tx_hash      = COALESCE(mint_tx_hash, $4),
                 synced_at         = NOW(),
                 updated_at        = NOW()
           WHERE id = $1::uuid AND token_id IS NULL`,
-      [unassigned[i].id, chainTokenIds[i], waveNum],
+      [unassigned[i].id, chainTokenIds[i], waveNum, tokenIdToTxHash.get(chainTokenIds[i]) ?? null],
     );
     toReveal.push(unassigned[i].id);
     assigned++;
+  }
+
+  // 4b. Backfill mint_tx_hash for already-assigned treasury records missing it
+  if (tokenIdToTxHash.size > 0) {
+    const { rows: needsTxHash } = await pool.query<{ id: string; token_id: number }>(
+      `SELECT nr.id, nr.token_id
+           FROM nft_records nr
+           JOIN lookup_values lv ON lv.id = nr.delivery_status_id
+          WHERE nr.wave_id = $1::uuid
+            AND nr.token_id IS NOT NULL
+            AND nr.mint_tx_hash IS NULL
+            AND lv.code IN ('transferred', 'treasury_wallet')`,
+      [waveId],
+    );
+    for (const row of needsTxHash) {
+      const txHash = tokenIdToTxHash.get(row.token_id);
+      if (!txHash) continue;
+      await pool.query(
+        `UPDATE nft_records SET mint_tx_hash = $2, updated_at = NOW() WHERE id = $1::uuid`,
+        [row.id, txHash],
+      );
+    }
+    if (needsTxHash.length > 0)
+      console.log(`[treasury-repair] Wave ${waveNum}: backfilled mint_tx_hash for ${needsTxHash.length} existing record(s)`);
   }
 
   // 5. Mark revealed (preserve delivery_status)
