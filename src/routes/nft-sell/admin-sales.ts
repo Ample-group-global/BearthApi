@@ -4,42 +4,35 @@ import { contractReserveMint } from "../../services/contract.service";
 import { requireAdmin } from "../../adminAuth";
 
 const router = Router();
-
-// Fetch enabled sale mode codes from DB (never hardcoded)
 async function getEnabledSaleModes(): Promise<string[]> {
   const { rows } = await pool.query("SELECT code FROM lookup_values WHERE category = 'nft_sale_mode' AND is_active = TRUE ORDER BY sort_order", []);
   return rows.map((r: { code: string }) => r.code);
 }
-
-// Fetch enabled currency codes from DB (never hardcoded)
 async function getEnabledCurrencies(): Promise<string[]> {
   const { rows } = await pool.query("SELECT code FROM lookup_values WHERE category = 'nft_payment_currency' AND is_active = TRUE ORDER BY sort_order", []);
   return rows.map((r: { code: string }) => r.code);
 }
-
-// GET /api/nft-sell/admin-sales/history — mint & sales history from nft_records
-// Query: ?wave=1  &wallet=0x...  &from=2026-01-01  &to=2026-12-31  &limit=50  &offset=0
 router.get("/history", async (req, res, next) => {
   try {
-    const limit  = Math.min(parseInt(req.query.limit  as string || "50",  10), 500);
-    const offset = parseInt(req.query.offset as string || "0",  10);
-    const wave   = req.query.wave   as string | undefined;
+    const limit = Math.min(parseInt(req.query.limit as string || "50", 10), 500);
+    const offset = parseInt(req.query.offset as string || "0", 10);
+    const wave = req.query.wave as string | undefined;
     const wallet = req.query.wallet as string | undefined;
-    const from   = req.query.from   as string | undefined;
-    const to     = req.query.to     as string | undefined;
+    const from = req.query.from as string | undefined;
+    const to = req.query.to as string | undefined;
 
     const conditions: string[] = ["r.mint_tx_hash IS NOT NULL"];
-    const params: unknown[]    = [];
+    const params: unknown[] = [];
 
-    if (wave)   { params.push(parseInt(wave, 10)); conditions.push(`r.on_chain_wave_num = $${params.length}`); }
+    if (wave) { params.push(parseInt(wave, 10)); conditions.push(`r.on_chain_wave_num = $${params.length}`); }
     if (wallet) { params.push(`%${wallet.toLowerCase()}%`); conditions.push(`LOWER(r.owner_address) LIKE $${params.length}`); }
-    if (from)   { params.push(from); conditions.push(`r.minted_at >= $${params.length}::date`); }
-    if (to)     { params.push(to);   conditions.push(`r.minted_at <  ($${params.length}::date + interval '1 day')`); }
+    if (from) { params.push(from); conditions.push(`r.minted_at >= $${params.length}::date`); }
+    if (to) { params.push(to); conditions.push(`r.minted_at <  ($${params.length}::date + interval '1 day')`); }
 
     const where = conditions.join(" AND ");
 
     params.push(limit, offset);
-    const limitIdx  = params.length - 1;
+    const limitIdx = params.length - 1;
     const offsetIdx = params.length;
 
     const { rows } = await pool.query(
@@ -72,7 +65,6 @@ router.get("/history", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /api/nft-sell/admin-sales/history/summary — totals by wave
 router.get("/history/summary", async (_req, res, next) => {
   try {
     const { rows } = await pool.query(`
@@ -91,14 +83,12 @@ router.get("/history/summary", async (_req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /api/nft-sell/admin-sales — list all admin-recorded sales (paginated)
-// Query: ?status=pending|minted|failed|refunded  &mode=offline_cash  &limit=50  &offset=0
 router.get("/", async (req, res, next) => {
   try {
-    const limit  = Math.min(parseInt(req.query.limit  as string ?? "50", 10), 200);
+    const limit = Math.min(parseInt(req.query.limit as string ?? "50", 10), 200);
     const offset = parseInt(req.query.offset as string ?? "0", 10);
     const status = req.query.status as string | undefined;
-    const mode   = req.query.mode   as string | undefined;
+    const mode = req.query.mode as string | undefined;
 
     const { rows } = await pool.query("SELECT * FROM nft_admin_sales_list($1,$2,$3,$4)", [limit, offset, status ?? null, mode ?? null]);
     const total = rows[0]?.total_count ? Number(rows[0].total_count) : 0;
@@ -108,7 +98,6 @@ router.get("/", async (req, res, next) => {
   }
 });
 
-// GET /api/nft-sell/admin-sales/revenue — revenue summary across all modes
 router.get("/revenue", async (_req, res, next) => {
   try {
     const { rows } = await pool.query("SELECT * FROM nft_revenue_summary()", []);
@@ -118,19 +107,6 @@ router.get("/revenue", async (_req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/admin-sales — record a sale AND mint on-chain in one step
-// Body: {
-//   saleMode: "offline_cash" | "bank_transfer" | "gift" | ... (see VALID_MODES),
-//   buyerAddress: "0x...",
-//   quantity: 1,
-//   amountPaidEth: "0.0303",   // string, optional for gifts
-//   paymentCurrency: "ETH",    // ETH | USD | SGD | USDT | ...
-//   paymentRef: "INV-001",     // invoice #, bank ref, etc. (optional)
-//   waveNumber: 2,             // which wave to mint from (default 2)
-//   notes: "Sold at Singapore event",
-//   createdBy: "0xAdminWallet",
-//   mintNow: true,             // if true, call adminMint immediately; if false, save as pending
-// }
 router.post("/", requireAdmin, async (req, res, next) => {
   try {
     const {
@@ -151,7 +127,6 @@ router.post("/", requireAdmin, async (req, res, next) => {
       mintNow?: boolean;
     };
 
-    // Validate against DB (never hardcoded lists)
     const [validModes, validCurrencies] = await Promise.all([
       getEnabledSaleModes(),
       getEnabledCurrencies(),
@@ -172,20 +147,16 @@ router.post("/", requireAdmin, async (req, res, next) => {
     if (amountPaidEth && isNaN(amountEth!))
       return res.status(400).json({ error: "amountPaidEth must be a numeric string" });
 
-    // Create DB record (status=pending)
     const { rows: [{ nft_admin_sale_create: saleId }] } = await pool.query("SELECT nft_admin_sale_create($1,$2,$3,$4,$5,$6,$7,$8,$9)", [saleMode, buyerAddress, quantity, amountEth ?? null, currencyUpper, paymentRef ?? null, waveNumber, notes ?? null, createdBy ?? null]);
 
     if (!mintNow) {
       return res.json({ ok: true, saleId, status: "pending", minted: false });
     }
-
-    // Mint on-chain immediately
     let txHash: string;
     try {
       const receipt = await contractReserveMint(buyerAddress, quantity);
       txHash = receipt.hash;
     } catch (mintErr) {
-      // Mark sale as failed — don't delete so admin can retry
       await pool.query("SELECT nft_admin_sale_mark_failed($1,$2)", [saleId, mintErr instanceof Error ? mintErr.message : String(mintErr)]).catch(() => null);
       throw mintErr;
     }
@@ -197,13 +168,9 @@ router.post("/", requireAdmin, async (req, res, next) => {
     next(err);
   }
 });
-
-// POST /api/nft-sell/admin-sales/:id/mint — mint a previously pending sale
 router.post("/:id/mint", requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params;
-
-    // Look up the pending sale
     const { rows } = await pool.query("SELECT * FROM nft_admin_sales WHERE id = $1", [id]);
     if (!rows.length) return res.status(404).json({ error: "Sale not found" });
     const sale = rows[0];
@@ -219,7 +186,6 @@ router.post("/:id/mint", requireAdmin, async (req, res, next) => {
   }
 });
 
-// PATCH /api/nft-sell/admin-sales/:id/status — update status (e.g. mark refunded)
 router.patch("/:id/status", requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params;

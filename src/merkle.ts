@@ -1,15 +1,8 @@
 import { keccak256 } from "ethereum-cryptography/keccak";
-
-// Exact port of app/merkle.py — algorithm MUST NOT change:
-// - encodeLeaf: keccak256(solidityPacked(["address"], [addr.lower()]))  (20-byte packed, no padding)
-// - hashPair: sort-before-concat (sortPairs=true), keccak256(lo ++ hi)
-// - odd-leaf promotion (not duplication) — OpenZeppelin-MerkleProof-compatible
-
 function encodeLeaf(address: string): Buffer {
   const bytes = Buffer.from(address.toLowerCase().slice(2), "hex");
   return Buffer.from(keccak256(bytes));
 }
-
 function hashPair(a: Buffer, b: Buffer): Buffer {
   const [lo, hi] = Buffer.compare(a, b) <= 0 ? [a, b] : [b, a];
   return Buffer.from(keccak256(Buffer.concat([lo, hi])));

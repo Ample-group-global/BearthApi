@@ -28,7 +28,6 @@ export async function updateWave(id: string, params: {
     [id, defaultPriceEth ?? null, saleMethod ?? null, scheduledStart ?? null, scheduledEnd ?? null, status ?? null, notes ?? null, clearSchedule ?? false],
   );
 
-  // Apply fields not handled by wave_upsert: reveal date, tier prices, trigger flag resets
   const hasScheduleChange = scheduledStart !== undefined || scheduledEnd !== undefined || clearSchedule;
   if (revealScheduledAt !== undefined || tierPrices !== undefined || hasScheduleChange) {
     await pool.query(
@@ -42,13 +41,13 @@ export async function updateWave(id: string, params: {
        WHERE id = $1::uuid`,
       [
         id,
-        revealScheduledAt !== undefined,  // $2 bool
-        revealScheduledAt ?? null,        // $3
-        tierPrices !== undefined,         // $4 bool
-        tierPrices ? JSON.stringify(tierPrices) : null, // $5
-        hasScheduleChange,                // $6 bool
-        scheduledStart ?? null,           // $7
-        scheduledEnd ?? null,             // $8
+        revealScheduledAt !== undefined,
+        revealScheduledAt ?? null,
+        tierPrices !== undefined,
+        tierPrices ? JSON.stringify(tierPrices) : null,
+        hasScheduleChange,
+        scheduledStart ?? null,
+        scheduledEnd ?? null,
       ],
     );
   }

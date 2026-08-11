@@ -87,9 +87,6 @@ export function requirePermission(req: Request, permission: string): { role: Adm
   }
   return result;
 }
-
-// Express middleware: verifies any valid admin token (admin / ops / tech).
-// Use on write endpoints across all nft-sell routes.
 export function requireAdmin(req: Request, _res: Response, next: NextFunction): void {
   try {
     requireRole(req);
@@ -99,7 +96,6 @@ export function requireAdmin(req: Request, _res: Response, next: NextFunction): 
   }
 }
 
-// Inline guard for tech/admin-only routes — throws HttpError on failure.
 export function requireTech(req: Request): { role: AdminRole; userId: string } {
   const result = requireRole(req);
   if (result.role !== "tech" && result.role !== "admin") {

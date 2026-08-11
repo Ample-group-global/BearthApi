@@ -1,13 +1,7 @@
 import crypto from "crypto";
-
-// Wallet-based HMAC session auth for whitelist admin endpoints.
-// Token format (matches Python app/auth.py exactly):
-//   base64url(JSON{address, exp}) + "." + base64url(HMAC-SHA256)
-
 export const COOKIE_NAME = "admin_session";
-export const COOKIE_MAX_AGE = 86400; // seconds
+export const COOKIE_MAX_AGE = 86400;
 const TTL_MS = 24 * 60 * 60 * 1000;
-
 function sign(data: string): string {
   const secret = process.env.AUTH_SECRET;
   if (!secret) throw new Error("AUTH_SECRET is not set");

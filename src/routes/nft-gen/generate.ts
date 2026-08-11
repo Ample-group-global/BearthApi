@@ -1,23 +1,23 @@
-import { Router }             from "express";
-import { randomUUID }          from "crypto";
-import path                    from "path";
-import fs                      from "fs";
-import { requirePermission }   from "../../adminAuth";
-import pool                    from "../../pool";
-import * as svc                from "../../services/nft-gen.service";
-import { logger }              from "../../logger";
+import { Router } from "express";
+import { randomUUID } from "crypto";
+import path from "path";
+import fs from "fs";
+import { requirePermission } from "../../adminAuth";
+import pool from "../../pool";
+import * as svc from "../../services/nft-gen.service";
+import { logger } from "../../logger";
 
 const router = Router();
 
 // ── In-memory progress map ────────────────────────────────────────────────────
 
 interface GenerateState {
-  status:   'running' | 'done' | 'error';
-  phase:    string;
+  status: 'running' | 'done' | 'error';
+  phase: string;
   progress: number;
-  total:    number;
-  jobId?:   string;
-  error?:   string;
+  total: number;
+  jobId?: string;
+  error?: string;
 }
 const generateJobs = new Map<string, GenerateState>();
 
@@ -27,13 +27,9 @@ router.post("/", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.generate");
     const { collectionId, editionSize } = req.body ?? {};
-    if (!collectionId)        { res.status(422).json({ error: "collectionId is required." }); return; }
+    if (!collectionId) { res.status(422).json({ error: "collectionId is required." }); return; }
     if (!editionSize || Number(editionSize) < 1) { res.status(422).json({ error: "editionSize must be >= 1." }); return; }
-
-    // Generate reads layers+traits from DB and builds combinations in memory.
-    // PNG files are only needed during Export (compositing) — not here.
-    const layersDir = svc.getLocalLayersDir(); // used only for optional weights/conflicts json files
-
+    const layersDir = svc.getLocalLayersDir();
     const generateId = randomUUID();
     generateJobs.set(generateId, { status: "running", phase: "Loading layers…", progress: 0, total: Number(editionSize) });
 
@@ -49,15 +45,11 @@ router.post("/", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// ── GET /:generateId  poll progress ──────────────────────────────────────────
-
 router.get("/:generateId", (req, res) => {
   const state = generateJobs.get(req.params.generateId);
   if (!state) { res.status(404).json({ error: "Generate job not found." }); return; }
   res.json(state);
 });
-
-// ── Combo algorithm (ported from BearthAdmin/lib/studio/combos.ts) ────────────
 
 type Asset = { stem: string; name: string; rel: string | null; defaultWeight: number };
 type Layer = { folder: string; label: string; bypassDna: boolean; rarityPct: number; assets: Asset[] };
@@ -167,7 +159,7 @@ function computeRarity(combos: Record<string, Asset | null>[], layers: Layer[]):
   scored.sort((a, b) => b.score - a.score || a.index - b.index);
   scored.forEach((item, i) => { item.rank = i + 1; });
   for (const item of scored) {
-    if      (item.rank <= Math.ceil(supply * 0.01)) item.tier = "Legendary";
+    if (item.rank <= Math.ceil(supply * 0.01)) item.tier = "Legendary";
     else if (item.rank <= Math.ceil(supply * 0.05)) item.tier = "Epic";
     else if (item.rank <= Math.ceil(supply * 0.15)) item.tier = "Rare";
   }
@@ -175,11 +167,6 @@ function computeRarity(combos: Record<string, Asset | null>[], layers: Layer[]):
 }
 
 // ── Async cleanup — runs fire-and-forget before each new generation ───────────
-// Deletes old completed/failed job records for this collection (excluding the
-// new job). Cascade rules handle nft_generated_items, nft_item_traits, and
-// nft_upload_batches automatically. nft_records.generated_item_id is SET NULL.
-// Permanent config tables (nft_collections, nft_layers, nft_traits) are never touched.
-
 async function cleanOldGenerationData(collectionId: string, newJobId: string): Promise<void> {
   const { rows: oldJobs } = await pool.query<{ id: string }>(
     `SELECT id FROM nft_generation_jobs
@@ -200,7 +187,7 @@ async function cleanOldGenerationData(collectionId: string, newJobId: string): P
 
 // ── Background worker ─────────────────────────────────────────────────────────
 
-const BATCH_SIZE  = 500;
+const BATCH_SIZE = 500;
 const BATCH_CONCUR = 5;
 
 async function runGenerate(generateId: string, collectionId: string, editionSize: number, layersDir: string, createdBy: string | null) {
@@ -224,10 +211,10 @@ async function runGenerate(generateId: string, collectionId: string, editionSize
   );
 
   // 3. Read weights + conflicts from filesystem
-  const weightsPath   = path.join(layersDir, ".weights.json");
+  const weightsPath = path.join(layersDir, ".weights.json");
   const conflictsPath = path.join(layersDir, ".conflicts.json");
   const weights: Record<string, Record<string, number>> =
-    fs.existsSync(weightsPath)   ? JSON.parse(fs.readFileSync(weightsPath,   "utf8")) : {};
+    fs.existsSync(weightsPath) ? JSON.parse(fs.readFileSync(weightsPath, "utf8")) : {};
   const conflicts: ConflictRule[] =
     fs.existsSync(conflictsPath) ? JSON.parse(fs.readFileSync(conflictsPath, "utf8")) : [];
 
@@ -235,14 +222,14 @@ async function runGenerate(generateId: string, collectionId: string, editionSize
   const layers: Layer[] = activeLayers.map((l: any) => {
     const layerTraits = traitRows.filter((t: any) => t.layer_id === l.id);
     return {
-      folder:    l.name,
-      label:     l.display_name,
+      folder: l.name,
+      label: l.display_name,
       bypassDna: l.bypass_dna ?? false,
       rarityPct: l.layer_rarity_pct ?? 100,
       assets: layerTraits.map((t: any) => ({
-        stem:          path.basename(t.file_path, path.extname(t.file_path)),
-        name:          t.name,
-        rel:           t.file_path,
+        stem: path.basename(t.file_path, path.extname(t.file_path)),
+        name: t.name,
+        rel: t.file_path,
         defaultWeight: Number(t.rarity_weight ?? 1),
       })),
     };
@@ -259,18 +246,14 @@ async function runGenerate(generateId: string, collectionId: string, editionSize
 
   // 6. Create + start job
   const jobData = await svc.createJob({ collectionId, editionSize, createdBy: createdBy ?? undefined });
-  const jobId     = jobData?.id ?? jobData;
+  const jobId = jobData?.id ?? jobData;
   if (!jobId) throw new Error("Failed to create generation job in DB.");
   await svc.startJob(String(jobId));
   state.jobId = String(jobId);
 
-  // Fire-and-forget: clean old completed/failed job data for this collection.
-  // Not awaited — generation speed is critical.
   cleanOldGenerationData(collectionId, String(jobId)).catch(err =>
     logger.warn("[generate] cleanup error (non-critical)", err)
   );
-
-  // 7. Batch-save items with concurrency
   state.phase = "Saving to database…";
   const allChunks: ScoredItem[][] = [];
   for (let i = 0; i < scored.length; i += BATCH_SIZE) allChunks.push(scored.slice(i, i + BATCH_SIZE));
@@ -285,21 +268,21 @@ async function runGenerate(generateId: string, collectionId: string, editionSize
           editionNumber: item.index,
           dnaHash: item.dnaHash,
           score: item.score,
-          rank:  item.rank,
-          tier:  item.tier,
+          rank: item.rank,
+          tier: item.tier,
           traits: item.attrs.map(a => ({ traitType: a.trait_type, traitValue: a.value })),
         })),
       })
     ));
     done += group.reduce((s, c) => s + c.length, 0);
     state.progress = done;
-    state.phase    = `Saving to database… ${done} / ${editionSize}`;
+    state.phase = `Saving to database… ${done} / ${editionSize}`;
   }
 
   // 8. Complete job
   await svc.completeJob(String(jobId));
   state.status = "done";
-  state.phase  = `Complete — ${editionSize} NFTs generated`;
+  state.phase = `Complete — ${editionSize} NFTs generated`;
 }
 
 export default router;

@@ -5,7 +5,7 @@ import GenesisABI from "../abi/BearthGenesisNFT.abi.json";
 import CoordinatorABI from "../abi/BearthRevealCoordinator.abi.json";
 
 function getSigner(): ethers.Wallet {
-  const rpcUrl     = process.env.ETH_RPC_URL;
+  const rpcUrl = process.env.ETH_RPC_URL;
   const privateKey = process.env.FIXED_PRIVATE_KEY;
   if (!rpcUrl || !privateKey) throw new Error("ETH_RPC_URL and FIXED_PRIVATE_KEY required for reveal");
   const provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -23,29 +23,10 @@ function getCoordinatorContract(signer: ethers.Wallet): ethers.Contract | null {
   if (!addr) return null;
   return new ethers.Contract(addr, CoordinatorABI, signer);
 }
-
-/**
- * Execute wave reveal — industry-standard Chainlink VRF flow:
- *
- * When REVEAL_COORDINATOR_ADDRESS is set (production):
- *   1. Compute provenance hash = keccak256(baseUri) — proves URI committed before randomness
- *   2. Call coordinator.requestReveal(waveNum, uri) — fires Chainlink VRF request
- *   3. Wait for WaveRevealed event on NFT contract (Chainlink fulfills in 1–3 blocks)
- *   4. VRF callback: sets startingIndex on NFT → calls revealWave → tokenURI shuffled
- *
- * When coordinator not set (dev / testnet without LINK subscription):
- *   - Calls revealWave() directly on NFT contract (no shuffle, sequential tokenURI)
- *
- * tokenURI formula after reveal: (tokenId + startingIndex) % waveQty + 1 → metadata file
- * Fisher-Yates DB shuffle has been removed — randomness is now on-chain and verifiable.
- *
- * Returns txHash of the reveal transaction.
- */
 export async function executeWaveReveal(waveNum: number): Promise<string | null> {
-  // Load wave from DB
   const { rows: waveRows } = await pool.query<{
-    id:              string;
-    wave_number:     number;
+    id: string;
+    wave_number: number;
     wave_reveal_uri: string | null;
   }>(
     "SELECT id, wave_number, wave_reveal_uri FROM nft_waves WHERE wave_number = $1",
@@ -69,8 +50,8 @@ export async function executeWaveReveal(waveNum: number): Promise<string | null>
     return null;
   }
 
-  const signer      = getSigner();
-  const nft         = getGenesisContract(signer);
+  const signer = getSigner();
+  const nft = getGenesisContract(signer);
   const coordinator = getCoordinatorContract(signer);
 
   // ── VRF path (coordinator deployed) ────────────────────────────────────────
@@ -115,20 +96,15 @@ export async function executeWaveReveal(waveNum: number): Promise<string | null>
       [waveNum, provenanceHash, vrfRequestId],
     );
 
-    // Wait for WaveRevealed on NFT contract.
-    // Pass fromBlock so we also catch events already emitted in the same tx
-    // (mock coordinator fulfills synchronously; real VRF takes 1–3 blocks).
     console.log(`[reveal] Wave ${waveNum}: waiting for WaveRevealed event (up to 10 min)…`);
     const txHash = await _waitForWaveRevealed(nft, waveNum, 10 * 60 * 1000, requestReceipt.blockNumber);
     console.log(`[reveal] Wave ${waveNum}: revealed on-chain, tx: ${txHash}`);
-
-    // Read starting index from coordinator (canonical value set by VRF callback)
     let startingIndexNum: number | null = null;
     try {
       const si = await (coordinator.waveStartingIndex as (n: number) => Promise<bigint>)(waveNum);
       startingIndexNum = Number(si);
       console.log(`[reveal] Wave ${waveNum}: startingIndex = ${startingIndexNum}`);
-    } catch { /* coordinator may not expose this if fulfill failed */ }
+    } catch { }
 
     await _updateWaveRevealedInDB(wave.id, waveNum, revealUri, txHash, provenanceHash, startingIndexNum);
     await _syncRevealedMetadata(waveNum);
@@ -159,8 +135,6 @@ async function _waitForWaveRevealed(
   timeoutMs: number,
   fromBlock?: number,
 ): Promise<string> {
-  // Check past events first — handles coordinators that fulfill synchronously
-  // (mock coordinator fires WaveRevealed in the same tx as requestReveal).
   if (fromBlock !== undefined) {
     const pastEvents = await nft.queryFilter(
       nft.filters.WaveRevealed(targetWaveNum),
@@ -193,12 +167,12 @@ async function _waitForWaveRevealed(
 // ── DB update ──────────────────────────────────────────────────────────────────
 
 async function _updateWaveRevealedInDB(
-  waveId:         string,
-  waveNum:        number,
-  revealUri:      string,
-  txHash:         string | null,
+  waveId: string,
+  waveNum: number,
+  revealUri: string,
+  txHash: string | null,
   provenanceHash: string | null,
-  startingIndex:  number | null,
+  startingIndex: number | null,
 ): Promise<void> {
   // 1. Mark the wave as revealed
   await pool.query(
@@ -246,19 +220,9 @@ async function _updateWaveRevealedInDB(
 }
 
 // ── Post-reveal metadata sync ──────────────────────────────────────────────────
-// Applies the on-chain shuffle formula to each minted token so nft_records shows
-// the correct (randomly-assigned) artwork.
-//
-// On-chain formula:  artworkEdition = (tokenId + startingIndex) % waveQty + 1
-// The artwork data (image, traits) for edition N is already in nft_records
-// (row with serial_number = '#N'), so no S3 calls are needed here.
-//
-// Read-all-then-write prevents conflicts when multiple tokens swap artwork data.
-
 export async function _syncRevealedMetadata(waveNum: number): Promise<void> {
-  // Load wave: need quantity and startingIndex (set by VRF callback or direct reveal)
   const { rows: waveRows } = await pool.query<{
-    quantity:       number;
+    quantity: number;
     starting_index: number | null;
   }>(
     `SELECT quantity, starting_index FROM nft_waves WHERE wave_number = $1`,
@@ -282,20 +246,20 @@ export async function _syncRevealedMetadata(waveNum: number): Promise<void> {
   // Compute which artwork edition each token maps to
   const assignments = mintedTokens.map(({ id, token_id }) => {
     const artworkEdition = startingIndex != null
-      ? ((token_id - 1 + startingIndex) % waveQty) + 1   // ERC721A tokens start at 1, not 0
-      : token_id; // no shuffle (direct reveal / dev mode) — token maps to same edition number
+      ? ((token_id - 1 + startingIndex) % waveQty) + 1
+      : token_id;
     return { id, token_id, artworkEdition };
   });
 
   // Phase 1: read all artwork data from pre-loaded rows BEFORE any writes
   const editionSerials = [...new Set(assignments.map(a => `#${a.artworkEdition}`))];
   const { rows: artworkRows } = await pool.query<{
-    serial_number:      string;
-    image_ipfs_hash:    string | null;
+    serial_number: string;
+    image_ipfs_hash: string | null;
     metadata_ipfs_hash: string | null;
-    metadata_uri:       string | null;
-    blind_box_uri:      string | null;
-    traits:             Record<string, string> | null;
+    metadata_uri: string | null;
+    blind_box_uri: string | null;
+    traits: Record<string, string> | null;
   }>(
     `SELECT serial_number, image_ipfs_hash, metadata_ipfs_hash, metadata_uri, blind_box_uri, traits
      FROM nft_records
@@ -324,27 +288,16 @@ export async function _syncRevealedMetadata(waveNum: number): Promise<void> {
          updated_at         = NOW()
        WHERE id = $1::uuid`,
       [id, artwork.image_ipfs_hash, artwork.metadata_ipfs_hash,
-           artwork.metadata_uri, artwork.blind_box_uri, artwork.traits],
+        artwork.metadata_uri, artwork.blind_box_uri, artwork.traits],
     );
     synced++;
   }
   console.log(`[reveal] Wave ${waveNum}: artwork sync complete — ${synced} updated, ${missing} missing`);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// repairTreasuryMintsForWave
-//
-// Called fire-and-forget after contractTreasuryClose to:
-//   1. Scan Transfer mint events (from=0x0) to the treasury recipient address
-//   2. Assign those token_ids to the wave's unassigned treasury records (FIFO)
-//   3. Mark them is_revealed=true + mint_type='treasury'
-//   4. Run _syncRevealedMetadata to populate artwork
-//
-// Safe to re-run — idempotent: records that already have a token_id are skipped.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function repairTreasuryMintsForWave(waveNum: number): Promise<{ assigned: number; revealed: number }> {
   const CONTRACT_ADDR = process.env.CONTRACT_ADDRESS!;
-  const RPC_URL       = process.env.ETH_RPC_URL ?? process.env.ETH_RPC_URL_MAINNET ?? "";
+  const RPC_URL = process.env.ETH_RPC_URL ?? process.env.ETH_RPC_URL_MAINNET ?? "";
   if (!CONTRACT_ADDR || !RPC_URL) {
     console.warn(`[treasury-repair] Wave ${waveNum}: skipped — ETH_RPC_URL or CONTRACT_ADDRESS not set`);
     return { assigned: 0, revealed: 0 };
@@ -370,11 +323,9 @@ export async function repairTreasuryMintsForWave(waveNum: number): Promise<{ ass
     [waveId],
   );
   // 3. Scan Transfer mint events (from=0x0) to treasury recipients
-  // Note: always scan even when unassigned=0 so we can backfill mint_tx_hash
-  // for already-assigned records that were processed before tx hash capture was added
-  const provider        = new ethers.JsonRpcProvider(RPC_URL);
-  const TRANSFER_TOPIC  = ethers.id("Transfer(address,address,uint256)");
-  const ZERO_PADDED     = ethers.zeroPadValue(ethers.ZeroAddress, 32);
+  const provider = new ethers.JsonRpcProvider(RPC_URL);
+  const TRANSFER_TOPIC = ethers.id("Transfer(address,address,uint256)");
+  const ZERO_PADDED = ethers.zeroPadValue(ethers.ZeroAddress, 32);
 
   const { rows: recipientRows } = await pool.query<{ addr: string }>(
     `SELECT DISTINCT treasury_recipient AS addr FROM nft_waves
@@ -382,11 +333,11 @@ export async function repairTreasuryMintsForWave(waveNum: number): Promise<{ ass
     [waveNum],
   );
 
-  const tokenIdSet    = new Set<number>();
+  const tokenIdSet = new Set<number>();
   const tokenIdToTxHash = new Map<number, string>();
   const latestBlock = await provider.getBlockNumber();
-  const fromBlock   = Math.max(0, latestBlock - 150_000);
-  const CHUNK       = 2_000;
+  const fromBlock = Math.max(0, latestBlock - 150_000);
+  const CHUNK = 2_000;
 
   for (const { addr } of recipientRows) {
     const paddedTo = ethers.zeroPadValue(addr.toLowerCase(), 32);
@@ -395,10 +346,10 @@ export async function repairTreasuryMintsForWave(waveNum: number): Promise<{ ass
       const end = Math.min(cursor + CHUNK - 1, latestBlock);
       try {
         const logs = await provider.getLogs({
-          address:   CONTRACT_ADDR,
-          topics:    [TRANSFER_TOPIC, ZERO_PADDED, paddedTo],
+          address: CONTRACT_ADDR,
+          topics: [TRANSFER_TOPIC, ZERO_PADDED, paddedTo],
           fromBlock: cursor,
-          toBlock:   end,
+          toBlock: end,
         });
         for (const log of logs) {
           const tokenId = Number(BigInt(log.topics[3]));
@@ -430,12 +381,12 @@ export async function repairTreasuryMintsForWave(waveNum: number): Promise<{ ass
     );
     logNftActivity({
       nftRecordId: unassigned[i].id,
-      tokenId:     chainTokenIds[i],
-      action:      "wave_assigned",
-      source:      "on_chain",
-      platform:    "bearth",
-      txHash:      tokenIdToTxHash.get(chainTokenIds[i]) ?? undefined,
-      details:     { waveNumber: waveNum, repairRun: true },
+      tokenId: chainTokenIds[i],
+      action: "wave_assigned",
+      source: "on_chain",
+      platform: "bearth",
+      txHash: tokenIdToTxHash.get(chainTokenIds[i]) ?? undefined,
+      details: { waveNumber: waveNum, repairRun: true },
     });
     toReveal.push(unassigned[i].id);
     assigned++;

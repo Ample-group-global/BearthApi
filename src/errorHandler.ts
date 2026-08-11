@@ -12,8 +12,6 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
   if (e.code === "P0001") { res.status(400).json({ error: e.message }); return; }
   if (e.code === "P0002") { res.status(404).json({ error: e.message }); return; }
   if (e.code === "23505") { res.status(409).json({ error: "Duplicate entry — " + e.message }); return; }
-
-  // Database connectivity errors — Railway/pg pool timeout or refused connection
   const msg = e.message ?? "";
   if (
     msg.includes("timeout exceeded when trying to connect") ||

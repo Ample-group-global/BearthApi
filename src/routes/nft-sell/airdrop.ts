@@ -13,12 +13,10 @@ import {
 
 const router = Router();
 
-// GET /api/nft-sell/airdrop/quote — preview total ETH required for equal airdrop
-// Query: ?recipientCount=100&amountEachEth=0.01
 router.get("/quote", async (req, res, next) => {
   try {
     const recipientCount = parseInt(req.query.recipientCount as string, 10);
-    const amountEachEth  = req.query.amountEachEth as string;
+    const amountEachEth = req.query.amountEachEth as string;
     if (!recipientCount || !amountEachEth)
       return res.status(400).json({ error: "recipientCount and amountEachEth required" });
     const quote = await airdropQuoteEqual(recipientCount, amountEachEth);
@@ -28,8 +26,6 @@ router.get("/quote", async (req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/airdrop/eth/equal — same ETH to all recipients, all-or-nothing
-// Body: { recipients: string[], amountEachEth: string }
 router.post("/eth/equal", requireAdmin, async (req, res, next) => {
   try {
     const { recipients, amountEachEth } = req.body as {
@@ -47,8 +43,6 @@ router.post("/eth/equal", requireAdmin, async (req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/airdrop/eth/skip-failed — same ETH, skips contracts that can't receive
-// Body: { recipients: string[], amountEachEth: string }
 router.post("/eth/skip-failed", requireAdmin, async (req, res, next) => {
   try {
     const { recipients, amountEachEth } = req.body as {
@@ -66,8 +60,6 @@ router.post("/eth/skip-failed", requireAdmin, async (req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/airdrop/eth/variable — different ETH amount per recipient
-// Body: { recipients: string[], amountsEth: string[] }
 router.post("/eth/variable", requireAdmin, async (req, res, next) => {
   try {
     const { recipients, amountsEth } = req.body as {
@@ -84,10 +76,6 @@ router.post("/eth/variable", requireAdmin, async (req, res, next) => {
     next(err);
   }
 });
-
-// POST /api/nft-sell/airdrop/erc20/equal — same ERC20 amount to all recipients
-// Body: { tokenAddress: string, recipients: string[], amountEachWei: string }
-// Note: caller must approve BearthAirdrop contract on the token before calling this
 router.post("/erc20/equal", requireAdmin, async (req, res, next) => {
   try {
     const { tokenAddress, recipients, amountEachWei } = req.body as {
@@ -103,8 +91,6 @@ router.post("/erc20/equal", requireAdmin, async (req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/airdrop/erc20/variable — different ERC20 amount per recipient
-// Body: { tokenAddress: string, recipients: string[], amountsWei: string[] }
 router.post("/erc20/variable", requireAdmin, async (req, res, next) => {
   try {
     const { tokenAddress, recipients, amountsWei } = req.body as {
@@ -121,10 +107,6 @@ router.post("/erc20/variable", requireAdmin, async (req, res, next) => {
     next(err);
   }
 });
-
-// POST /api/nft-sell/airdrop/nft — airdrop specific ERC721 token IDs to recipients
-// Body: { tokenAddress: string, recipients: string[], tokenIds: number[] }
-// Note: caller must setApprovalForAll on tokenAddress to BearthAirdrop contract first
 router.post("/nft", requireAdmin, async (req, res, next) => {
   try {
     const { tokenAddress, recipients, tokenIds } = req.body as {
@@ -141,9 +123,6 @@ router.post("/nft", requireAdmin, async (req, res, next) => {
     next(err);
   }
 });
-
-// POST /api/nft-sell/airdrop/rescue — sweep any stuck ETH from the airdrop contract
-// Body: { to: string }
 router.post("/rescue", requireAdmin, async (req, res, next) => {
   try {
     const { to } = req.body as { to: string };

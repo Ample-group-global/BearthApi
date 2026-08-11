@@ -1,79 +1,68 @@
-import { Router }                                                from "express";
+import { Router } from "express";
 import { PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
-import { randomUUID }                                            from "crypto";
-import path                                                      from "path";
-import fs                                                        from "fs";
-import os                                                        from "os";
-import { Readable }                                              from "stream";
-import sharp                                                     from "sharp";
-import { requirePermission }                                     from "../../adminAuth";
-import pool                                                      from "../../pool";
-import { getS3Client }                                           from "../../clients/s3";
+import { randomUUID } from "crypto";
+import path from "path";
+import fs from "fs";
+import os from "os";
+import { Readable } from "stream";
+import sharp from "sharp";
+import { requirePermission } from "../../adminAuth";
+import pool from "../../pool";
+import { getS3Client } from "../../clients/s3";
 import { batchUpdateItemIpfsCids, syncGeneratedItemsToNftRecords, getLocalLayersDir } from "../../services/nft-gen.service";
 
 const router = Router();
 
 interface ExportState {
-  status:   'running' | 'done' | 'error';
+  status: 'running' | 'done' | 'error';
   progress: number;
-  total:    number;
-  phase:    string;
-  error?:   string;
+  total: number;
+  phase: string;
+  error?: string;
 }
 
 const exportJobs = new Map<string, ExportState>();
 
 interface PreviewState {
-  status:       'running' | 'done' | 'error';
-  progress:     number;
-  total:        number;
-  phase:        string;
-  validCount:   number;
+  status: 'running' | 'done' | 'error';
+  progress: number;
+  total: number;
+  phase: string;
+  validCount: number;
   invalidItems: Array<{ edition: number; reason: string }>;
-  error?:       string;
+  error?: string;
 }
 
 const previewJobs = new Map<string, PreviewState & { dir: string }>();
 
 // ── Layer fetcher ─────────────────────────────────────────────────────────────
-// Reads raw PNG buffers from local disk (LAYERS_DIR) or Filebase S3 (LAYERS_BUCKET).
-// LAYERS_BUCKET stores the raw trait PNGs at the same relative key as file_path in DB.
-// Returns an async fetcher with its own per-job in-memory cache.
-
 async function streamToBuffer(body: unknown): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     const readable = body as Readable;
     readable.on("data", (c: Buffer) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
-    readable.on("end",  () => resolve(Buffer.concat(chunks)));
+    readable.on("end", () => resolve(Buffer.concat(chunks)));
     readable.on("error", reject);
   });
 }
-
-// Resolves S3 bucket name from either LAYERS_BUCKET or FILEBASE_LAYERS_BUCKET env vars.
 function layersBucket(): string | null {
   return process.env.LAYERS_BUCKET || process.env.FILEBASE_LAYERS_BUCKET || null;
 }
 
 function makeLayerFetcher(layersDir: string | null) {
-  const cache       = new Map<string, Buffer>();
+  const cache = new Map<string, Buffer>();
   const resolvedDir = layersDir ? path.resolve(layersDir) : null;
-  const bucket      = layersBucket();
+  const bucket = layersBucket();
 
   return async function fetchLayerBuf(filePath: string): Promise<Buffer | null> {
     if (cache.has(filePath)) return cache.get(filePath)!;
-
     let buf: Buffer | null = null;
-
-    // 1. Try local disk first (fast path — works in local dev and when LAYERS_DIR is set)
     if (resolvedDir) {
       const abs = path.resolve(resolvedDir, filePath);
       if (abs.startsWith(resolvedDir) && fs.existsSync(abs)) {
         buf = fs.readFileSync(abs);
       }
     }
-
-    // 2. Fall back to Filebase S3 (Railway restarts wipe local disk; uploads always go to S3)
     if (!buf && bucket) {
       try {
         const res = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: filePath }));
@@ -110,7 +99,7 @@ router.post("/", async (req, res, next) => {
       collectionName = "", description = "", nameFormat = "", externalUrl = "",
     } = req.body ?? {};
 
-    if (!jobId)  { res.status(422).json({ error: "jobId is required."  }); return; }
+    if (!jobId) { res.status(422).json({ error: "jobId is required." }); return; }
     if (!bucket) { res.status(422).json({ error: "bucket is required." }); return; }
 
     if (!hasLayerSource()) {
@@ -136,15 +125,15 @@ router.post("/", async (req, res, next) => {
 
     runExport(exportId, jobId, {
       bucket,
-      format:         String(format),
-      width:          Number(width),
-      height:         Number(height),
+      format: String(format),
+      width: Number(width),
+      height: Number(height),
       total,
-      layersDir:      resolveLayersDir(),
+      layersDir: resolveLayersDir(),
       collectionName: String(collectionName),
-      description:    String(description),
-      nameFormat:     String(nameFormat),
-      externalUrl:    String(externalUrl),
+      description: String(description),
+      nameFormat: String(nameFormat),
+      externalUrl: String(externalUrl),
     }).catch(err => {
       const s = exportJobs.get(exportId);
       if (s) { s.status = "error"; s.error = String(err?.message ?? err); }
@@ -231,11 +220,11 @@ router.get("/:exportId", (req, res) => {
 
 // ── Background workers ────────────────────────────────────────────────────────
 
-const BATCH               = 10;
-const CONCURRENCY         = 5;
-const PREVIEW_THUMB       = 64;
+const BATCH = 10;
+const CONCURRENCY = 5;
+const PREVIEW_THUMB = 64;
 const PREVIEW_CONCURRENCY = 20;
-const PREVIEW_BATCH       = 200;
+const PREVIEW_BATCH = 200;
 
 async function pollCid(s3: ReturnType<typeof getS3Client>, bucket: string, key: string, maxMs = 3000): Promise<string> {
   const deadline = Date.now() + maxMs;
@@ -252,17 +241,17 @@ async function pollCid(s3: ReturnType<typeof getS3Client>, bucket: string, key: 
 
 async function runExport(
   exportId: string,
-  jobId:    string,
+  jobId: string,
   opts: {
     bucket: string; format: string; width: number; height: number; total: number;
     layersDir: string | null; collectionName: string; description: string; nameFormat: string; externalUrl: string;
   },
 ) {
   const { bucket, format, width, height, total, layersDir, collectionName, description, nameFormat, externalUrl } = opts;
-  const ext          = format === "webp" ? "webp" : "png";
-  const mime         = ext === "webp" ? "image/webp" : "image/png";
-  const state        = exportJobs.get(exportId)!;
-  const s3           = getS3Client();
+  const ext = format === "webp" ? "webp" : "png";
+  const mime = ext === "webp" ? "image/webp" : "image/png";
+  const state = exportJobs.get(exportId)!;
+  const s3 = getS3Client();
   const fetchLayerBuf = makeLayerFetcher(layersDir);
 
   for (let offset = 0; offset < total; offset += BATCH) {
@@ -271,13 +260,13 @@ async function runExport(
 
     const { rows } = await pool.query<{
       edition_number: number;
-      trait_type:     string;
-      trait_value:    string;
-      file_path:      string | null;
-      sort_order:     number;
-      rarity_score:   string | null;
-      rarity_rank:    string | null;
-      rarity_tier:    string | null;
+      trait_type: string;
+      trait_value: string;
+      file_path: string | null;
+      sort_order: number;
+      rarity_score: string | null;
+      rarity_rank: string | null;
+      rarity_tier: string | null;
     }>(`
       SELECT gi.edition_number, nit.trait_type, nit.trait_value, nt.file_path, nl.sort_order,
              (gi.metadata_json->>'score') AS rarity_score,
@@ -304,10 +293,10 @@ async function runExport(
     for (const row of rows) {
       if (!byEdition.has(row.edition_number)) {
         byEdition.set(row.edition_number, {
-          layers:      [],
+          layers: [],
           rarityScore: parseFloat(row.rarity_score ?? '0') || 0,
-          rarityRank:  parseInt(row.rarity_rank   ?? '0', 10) || 0,
-          rarityTier:  row.rarity_tier ?? 'Common',
+          rarityRank: parseInt(row.rarity_rank ?? '0', 10) || 0,
+          rarityTier: row.rarity_tier ?? 'Common',
         });
       }
       byEdition.get(row.edition_number)!.layers.push(row);
@@ -322,9 +311,9 @@ async function runExport(
 
     async function processOne() {
       while (cursor < editions.length) {
-        const editionNum  = editions[cursor++];
+        const editionNum = editions[cursor++];
         const editionData = byEdition.get(editionNum)!;
-        const layerRows   = editionData.layers;
+        const layerRows = editionData.layers;
         const { rarityScore, rarityRank, rarityTier } = editionData;
 
         // ── 1. Composite ──────────────────────────────────────────────────────
@@ -355,19 +344,19 @@ async function runExport(
         const imgCid = await pollCid(s3, bucket, imgKey);
 
         // ── 3. Build + upload metadata ────────────────────────────────────────
-        const nftName          = applyNameFormat(nameFormat || (collectionName ? `${collectionName} #{{id}}` : "#{{id}}"), editionNum);
-        const attributes       = validLayers.map(l => ({ trait_type: l.trait_type, value: l.trait_value }));
+        const nftName = applyNameFormat(nameFormat || (collectionName ? `${collectionName} #{{id}}` : "#{{id}}"), editionNum);
+        const attributes = validLayers.map(l => ({ trait_type: l.trait_type, value: l.trait_value }));
         const rarityPercentage = total > 0 ? Math.round((rarityRank / total) * 10000) / 100 : 0;
 
         const metaJson = JSON.stringify({
-          name:               nftName,
+          name: nftName,
           description,
-          image:              imgCid ? `ipfs://${imgCid}` : `ipfs://PLACEHOLDER_CID/${editionNum}.${ext}`,
-          edition:            editionNum,
-          rarity_rank:        rarityRank  || editionNum,
-          rarity_score:       rarityScore || 0,
-          rarity_tier:        rarityTier  || 'Common',
-          rarity_percentage:  rarityPercentage,
+          image: imgCid ? `ipfs://${imgCid}` : `ipfs://PLACEHOLDER_CID/${editionNum}.${ext}`,
+          edition: editionNum,
+          rarity_rank: rarityRank || editionNum,
+          rarity_score: rarityScore || 0,
+          rarity_tier: rarityTier || 'Common',
+          rarity_percentage: rarityPercentage,
           ...(externalUrl.trim() ? { external_url: `${externalUrl.trim().replace(/\/$/, "")}/${editionNum}` } : {}),
           attributes,
         }, null, 2);
@@ -394,20 +383,17 @@ async function runExport(
   const synced = await syncGeneratedItemsToNftRecords(jobId);
 
   state.status = "done";
-  state.phase  = `Complete — ${total} NFTs exported to Filebase, ${synced} synced to NFT Records`;
+  state.phase = `Complete — ${total} NFTs exported to Filebase, ${synced} synced to NFT Records`;
 }
 
 async function runPreview(
   previewId: string,
-  jobId:     string,
+  jobId: string,
   opts: { width: number; height: number; total: number; layersDir: string | null; previewDir: string },
 ) {
   const { total, layersDir, previewDir } = opts;
-  const state         = previewJobs.get(previewId)!;
+  const state = previewJobs.get(previewId)!;
   const fetchLayerBuf = makeLayerFetcher(layersDir);
-
-  // Resized thumbnail cache — only ~200-300 unique trait PNGs across 9999 NFTs.
-  // Resize once per unique file_path, reuse the buffer across all editions.
   const resizedCache = new Map<string, Promise<Buffer>>();
   function getResized(filePath: string, raw: Buffer): Promise<Buffer> {
     if (!resizedCache.has(filePath)) {
@@ -425,10 +411,10 @@ async function runPreview(
 
     const { rows } = await pool.query<{
       edition_number: number;
-      trait_type:     string;
-      trait_value:    string;
-      file_path:      string | null;
-      sort_order:     number;
+      trait_type: string;
+      trait_value: string;
+      file_path: string | null;
+      sort_order: number;
     }>(`
       SELECT gi.edition_number, nit.trait_type, nit.trait_value, nt.file_path, nl.sort_order
       FROM   nft_generated_items gi
@@ -466,8 +452,8 @@ async function runPreview(
 
     async function processOnePreview() {
       while (cursor < editions.length) {
-        const editionNum  = editions[cursor++];
-        const layerRows   = byEdition.get(editionNum)!;
+        const editionNum = editions[cursor++];
+        const layerRows = byEdition.get(editionNum)!;
         const validLayers = layerRows.filter(l => l.file_path);
 
         // All resized buffers are already in cache — no expensive decode/resize per NFT
@@ -519,7 +505,7 @@ async function runPreview(
   }
 
   state.status = "done";
-  state.phase  = `Complete — ${state.validCount}/${total} valid${state.invalidItems.length ? `, ${state.invalidItems.length} issues` : ''}`;
+  state.phase = `Complete — ${state.validCount}/${total} valid${state.invalidItems.length ? `, ${state.invalidItems.length} issues` : ''}`;
 }
 
 function applyNameFormat(fmt: string, id: number): string {

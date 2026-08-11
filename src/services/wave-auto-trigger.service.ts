@@ -4,7 +4,6 @@ import {
 } from "./contract.service";
 import { logger } from "../logger";
 
-// Called from startRevealWave in contract.service — we import dynamically to avoid circular deps
 async function getRevealService() {
   const mod = await import("./reveal.service");
   return mod;
@@ -19,16 +18,16 @@ async function checkAndTriggerWaves(): Promise<void> {
     const now = new Date().toISOString();
 
     const { rows: waves } = await pool.query<{
-      id:                    string;
-      wave_number:           number;
-      scheduled_start:       string | null;
-      scheduled_end:         string | null;
-      reveal_scheduled_at:   string | null;
-      wave_start_triggered:  boolean;
-      wave_end_triggered:    boolean;
+      id: string;
+      wave_number: number;
+      scheduled_start: string | null;
+      scheduled_end: string | null;
+      reveal_scheduled_at: string | null;
+      wave_start_triggered: boolean;
+      wave_end_triggered: boolean;
       wave_reveal_triggered: boolean;
-      status:                string;
-      is_revealed:           boolean;
+      status: string;
+      is_revealed: boolean;
     }>(
       `SELECT id, wave_number, scheduled_start, scheduled_end, reveal_scheduled_at,
               wave_start_triggered, wave_end_triggered, wave_reveal_triggered, status, is_revealed
@@ -54,7 +53,7 @@ async function checkAndTriggerWaves(): Promise<void> {
         try {
           if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL && process.env.FIXED_PRIVATE_KEY) {
             const startUnix = Math.floor(new Date(wave.scheduled_start).getTime() / 1000);
-            const endUnix   = wave.scheduled_end
+            const endUnix = wave.scheduled_end
               ? Math.floor(new Date(wave.scheduled_end).getTime() / 1000)
               : startUnix + 86400 * 30; // 30-day fallback if no end set
             await contractSetWaveSchedule(num, startUnix, endUnix);
@@ -77,7 +76,6 @@ async function checkAndTriggerWaves(): Promise<void> {
         }
       }
 
-      // Auto-end: mark wave closed in DB (treasury-close is manual, after reveal)
       if (
         wave.scheduled_end &&
         new Date(wave.scheduled_end) <= new Date(now) &&

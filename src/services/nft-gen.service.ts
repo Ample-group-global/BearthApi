@@ -1,4 +1,4 @@
-import fs   from "fs";
+import fs from "fs";
 import path from "path";
 import pool from "../pool";
 import { toCamel } from "../utils/camel";
@@ -6,9 +6,9 @@ import { S3Client, ListObjectsV2Command, HeadObjectCommand, GetObjectCommand, Pu
 
 const s3 = new S3Client({
   endpoint: "https://s3.filebase.com",
-  region:   "us-east-1",
+  region: "us-east-1",
   credentials: {
-    accessKeyId:     process.env.FILEBASE_ACCESS_KEY!,
+    accessKeyId: process.env.FILEBASE_ACCESS_KEY!,
     secretAccessKey: process.env.FILEBASE_SECRET_KEY!,
   },
   forcePathStyle: true,
@@ -227,7 +227,7 @@ export async function deleteFailedJob(id: string): Promise<boolean> {
   const deleted = (rowCount ?? 0) > 0;
   if (deleted) {
     // Reclaim disk space from cascaded deletes — fire-and-forget, non-blocking
-    pool.query("VACUUM nft_generated_items, nft_item_traits").catch(() => {});
+    pool.query("VACUUM nft_generated_items, nft_item_traits").catch(() => { });
   }
   return deleted;
 }
@@ -299,10 +299,10 @@ export async function insertItemsBatch(params: {
     const editionToId: Record<number, string> = {};
     for (const row of itemRows) editionToId[row.edition_number] = row.id;
 
-    const itemIds: string[]            = [];
-    const traitTypes: string[]         = [];
-    const traitValues: string[]        = [];
-    const rarityTiers: (string|null)[] = [];
+    const itemIds: string[] = [];
+    const traitTypes: string[] = [];
+    const traitValues: string[] = [];
+    const rarityTiers: (string | null)[] = [];
 
     for (const item of items) {
       const itemId = editionToId[item.editionNumber];
@@ -350,7 +350,7 @@ export async function insertItemsBatch(params: {
     await client.query("COMMIT");
     return itemRows.map(r => ({ itemId: r.id as string, editionNumber: r.edition_number as number }));
   } catch (e) {
-    await client.query("ROLLBACK").catch(() => {});
+    await client.query("ROLLBACK").catch(() => { });
     throw e;
   } finally {
     client.release();
@@ -455,20 +455,14 @@ export async function batchUpdateItemIpfsCids(params: {
 }
 
 // ── Sync generated items → nft_records ───────────────────────────────────────
-// Called after Filebase export completes. Promotes every item that has both
-// ipfs_image_cid and ipfs_metadata_cid into nft_records so they appear on the
-// NFT Records page and are available for wave selling.
-// Idempotent: ON CONFLICT updates the IPFS fields if re-run.
-
 export async function syncGeneratedItemsToNftRecords(jobId: string): Promise<number> {
-  // Resolve stage and delivery-status IDs once from lookup_values
   const { rows: lookupRows } = await pool.query(
     `SELECT id, category, code FROM lookup_values
      WHERE (category = 'nft_stage'       AND code = 'genesis')
         OR (category = 'delivery_status' AND code = 'pending')`,
   );
-  const genesisStageId    = lookupRows.find((r: { category: string; code: string }) => r.category === 'nft_stage'       && r.code === 'genesis')?.id as string | undefined;
-  const pendingStatusId   = lookupRows.find((r: { category: string; code: string }) => r.category === 'delivery_status' && r.code === 'pending')?.id as string | undefined;
+  const genesisStageId = lookupRows.find((r: { category: string; code: string }) => r.category === 'nft_stage' && r.code === 'genesis')?.id as string | undefined;
+  const pendingStatusId = lookupRows.find((r: { category: string; code: string }) => r.category === 'delivery_status' && r.code === 'pending')?.id as string | undefined;
 
   if (!genesisStageId || !pendingStatusId) {
     throw new Error("Required lookup values (nft_stage:genesis, delivery_status:pending) not found");
@@ -497,16 +491,16 @@ export async function syncGeneratedItemsToNftRecords(jobId: string): Promise<num
       }
     }
     return {
-      serial_number:       `#${item.edition_number}`,
-      stage_id:            genesisStageId,
-      delivery_status_id:  pendingStatusId,
-      image_ipfs_hash:     item.ipfs_image_cid,
-      metadata_ipfs_hash:  item.ipfs_metadata_cid,
-      metadata_uri:        `ipfs://${item.ipfs_metadata_cid}`,
+      serial_number: `#${item.edition_number}`,
+      stage_id: genesisStageId,
+      delivery_status_id: pendingStatusId,
+      image_ipfs_hash: item.ipfs_image_cid,
+      metadata_ipfs_hash: item.ipfs_metadata_cid,
+      metadata_uri: `ipfs://${item.ipfs_metadata_cid}`,
       traits,
-      rarity_score:        meta.score != null ? Number(meta.score) : null,
-      rarity_rank:         meta.rank  != null ? Number(meta.rank)  : null,
-      rarity_tier:         meta.tier  != null ? String(meta.tier)  : null,
+      rarity_score: meta.score != null ? Number(meta.score) : null,
+      rarity_rank: meta.rank != null ? Number(meta.rank) : null,
+      rarity_tier: meta.tier != null ? String(meta.tier) : null,
     };
   });
 
@@ -544,12 +538,6 @@ export async function syncGeneratedItemsToNftRecords(jobId: string): Promise<num
 }
 
 // ── Sync directly from a Filebase bucket ─────────────────────────────────────
-// Bucket layout:
-//   images/{n}.png                         — NFT image for edition #n
-//   metadata/{n}.json                      — NFT metadata for edition #n
-//   AssetBlindbox/bearthblindboximage1.png — shared blind box image
-//
-// CIDs come from Filebase x-amz-meta-cid header. Traits from metadata JSON body.
 
 async function filebaseHead(bucket: string, key: string): Promise<string | null> {
   try {
@@ -562,8 +550,8 @@ async function filebaseGetJson(
   bucket: string, key: string,
 ): Promise<{ cid: string | null; body: Record<string, unknown> }> {
   try {
-    const r    = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-    const cid  = r.Metadata?.cid ?? null;
+    const r = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    const cid = r.Metadata?.cid ?? null;
     const text = await r.Body?.transformToString();
     return { cid, body: text ? JSON.parse(text) as Record<string, unknown> : {} };
   } catch { return { cid: null, body: {} }; }
@@ -585,11 +573,11 @@ export async function syncFromFilebaseBucket(bucket: string): Promise<{ synced: 
      WHERE (category = 'nft_stage' AND code = 'genesis')
         OR (category = 'delivery_status' AND code = 'pending')`,
   );
-  const genesisStageId  = lv.find(r => r.code === "genesis")?.id  as string | undefined;
-  const pendingStatusId = lv.find(r => r.code === "pending")?.id  as string | undefined;
+  const genesisStageId = lv.find(r => r.code === "genesis")?.id as string | undefined;
+  const pendingStatusId = lv.find(r => r.code === "pending")?.id as string | undefined;
   if (!genesisStageId || !pendingStatusId) throw new Error("Required lookup values not found");
 
-  const bbCid    = await filebaseHead(bucket, "AssetBlindbox/bearthblindboximage1.png");
+  const bbCid = await filebaseHead(bucket, "AssetBlindbox/bearthblindboximage1.png");
   const blindUri = bbCid ? `${FILEBASE_GATEWAY}/${bbCid}` : null;
 
   const imageKeys: string[] = [];
@@ -628,17 +616,17 @@ export async function syncFromFilebaseBucket(bucket: string): Promise<{ synced: 
       ]);
       if (!imageCid || !metaCid) return null;
       return {
-        serial_number:      `#${n}`,
-        stage_id:           genesisStageId,
+        serial_number: `#${n}`,
+        stage_id: genesisStageId,
         delivery_status_id: pendingStatusId,
-        image_ipfs_hash:    imageCid,
+        image_ipfs_hash: imageCid,
         metadata_ipfs_hash: metaCid,
-        metadata_uri:       `ipfs://${metaCid}`,
-        blind_box_uri:      blindUri,
-        traits:             parseFilebaseTraits(metaJson),
-        rarity_score:       metaJson.rarity_score != null ? Number(metaJson.rarity_score) : null,
-        rarity_rank:        metaJson.rarity_rank  != null ? Number(metaJson.rarity_rank)  : null,
-        rarity_tier:        metaJson.rarity_tier  != null ? String(metaJson.rarity_tier)  : null,
+        metadata_uri: `ipfs://${metaCid}`,
+        blind_box_uri: blindUri,
+        traits: parseFilebaseTraits(metaJson),
+        rarity_score: metaJson.rarity_score != null ? Number(metaJson.rarity_score) : null,
+        rarity_rank: metaJson.rarity_rank != null ? Number(metaJson.rarity_rank) : null,
+        rarity_tier: metaJson.rarity_tier != null ? String(metaJson.rarity_tier) : null,
       } as ItemRow;
     }));
     for (const r of results) { if (r) fbRows.push(r); else skipped++; }
@@ -689,7 +677,7 @@ export async function syncAllGeneratedItemsToNftRecords(): Promise<number> {
      WHERE (category = 'nft_stage'       AND code = 'genesis')
         OR (category = 'delivery_status' AND code = 'pending')`,
   );
-  const genesisStageId  = lookupRows.find((r: { category: string; code: string }) => r.category === 'nft_stage'       && r.code === 'genesis')?.id as string | undefined;
+  const genesisStageId = lookupRows.find((r: { category: string; code: string }) => r.category === 'nft_stage' && r.code === 'genesis')?.id as string | undefined;
   const pendingStatusId = lookupRows.find((r: { category: string; code: string }) => r.category === 'delivery_status' && r.code === 'pending')?.id as string | undefined;
 
   if (!genesisStageId || !pendingStatusId) {
@@ -718,16 +706,16 @@ export async function syncAllGeneratedItemsToNftRecords(): Promise<number> {
       }
     }
     return {
-      serial_number:      `#${item.edition_number}`,
-      stage_id:           genesisStageId,
+      serial_number: `#${item.edition_number}`,
+      stage_id: genesisStageId,
       delivery_status_id: pendingStatusId,
-      image_ipfs_hash:    item.ipfs_image_cid,
+      image_ipfs_hash: item.ipfs_image_cid,
       metadata_ipfs_hash: item.ipfs_metadata_cid,
-      metadata_uri:       `ipfs://${item.ipfs_metadata_cid}`,
+      metadata_uri: `ipfs://${item.ipfs_metadata_cid}`,
       traits,
-      rarity_score:       meta.score != null ? Number(meta.score) : null,
-      rarity_rank:        meta.rank  != null ? Number(meta.rank)  : null,
-      rarity_tier:        meta.tier  != null ? String(meta.tier)  : null,
+      rarity_score: meta.score != null ? Number(meta.score) : null,
+      rarity_rank: meta.rank != null ? Number(meta.rank) : null,
+      rarity_tier: meta.tier != null ? String(meta.tier) : null,
     };
   });
 
@@ -776,7 +764,7 @@ export async function fetchLayerImage(rel: string): Promise<Buffer | null> {
 
   // 1. Try local disk first (Railway + local dev both work via getLocalLayersDir)
   const layersDir = getLocalLayersDir();
-  const abs   = path.resolve(layersDir, rel);
+  const abs = path.resolve(layersDir, rel);
   const check = path.relative(path.resolve(layersDir), abs);
   if (!check.startsWith('..') && !path.isAbsolute(check)) {
     try { return fs.readFileSync(abs); } catch { }
@@ -806,9 +794,9 @@ export async function uploadLayerImage(rel: string, buf: Buffer): Promise<void> 
   const ext = rel.split('.').pop()?.toLowerCase() ?? '';
   const bucket = process.env.FILEBASE_LAYERS_BUCKET || 'bearth-layers';
   await s3.send(new PutObjectCommand({
-    Bucket:      bucket,
-    Key:         rel,
-    Body:        buf,
+    Bucket: bucket,
+    Key: rel,
+    Body: buf,
     ContentType: MIME_MAP[ext] ?? 'image/png',
   }));
 }

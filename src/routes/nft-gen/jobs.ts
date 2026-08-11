@@ -5,14 +5,10 @@ import { syncGeneratedItemsToNftRecords, syncAllGeneratedItemsToNftRecords, sync
 import pool from "../../pool";
 
 const router = Router();
-
-// POST /api/nft-gen/jobs/sync-from-filebase — clear nft_records and rebuild from Filebase bucket
-// Body: { bucket: string }  e.g. { "bucket": "bearth-nft-it" }
 router.post("/sync-from-filebase", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.generate");
     const bucket = (req.body?.bucket as string) || process.env.FILEBASE_BUCKET || "bearth-nft-it";
-    // Wipe existing records before re-syncing from Filebase as the authoritative source
     await pool.query("DELETE FROM nft_records");
     const result = await syncFromFilebaseBucket(bucket);
     res.json({ bucket, ...result });
@@ -21,7 +17,6 @@ router.post("/sync-from-filebase", async (req, res, next) => {
   }
 });
 
-// POST /api/nft-gen/jobs/sync-all-records — sync ALL IPFS-ready items across every job
 router.post("/sync-all-records", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.generate");
@@ -31,16 +26,14 @@ router.post("/sync-all-records", async (req, res, next) => {
     next(e);
   }
 });
-
-// GET /api/nft-gen/jobs?collectionId=<uuid>&status=complete — list jobs for a collection
 router.get("/", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.view");
     const collectionId = req.query.collectionId as string;
-    const status       = req.query.status       as string | undefined;
+    const status = req.query.status as string | undefined;
     if (!collectionId) { res.status(422).json({ error: "collectionId is required." }); return; }
     const params: any[] = [collectionId];
-    let   where = "collection_id = $1::uuid";
+    let where = "collection_id = $1::uuid";
     if (status) { params.push(status); where += ` AND status = $${params.length}`; }
     const { rows } = await pool.query(
       `SELECT id, collection_id, edition_size, status, created_at, completed_at
@@ -113,19 +106,17 @@ router.get("/:id/items", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.view");
     const result = await svc.listItems({
-      jobId:  req.params.id,
-      limit:  Number(req.query.limit  ?? 50),
+      jobId: req.params.id,
+      limit: Number(req.query.limit ?? 50),
       offset: Number(req.query.offset ?? 0),
     });
     res.json(result);
   } catch (e) { next(e); }
 });
-
-// Returns items with their trait details and rarity data — used by ExportPanel for display grid
 router.get("/:id/display-items", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.view");
-    const limit  = Math.min(Number(req.query.limit  ?? 50), 10000);
+    const limit = Math.min(Number(req.query.limit ?? 50), 10000);
     const offset = Number(req.query.offset ?? 0);
     const { rows } = await pool.query(`
       SELECT
@@ -148,10 +139,10 @@ router.get("/:id/display-items", async (req, res, next) => {
     res.json({
       items: rows.map(r => ({
         editionNumber: Number(r.edition_number),
-        rarityScore:   r.rarity_score != null ? Number(r.rarity_score) : 0,
-        rarityRank:    r.rarity_rank  != null ? Number(r.rarity_rank)  : Number(r.edition_number),
-        rarityTier:    r.rarity_tier  ?? "Common",
-        traits:        r.traits ?? [],
+        rarityScore: r.rarity_score != null ? Number(r.rarity_score) : 0,
+        rarityRank: r.rarity_rank != null ? Number(r.rarity_rank) : Number(r.edition_number),
+        rarityTier: r.rarity_tier ?? "Common",
+        traits: r.traits ?? [],
       })),
     });
   } catch (e) { next(e); }

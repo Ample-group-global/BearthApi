@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "fs";
-import { join }            from "path";
-import pool                from "../pool";
-import { logger }          from "../logger";
+import { join } from "path";
+import pool from "../pool";
+import { logger } from "../logger";
 
 const DB_DIR = join(__dirname, "../../db");
 
@@ -42,8 +42,6 @@ export async function runPendingMigrations(): Promise<void> {
 
     if (firstInit) {
       // Existing DB: baseline all current patches as already applied so we
-      // never re-run SQL that the DB was manually maintained with.
-      // Detect "existing DB" by checking whether nft_records table is present.
       const { rows: nftCheck } = await client.query<{ exists: boolean }>(`
         SELECT EXISTS (
           SELECT 1 FROM information_schema.tables

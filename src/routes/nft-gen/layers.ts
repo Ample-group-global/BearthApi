@@ -1,16 +1,14 @@
-import fs      from "fs";
-import path    from "path";
-import multer  from "multer";
+import fs from "fs";
+import path from "path";
+import multer from "multer";
 import { Router } from "express";
 import { ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { requirePermission } from "../../adminAuth";
 import * as svc from "../../services/nft-gen.service";
-import { getS3Client }       from "../../clients/s3";
+import { getS3Client } from "../../clients/s3";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
-
-// ── POST /clear-bucket — wipe bearth-layers before a new collection upload ───
 router.post("/clear-bucket", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.manage_layers");
@@ -47,34 +45,27 @@ router.post("/upload", upload.array("files"), async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.manage_layers");
 
-    const layer    = (req.body?.layer ?? "") as string;
+    const layer = (req.body?.layer ?? "") as string;
     const subpaths = ([] as string[]).concat(req.body?.subpaths ?? []);
-    const files    = (req.files ?? []) as Express.Multer.File[];
+    const files = (req.files ?? []) as Express.Multer.File[];
 
     const safe = layer.replace(/[^a-zA-Z0-9\-_]/g, "");
     if (!safe) { res.status(400).json({ error: "layer name required" }); return; }
-
-    // Use LAYERS_DIR on Railway; default to 'layers/' inside BearthApi for local dev
-    const layersDir  = process.env.LAYERS_DIR ?? path.resolve(process.cwd(), "layers");
-    const added:       string[] = [];
-    const s3Uploaded:  string[] = [];
-    const s3Failures:  string[] = [];
+    const layersDir = process.env.LAYERS_DIR ?? path.resolve(process.cwd(), "layers");
+    const added: string[] = [];
+    const s3Uploaded: string[] = [];
+    const s3Failures: string[] = [];
 
     for (let i = 0; i < files.length; i++) {
-      const file    = files[i];
-      const sub     = (subpaths[i] ?? "").replace(/\.\./g, "").replace(/^\//, "");
-      const base    = file.originalname.split(/[\\/]/).pop() ?? file.originalname;
+      const file = files[i];
+      const sub = (subpaths[i] ?? "").replace(/\.\./g, "").replace(/^\//, "");
+      const base = file.originalname.split(/[\\/]/).pop() ?? file.originalname;
       const safeName = base.replace(/[^a-zA-Z0-9.\-_]/g, "_");
       if (!safeName.match(/\.(png|webp|jpg|jpeg|gif)$/i)) continue;
-
       const rel = sub ? `${safe}/${sub}` : `${safe}/${safeName}`;
-
-      // 1. Persist to local disk (always — LAYERS_DIR on Railway, layers/ dir locally)
       const targetDir = path.join(layersDir, safe, path.dirname(sub || safeName));
       fs.mkdirSync(targetDir, { recursive: true });
       fs.writeFileSync(path.join(layersDir, rel), file.buffer);
-
-      // 2. Upload to Filebase S3 so BearthAdmin (Vercel) can serve thumbnails
       try {
         await svc.uploadLayerImage(rel, file.buffer);
         s3Uploaded.push(rel);

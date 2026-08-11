@@ -19,7 +19,7 @@ function withChainTimeout<T>(p: Promise<T>, ms = 8000): Promise<T | null> {
   return Promise.race([p, new Promise<null>(resolve => setTimeout(() => resolve(null), ms))]);
 }
 
-// GET /api/nft-sell/waves â€” list all 7 waves (on-chain enriched, DB fallback)
+// GET /api/nft-sell/waves list all 7 waves (on-chain enriched, DB fallback)
 router.get("/", async (_req, res, next) => {
   try {
     const { rows } = await pool.query("SELECT nft_wave_get_all() AS waves");
@@ -36,14 +36,14 @@ router.get("/", async (_req, res, next) => {
       return {
         ...w,
         onChain: onChain ? {
-          priceEth:  Number(onChain.price) / 1e18,
-          qty:       Number(onChain.qty),
+          priceEth: Number(onChain.price) / 1e18,
+          qty: Number(onChain.qty),
           soldCount: Number(onChain.soldCount),
           startTime: Number(onChain.startTime),
-          endTime:   Number(onChain.endTime),
-          closed:    onChain.closed,
-          active:    onChain.active,
-          revealed:  onChain.revealed,
+          endTime: Number(onChain.endTime),
+          closed: onChain.closed,
+          active: onChain.active,
+          revealed: onChain.revealed,
         } : null,
       };
     });
@@ -54,7 +54,7 @@ router.get("/", async (_req, res, next) => {
   }
 });
 
-// GET /api/nft-sell/waves/schedule-status â€” auto-trigger timeline for scheduler page
+// GET /api/nft-sell/waves/schedule-status auto-trigger timeline for scheduler page
 router.get("/schedule-status", async (_req, res, next) => {
   try {
     const { rows } = await pool.query("SELECT * FROM v_wave_schedule_status");
@@ -64,7 +64,7 @@ router.get("/schedule-status", async (_req, res, next) => {
   }
 });
 
-// GET /api/nft-sell/waves/treasury-nfts â€” list all treasury-held tokens (unsold â†’ owner wallet)
+// GET /api/nft-sell/waves/treasury-nfts list all treasury-held tokens (unsold â†’ owner wallet)
 router.get("/treasury-nfts", async (_req, res, next) => {
   try {
     const { rows } = await pool.query("SELECT nft_treasury_nfts_list()", []);
@@ -75,20 +75,20 @@ router.get("/treasury-nfts", async (_req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/waves/resync â€” replay all events from block history to rebuild DB.
+// POST /api/nft-sell/waves/resync replay all events from block history to rebuild DB.
 // Returns immediately; resync runs in background so auth/other pools stay healthy.
 router.post("/resync", requireAdmin, async (req, res, next) => {
   try {
     const fromBlock = parseInt(req.body.fromBlock ?? "0", 10);
-    // Fire-and-forget: don't await â€” prevents pool starvation during long scans
+    // Fire-and-forget: don't await prevents pool starvation during long scans
     resyncFromBlock(fromBlock).catch(e => console.error("[resync] background error", e));
-    res.json({ ok: true, started: true, message: "Resync started in background â€” check server logs for progress" });
+    res.json({ ok: true, started: true, message: "Resync started in background check server logs for progress" });
   } catch (err) {
     next(err);
   }
 });
 
-// GET /api/nft-sell/waves/:num â€” single wave (DB + on-chain)
+// GET /api/nft-sell/waves/:num single wave (DB + on-chain)
 router.get("/:num", async (req, res, next) => {
   try {
     const num = parseInt(req.params.num, 10);
@@ -102,14 +102,14 @@ router.get("/:num", async (req, res, next) => {
       try {
         const info = await contractGetWaveInfo(num);
         onChain = {
-          price:     ethers.formatEther(info.price),
-          qty:       Number(info.qty),
+          price: ethers.formatEther(info.price),
+          qty: Number(info.qty),
           soldCount: Number(info.soldCount),
           startTime: Number(info.startTime),
-          endTime:   Number(info.endTime),
-          closed:    info.closed,
-          active:    info.active,
-          revealed:  info.revealed,
+          endTime: Number(info.endTime),
+          closed: info.closed,
+          active: info.active,
+          revealed: info.revealed,
         };
       } catch { onChain = null; }
     }
@@ -119,13 +119,13 @@ router.get("/:num", async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/waves/:num/schedule â€” set wave start/end time on-chain
+// PUT /api/nft-sell/waves/:num/schedule set wave start/end time on-chain
 // Body: { startUnix: number, endUnix: number }
 router.put("/:num/schedule", requireAdmin, async (req, res, next) => {
   try {
-    const num       = parseInt(req.params.num, 10);
+    const num = parseInt(req.params.num, 10);
     const startUnix = parseInt(req.body.startUnix, 10);
-    const endUnix   = parseInt(req.body.endUnix, 10);
+    const endUnix = parseInt(req.body.endUnix, 10);
 
     if (isNaN(num) || num < 1 || num > 7)
       return res.status(400).json({ error: "Wave number must be 1â€“7" });
@@ -142,18 +142,18 @@ router.put("/:num/schedule", requireAdmin, async (req, res, next) => {
     const cur = curRows[0];
     if (cur?.wave_closed) {
       return res.status(409).json({
-        error: `Wave ${num} is already closed â€” schedule cannot be changed.`,
+        error: `Wave ${num} is already closed schedule cannot be changed.`,
       });
     }
     if (cur?.wave_start_triggered) {
       return res.status(409).json({
-        error: `Wave ${num} is already active â€” schedule cannot be changed once the wave has started.`,
+        error: `Wave ${num} is already active schedule cannot be changed once the wave has started.`,
       });
     }
     const curStart = cur?.scheduled_start ? new Date(cur.scheduled_start).getTime() : null;
     if (curStart && now >= curStart) {
       return res.status(409).json({
-        error: `Wave ${num} schedule is locked â€” the start time has already arrived.`,
+        error: `Wave ${num} schedule is locked the start time has already arrived.`,
       });
     }
 
@@ -166,7 +166,7 @@ router.put("/:num/schedule", requireAdmin, async (req, res, next) => {
       const prevEndMs = prevRows[0]?.scheduled_end ? new Date(prevRows[0].scheduled_end).getTime() : null;
       if (!prevEndMs) {
         return res.status(409).json({
-          error: `Wave ${num - 1} has no schedule yet â€” set Wave ${num - 1} schedule first.`,
+          error: `Wave ${num - 1} has no schedule yet set Wave ${num - 1} schedule first.`,
         });
       }
       if (startUnix * 1000 <= prevEndMs) {
@@ -180,7 +180,7 @@ router.put("/:num/schedule", requireAdmin, async (req, res, next) => {
 
     // Persist schedule to DB so auto-trigger picks up the right timestamps
     const startIso = new Date(startUnix * 1000).toISOString();
-    const endIso   = new Date(endUnix   * 1000).toISOString();
+    const endIso = new Date(endUnix * 1000).toISOString();
     await pool.query(
       `UPDATE nft_waves
           SET scheduled_start        = $2,
@@ -199,11 +199,11 @@ router.put("/:num/schedule", requireAdmin, async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/waves/:num/price â€” set wave price (only before first sale)
+// PUT /api/nft-sell/waves/:num/price set wave price (only before first sale)
 // Body: { priceEth: string }  e.g. "0.0303"
 router.put("/:num/price", requireAdmin, async (req, res, next) => {
   try {
-    const num      = parseInt(req.params.num, 10);
+    const num = parseInt(req.params.num, 10);
     const priceStr = req.body.priceEth as string;
 
     if (isNaN(num) || num < 1 || num > 7)
@@ -212,14 +212,14 @@ router.put("/:num/price", requireAdmin, async (req, res, next) => {
       return res.status(400).json({ error: "priceEth (string) required, e.g. '0.0303'" });
 
     const priceWei = ethers.parseEther(priceStr);
-    const receipt  = await contractSetWavePrice(num, priceWei);
+    const receipt = await contractSetWavePrice(num, priceWei);
     res.json({ ok: true, txHash: receipt.hash });
   } catch (err) {
     next(err);
   }
 });
 
-// POST /api/nft-sell/waves/:num/reveal â€” admin manually reveals a specific wave
+// POST /api/nft-sell/waves/:num/reveal  admin manually reveals a specific wave
 // Body: { uri: string }  e.g. "ipfs://Qm..."
 // This path uses executeWaveReveal for random token assignment (Fisher-Yates shuffle)
 router.post("/:num/reveal", requireAdmin, async (req, res, next) => {
@@ -331,14 +331,14 @@ router.post("/:num/resync-reveal", requireAdmin, async (req, res, next) => {
     // Read on-chain wave info
     const [startTime, endTime, waveQty, isRevealed] = await Promise.all([
       nft.waveStartTime(num) as Promise<bigint>,
-      nft.waveEndTime(num)   as Promise<bigint>,
-      nft.waveQty(num)       as Promise<bigint>,
-      nft.waveRevealed(num)  as Promise<boolean>,
+      nft.waveEndTime(num) as Promise<bigint>,
+      nft.waveQty(num) as Promise<bigint>,
+      nft.waveRevealed(num) as Promise<boolean>,
     ]);
 
     const scheduledStart = startTime > 0n ? new Date(Number(startTime) * 1000).toISOString() : null;
-    const scheduledEnd   = endTime   > 0n ? new Date(Number(endTime)   * 1000).toISOString() : null;
-    const qty            = Number(waveQty);
+    const scheduledEnd = endTime > 0n ? new Date(Number(endTime) * 1000).toISOString() : null;
+    const qty = Number(waveQty);
 
     // Back-compute startingIndex from tokenURI of the first sold token (reliable, no eth_getLogs)
     let startingIndex: number | null = null;
@@ -431,7 +431,7 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
           error: `Wave ${num} has not been revealed yet. Reveal the wave first before moving to treasury.`,
         });
       }
-      // 0-minted wave: skip reveal â€” contract allows treasury-close without waveRevealed
+      // 0-minted wave: skip reveal contract allows treasury-close without waveRevealed
       // when waveSoldCount == 0 (no customers need to see artwork)
     }
 
@@ -473,9 +473,8 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
 });
 
 
-// â”€â”€ Strategy extensions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-// GET /api/nft-sell/waves/:num/holder-snapshot â€” list current holders for a wave
+// GET /api/nft-sell/waves/:num/holder-snapshot list current holders for a wave
 router.get("/:num/holder-snapshot", async (req, res, next) => {
   try {
     const num = parseInt(req.params.num, 10);
@@ -490,7 +489,7 @@ router.get("/:num/holder-snapshot", async (req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/waves/:num/holder-merkle â€” generate Merkle from holders + set allowlist root on-chain
+// POST /api/nft-sell/waves/:num/holder-merkle generate Merkle from holders + set allowlist root on-chain
 router.post("/:num/holder-merkle", requireAdmin, async (req, res, next) => {
   try {
     const num = parseInt(req.params.num, 10);
@@ -520,7 +519,7 @@ router.post("/:num/holder-merkle", requireAdmin, async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/waves/:num/holder-priority â€” set holder priority window in DB
+// PUT /api/nft-sell/waves/:num/holder-priority set holder priority window in DB
 // Body: { start: string (ISO), end: string (ISO) }
 router.put("/:num/holder-priority", requireAdmin, async (req, res, next) => {
   try {
@@ -539,7 +538,7 @@ router.put("/:num/holder-priority", requireAdmin, async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/waves/:num/flash-sale â€” toggle flash sale + set discount
+// PUT /api/nft-sell/waves/:num/flash-sale toggle flash sale + set discount
 // Body: { is_flash_sale: boolean, flash_discount_pct?: number }
 router.put("/:num/flash-sale", requireAdmin, async (req, res, next) => {
   try {
@@ -562,7 +561,7 @@ router.put("/:num/flash-sale", requireAdmin, async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/waves/:num/tier-prices â€” set per-rarity tier prices
+// PUT /api/nft-sell/waves/:num/tier-prices set per-rarity tier prices
 // Body: { tier_prices: { legendary?: number, epic?: number, rare?: number, common?: number } }
 router.put("/:num/tier-prices", requireAdmin, async (req, res, next) => {
   try {
@@ -583,7 +582,7 @@ router.put("/:num/tier-prices", requireAdmin, async (req, res, next) => {
   }
 });
 
-// PUT /api/nft-sell/waves/:num/artist-config â€” set artist edition config
+// PUT /api/nft-sell/waves/:num/artist-config set artist edition config
 router.put("/:num/artist-config", requireAdmin, async (req, res, next) => {
   try {
     const num = parseInt(req.params.num, 10);
@@ -642,16 +641,13 @@ router.post("/whitelist-approved", requireAdmin, async (req, res, next) => {
 });
 
 // POST /api/nft-sell/waves/:num/repair-treasury-mints
-// Repairs Wave N after treasuryClose: assigns token_ids to transferred records (FIFO),
-// marks them is_revealed=true, and re-runs metadata sync so artwork renders correctly.
-// Safe to re-run — idempotent: already-assigned records are skipped.
 router.post("/:num/repair-treasury-mints", requireAdmin, async (req, res, next) => {
   try {
     const num = parseInt(req.params.num, 10);
     if (isNaN(num) || num < 1 || num > 7)
       return res.status(400).json({ error: "Wave number must be 1–7" });
 
-    const RPC_URL       = process.env.ETH_RPC_URL!;
+    const RPC_URL = process.env.ETH_RPC_URL!;
     const CONTRACT_ADDR = process.env.CONTRACT_ADDRESS!;
     if (!RPC_URL || !CONTRACT_ADDR)
       return res.status(500).json({ error: "ETH_RPC_URL / CONTRACT_ADDRESS not set" });
@@ -681,9 +677,9 @@ router.post("/:num/repair-treasury-mints", requireAdmin, async (req, res, next) 
     // 3. Scan Transfer mint events (from=0x0 → treasury recipient) via event logs.
     //    ERC721A does NOT implement tokenOfOwnerByIndex — Transfer logs are the correct approach.
     const { getProvider } = await import("../../utils/contract-factory");
-    const provider      = getProvider();
+    const provider = getProvider();
     const TRANSFER_TOPIC = ethers.id("Transfer(address,address,uint256)");
-    const ZERO_PADDED    = ethers.zeroPadValue(ethers.ZeroAddress, 32);
+    const ZERO_PADDED = ethers.zeroPadValue(ethers.ZeroAddress, 32);
 
     const { rows: recipientRows } = await pool.query<{ addr: string }>(
       `SELECT DISTINCT treasury_recipient AS addr
@@ -693,10 +689,10 @@ router.post("/:num/repair-treasury-mints", requireAdmin, async (req, res, next) 
     );
 
     const chainTokenIdSet = new Set<number>();
-    const latestBlock     = await provider.getBlockNumber();
+    const latestBlock = await provider.getBlockNumber();
     // Look back 150k blocks (~25 days on Sepolia @ 15 s/block) to cover any recent testnet deploy
-    const fromBlock       = Math.max(0, latestBlock - 150_000);
-    const CHUNK           = 2_000;
+    const fromBlock = Math.max(0, latestBlock - 150_000);
+    const CHUNK = 2_000;
 
     for (const { addr } of recipientRows) {
       const paddedTo = ethers.zeroPadValue(addr.toLowerCase(), 32);
@@ -705,10 +701,10 @@ router.post("/:num/repair-treasury-mints", requireAdmin, async (req, res, next) 
         const end = Math.min(cursor + CHUNK - 1, latestBlock);
         try {
           const logs = await provider.getLogs({
-            address:   CONTRACT_ADDR,
-            topics:    [TRANSFER_TOPIC, ZERO_PADDED, paddedTo],
+            address: CONTRACT_ADDR,
+            topics: [TRANSFER_TOPIC, ZERO_PADDED, paddedTo],
             fromBlock: cursor,
-            toBlock:   end,
+            toBlock: end,
           });
           for (const log of logs) chainTokenIdSet.add(Number(BigInt(log.topics[3])));
         } catch { /* skip failed chunk */ }
@@ -724,7 +720,7 @@ router.post("/:num/repair-treasury-mints", requireAdmin, async (req, res, next) 
     const toReveal: string[] = [];
     for (let i = 0; i < Math.min(chainTokenIds.length, unassigned.length); i++) {
       const tokenId = chainTokenIds[i];
-      const record  = unassigned[i];
+      const record = unassigned[i];
       await pool.query(
         `UPDATE nft_records
             SET token_id          = $2,

@@ -3,22 +3,13 @@ import pool from "../../pool";
 import { requireAdmin } from "../../adminAuth";
 
 const router = Router();
-
-// GET /api/nft-sell/activity-log
-// Returns paginated nft_activity_log entries.
-// Query params:
-//   entity_type  — 'nft_record' | 'nft_wave' (optional)
-//   entity_id    — UUID (optional)
-//   action       — e.g. 'delivery_status_changed' (optional)
-//   limit        — default 50, max 200
-//   offset       — default 0
 router.get("/", requireAdmin, async (req, res, next) => {
   try {
     const entityType = (req.query.entity_type as string) || null;
-    const entityId   = (req.query.entity_id   as string) || null;
-    const action     = (req.query.action       as string) || null;
-    const limit      = Math.min(Number(req.query.limit  ?? 50),  200);
-    const offset     = Math.max(Number(req.query.offset ?? 0),   0);
+    const entityId = (req.query.entity_id as string) || null;
+    const action = (req.query.action as string) || null;
+    const limit = Math.min(Number(req.query.limit ?? 50), 200);
+    const offset = Math.max(Number(req.query.offset ?? 0), 0);
 
     const { rows } = await pool.query(
       `SELECT
@@ -43,8 +34,8 @@ router.get("/", requireAdmin, async (req, res, next) => {
     );
 
     res.json({
-      logs:   rows,
-      total:  Number(countRows[0]?.total ?? 0),
+      logs: rows,
+      total: Number(countRows[0]?.total ?? 0),
       limit,
       offset,
     });

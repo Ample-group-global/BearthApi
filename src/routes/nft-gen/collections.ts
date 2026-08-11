@@ -1,8 +1,8 @@
-import path   from "path";
-import fs     from "fs";
+import path from "path";
+import fs from "fs";
 import { Router } from "express";
 import { requirePermission } from "../../adminAuth";
-import pool    from "../../pool";
+import pool from "../../pool";
 import * as svc from "../../services/nft-gen.service";
 
 const router = Router();
@@ -11,7 +11,7 @@ router.get("/", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.view");
     const result = await svc.listCollections({
-      limit:  Number(req.query.limit  ?? 50),
+      limit: Number(req.query.limit ?? 50),
       offset: Number(req.query.offset ?? 0),
     });
     res.json(result);
@@ -55,9 +55,6 @@ router.delete("/:id", async (req, res, next) => {
 });
 
 // ── Layers nested under collection ──────────────────────────────────────────
-
-// Full layer+traits structure in scanLayers() format — used by BearthAdmin on Vercel
-// when local filesystem scan is empty (no LAYERS_DIR on Vercel/serverless).
 router.get("/:id/layers-organise", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.view");
@@ -79,16 +76,16 @@ router.get("/:id/layers-organise", async (req, res, next) => {
     const layers = active.map((l: any) => {
       const traits = traitRows.filter((t: any) => t.layer_id === l.id);
       return {
-        folder:    l.name,
-        label:     l.display_name ?? l.name,
-        count:     traits.length,
-        optional:  l.layer_rarity_pct != null && Number(l.layer_rarity_pct) < 100,
+        folder: l.name,
+        label: l.display_name ?? l.name,
+        count: traits.length,
+        optional: l.layer_rarity_pct != null && Number(l.layer_rarity_pct) < 100,
         bypassDna: l.bypass_dna ?? false,
         rarityPct: Number(l.layer_rarity_pct ?? 100),
         assets: traits.map((t: any) => ({
-          stem:          path.basename(t.file_path, path.extname(t.file_path)),
-          name:          t.name,
-          rel:           t.file_path,
+          stem: path.basename(t.file_path, path.extname(t.file_path)),
+          name: t.name,
+          rel: t.file_path,
           defaultWeight: Number(t.rarity_weight ?? 1),
         })),
       };
@@ -140,16 +137,12 @@ router.put("/:id/layers/reorder", async (req, res, next) => {
 });
 
 // ── Sync layers from BearthApi's own LAYERS_DIR into DB ─────────────────────
-// Called by BearthAdmin's sync-from-disk route when it has no local disk (Vercel).
-// BearthApi (Railway) has the layers on its own disk after /api/nft-gen/layers/upload.
-
 const IMAGE_RE = /\.(png|webp|jpg|jpeg|gif)$/i;
-
 function inferTier(stem: string): string {
   const s = stem.toLowerCase();
   if (s.includes("legendary")) return "legendary";
-  if (s.includes("epic"))      return "epic";
-  if (s.includes("rare"))      return "rare";
+  if (s.includes("epic")) return "epic";
+  if (s.includes("rare")) return "rare";
   return "common";
 }
 
@@ -173,7 +166,7 @@ function scanApiLayers(layersDir: string): { folder: string; label: string; asse
     function walk(dir: string, prefix: string) {
       for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, ent.name);
-        const rel  = prefix ? `${prefix}/${ent.name}` : ent.name;
+        const rel = prefix ? `${prefix}/${ent.name}` : ent.name;
         if (ent.isDirectory()) { walk(full, rel); }
         else if (IMAGE_RE.test(ent.name)) {
           const stem = ent.name.replace(IMAGE_RE, '');
@@ -203,8 +196,8 @@ router.post("/:id/sync-from-api-layers", async (req, res, next) => {
     const results = await Promise.all(diskLayers.map(async (dl) => {
       const layerRow = await svc.createLayer({
         collectionId,
-        name:           dl.folder,
-        displayName:    dl.label,
+        name: dl.folder,
+        displayName: dl.label,
         layerRarityPct: 100,
       });
       const layerId: string | null = layerRow?.id ?? null;
@@ -216,9 +209,9 @@ router.post("/:id/sync-from-api-layers", async (req, res, next) => {
         await Promise.all(dl.assets.slice(i, i + BATCH).map(async (a) => {
           const t = await svc.createTrait({
             layerId,
-            name:            a.name,
-            filePath:        a.rel,
-            rarityTier:      inferTier(a.stem),
+            name: a.name,
+            filePath: a.rel,
+            rarityTier: inferTier(a.stem),
             storageProvider: "filebase",
           });
           if (t?.id) traits++;

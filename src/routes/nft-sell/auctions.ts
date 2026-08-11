@@ -17,7 +17,6 @@ import {
 
 const router = Router();
 
-// GET /api/nft-sell/auctions — list all auction sessions
 router.get("/", async (_req, res, next) => {
   try {
     const { rows } = await pool.query("SELECT * FROM nft_auction_sessions_list()", []);
@@ -27,10 +26,6 @@ router.get("/", async (_req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/auctions — create auction session
-// Body: { wave_number?, token_id?, auction_mode, platform, contract_address?,
-//         opensea_listing_id?, start_price_eth?, reserve_price_eth?,
-//         auction_end_time?, notes? }
 router.post("/", requireAdmin, async (req, res, next) => {
   try {
     const {
@@ -59,13 +54,7 @@ router.post("/", requireAdmin, async (req, res, next) => {
   }
 });
 
-// ── BearthAuction.sol on-chain routes ─────────────────────────────────────────
-// These interact with the deployed BearthAuction contract directly.
-// Requires AUCTION_CONTRACT_ADDRESS env var.
-// NOTE: These must be registered BEFORE /:id to prevent Express from treating
-//       "on-chain" as the :id parameter.
-
-// GET /api/nft-sell/auctions/on-chain/count — total on-chain auctions created
+// ── BearthAuction.sol on-chain routes ──────────────
 router.get("/on-chain/count", async (_req, res, next) => {
   try {
     const count = await auctionCount().catch(() => null);

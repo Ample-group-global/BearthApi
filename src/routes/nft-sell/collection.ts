@@ -26,13 +26,9 @@ const router = Router();
 function withChainTimeout<T>(p: Promise<T>, ms = 8000): Promise<T | null> {
   return Promise.race([p, new Promise<null>(resolve => setTimeout(() => resolve(null), ms))]);
 }
-
 // ── Blind box image resolver (metadata JSON → actual image URL) ───────────────
-// blindBoxUri is an ERC721 metadata JSON. For display we need the `image` field inside it.
-// Cache per process lifetime (changes only when admin updates the blind box URI).
 const IPFS_GATEWAY = "https://amgbearth.myfilebase.com/ipfs/";
 function ipfsToHttp(uri: string): string { return uri.replace("ipfs://", IPFS_GATEWAY); }
-
 let _cachedBlindBoxImageUrl: string | null = null;
 let _cachedForUri: string | null = null;
 
@@ -40,7 +36,7 @@ async function resolveBlindBoxImageUrl(metaUri: string | null): Promise<string |
   if (!metaUri) return null;
   if (_cachedForUri === metaUri && _cachedBlindBoxImageUrl) return _cachedBlindBoxImageUrl;
   try {
-    const res  = await fetch(ipfsToHttp(metaUri));
+    const res = await fetch(ipfsToHttp(metaUri));
     const meta = await res.json() as Record<string, unknown>;
     if (meta?.image && typeof meta.image === "string") {
       _cachedBlindBoxImageUrl = ipfsToHttp(meta.image);
@@ -62,13 +58,13 @@ router.get("/", async (_req, res, next) => {
         const info = await withChainTimeout(contractGetCollectionInfo());
         if (!info) throw new Error("chain_timeout");
         onChain = {
-          currentPhase:         Number(info.currentPhase),
-          maxSupply:            Number(info.maxSupply),
-          totalMinted:          Number(info.totalMinted),
-          revealCount:          Number(cfg?.reveal_count ?? 0),
-          sbt:                  info.sbt,
+          currentPhase: Number(info.currentPhase),
+          maxSupply: Number(info.maxSupply),
+          totalMinted: Number(info.totalMinted),
+          revealCount: Number(cfg?.reveal_count ?? 0),
+          sbt: info.sbt,
           purchaseLimitEnabled: info.purchaseLimitEnabled,
-          normalMaxPerWallet:   Number(info.normalMaxPerWallet),
+          normalMaxPerWallet: Number(info.normalMaxPerWallet),
         };
       } catch {
         onChain = null;
@@ -227,7 +223,7 @@ router.post("/admin-mint", requireAdmin, async (req, res, next) => {
 // Only valid while token is in treasury (rarity_price_locked=false)
 router.put("/tokens/:id/rarity-price", requireAdmin, async (req, res, next) => {
   try {
-    const tokenId  = parseInt(req.params.id, 10);
+    const tokenId = parseInt(req.params.id, 10);
     const priceStr = req.body.priceEth as string;
 
     if (isNaN(tokenId) || tokenId < 0)
@@ -236,7 +232,7 @@ router.put("/tokens/:id/rarity-price", requireAdmin, async (req, res, next) => {
       return res.status(400).json({ error: "priceEth (string) required, e.g. '0.5'" });
 
     const priceWei = ethers.parseEther(priceStr);
-    const receipt  = await contractSetTokenPrice(tokenId, priceWei);
+    const receipt = await contractSetTokenPrice(tokenId, priceWei);
     res.json({ ok: true, txHash: receipt.hash });
   } catch (err) {
     next(err);
@@ -255,7 +251,7 @@ router.post("/tokens/rarity-batch", requireAdmin, async (req, res, next) => {
       return res.status(400).json({ error: "Maximum 500 tokens per batch" });
 
     const tokenIds = items.map(i => i.tokenId);
-    const rarities  = items.map(i => i.rarity);
+    const rarities = items.map(i => i.rarity);
 
     const receipt = await contractSetRarityBatch(tokenIds, rarities);
     res.json({ ok: true, count: items.length, txHash: receipt.hash });
@@ -278,16 +274,16 @@ router.get("/stats", async (_req, res, next) => {
     ]);
     const blindBoxMetaUri = configResult.rows[0]?.nft_collection_config_get?.blind_box_uri ?? null;
 
-    const cfg   = configResult.rows[0]?.nft_collection_config_get ?? null;
+    const cfg = configResult.rows[0]?.nft_collection_config_get ?? null;
     const waves: Record<string, unknown>[] = wavesResult.rows ?? [];
     const onChain = onChainResult;
-    const rev   = revenueResult.rows[0] ?? null;
+    const rev = revenueResult.rows[0] ?? null;
 
-    const wlWave   = waves.find(w => Number(w.wave_number) === 1) ?? null;
+    const wlWave = waves.find(w => Number(w.wave_number) === 1) ?? null;
     const paidWave = waves.find(w => Number(w.wave_number) === 2) ?? null;
 
     const totalMinted = onChain ? Number(onChain.totalMinted) : (cfg?.total_counter ?? 0);
-    const maxSupply   = onChain ? Number(onChain.maxSupply)   : (cfg?.max_supply   ?? 9999);
+    const maxSupply = onChain ? Number(onChain.maxSupply) : (cfg?.max_supply ?? 9999);
 
     res.json({
       phase: onChain ? Number(onChain.currentPhase) : null,
@@ -297,34 +293,34 @@ router.get("/stats", async (_req, res, next) => {
       remaining: maxSupply - totalMinted,
       mintProgress: maxSupply > 0 ? Math.round((totalMinted / maxSupply) * 100) : 0,
       whitelistMint: {
-        soldCount:  Number(wlWave?.sold_count ?? 0),
-        quantity:   Number(wlWave?.quantity   ?? 0),
-        closed:     Boolean(wlWave?.wave_closed),
+        soldCount: Number(wlWave?.sold_count ?? 0),
+        quantity: Number(wlWave?.quantity ?? 0),
+        closed: Boolean(wlWave?.wave_closed),
         closeAction: wlWave?.close_action ?? null,
       },
       paidMint: {
-        soldCount:  Number(paidWave?.sold_count   ?? 0),
-        quantity:   Number(paidWave?.quantity     ?? 0),
-        priceEth:   paidWave?.default_price_eth   ?? null,
+        soldCount: Number(paidWave?.sold_count ?? 0),
+        quantity: Number(paidWave?.quantity ?? 0),
+        priceEth: paidWave?.default_price_eth ?? null,
         priceLocked: Boolean(paidWave?.price_locked),
-        closed:     Boolean(paidWave?.wave_closed),
+        closed: Boolean(paidWave?.wave_closed),
         closeAction: paidWave?.close_action ?? null,
       },
-      blindBoxUri:      cfg?.blind_box_uri ?? null,
+      blindBoxUri: cfg?.blind_box_uri ?? null,
       blindBoxImageUrl: await resolveBlindBoxImageUrl(blindBoxMetaUri),
-      revealed:      Number(cfg?.reveal_count ?? 0),
-      isRevealed:    (cfg?.current_phase ?? "") === "Revealed",
+      revealed: Number(cfg?.reveal_count ?? 0),
+      isRevealed: (cfg?.current_phase ?? "") === "Revealed",
       adminRevenue: rev ? {
-        totalEth:     Number(rev.admin_sales_total_eth ?? 0),
-        totalSales:   Number(rev.admin_sales_count     ?? 0),
-        totalQty:     Number(rev.admin_sales_qty       ?? 0),
-        byMode:       rev.by_mode   ?? [],
-        byStatus:     rev.by_status ?? [],
+        totalEth: Number(rev.admin_sales_total_eth ?? 0),
+        totalSales: Number(rev.admin_sales_count ?? 0),
+        totalQty: Number(rev.admin_sales_qty ?? 0),
+        byMode: rev.by_mode ?? [],
+        byStatus: rev.by_status ?? [],
       } : null,
       onChain: onChain ? {
         purchaseLimitEnabled: onChain.purchaseLimitEnabled,
-        normalMaxPerWallet:   Number(onChain.normalMaxPerWallet),
-        sbt:                  onChain.sbt,
+        normalMaxPerWallet: Number(onChain.normalMaxPerWallet),
+        sbt: onChain.sbt,
       } : null,
     });
   } catch (err) {
@@ -336,9 +332,9 @@ router.get("/stats", async (_req, res, next) => {
 // Query: ?limit=50&offset=0&owner=0x...&waveNum=1
 router.get("/tokens", async (req, res, next) => {
   try {
-    const limit   = Math.min(parseInt(req.query.limit  as string ?? "50", 10), 9999);
-    const offset  = parseInt(req.query.offset as string ?? "0", 10);
-    const owner   = req.query.owner   as string | undefined;
+    const limit = Math.min(parseInt(req.query.limit as string ?? "50", 10), 9999);
+    const offset = parseInt(req.query.offset as string ?? "0", 10);
+    const owner = req.query.owner as string | undefined;
     const waveNum = req.query.waveNum ? parseInt(req.query.waveNum as string, 10) : null;
 
     const { rows } = await pool.query(`
@@ -427,7 +423,7 @@ router.post("/emergency-transfer", requireAdmin, async (req, res, next) => {
 // Query: ?limit=50&eventName=Minted
 router.get("/events", async (req, res, next) => {
   try {
-    const limit     = Math.min(parseInt(req.query.limit as string ?? "50", 10), 200);
+    const limit = Math.min(parseInt(req.query.limit as string ?? "50", 10), 200);
     const eventName = req.query.eventName as string | undefined;
 
     const { rows } = await pool.query(`

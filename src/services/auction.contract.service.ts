@@ -4,7 +4,7 @@ import { getProvider } from "../utils/contract-factory";
 
 // ── Singletons ────────────────────────────────────────────────────────────────
 
-let _contractRO:     Contract | null = null;
+let _contractRO: Contract | null = null;
 let _contractSigned: Contract | null = null;
 
 function getAuctionContractReadOnly(): Contract {
@@ -18,9 +18,9 @@ function getAuctionContractReadOnly(): Contract {
 
 function getAuctionContractWithSigner(): Contract {
   if (!_contractSigned) {
-    const addr       = process.env.AUCTION_CONTRACT_ADDRESS;
+    const addr = process.env.AUCTION_CONTRACT_ADDRESS;
     const privateKey = process.env.FIXED_PRIVATE_KEY;
-    if (!addr)       throw new Error("AUCTION_CONTRACT_ADDRESS env var is required");
+    if (!addr) throw new Error("AUCTION_CONTRACT_ADDRESS env var is required");
     if (!privateKey) throw new Error("FIXED_PRIVATE_KEY env var is required");
     const signer = new ethers.Wallet(privateKey, getProvider());
     _contractSigned = new ethers.Contract(addr, BearthAuction_ABI, signer);
@@ -52,12 +52,12 @@ export async function auctionCreateWave(params: {
   title: string;
 }): Promise<{ receipt: ethers.TransactionReceipt; auctionId: bigint }> {
   const { waveNum, startTime, endTime, reservePriceEth, title } = params;
-  if (waveNum < 1 || waveNum > 7)  throw new Error("Wave number must be 1–7");
-  if (endTime <= startTime)         throw new Error("endTime must be after startTime");
-  if (!title?.trim())               throw new Error("title is required");
+  if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1–7");
+  if (endTime <= startTime) throw new Error("endTime must be after startTime");
+  if (!title?.trim()) throw new Error("title is required");
 
   const reserveWei = ethers.parseEther(reservePriceEth ?? "0");
-  const receipt    = await callAuctionContract("createWaveAuction", [
+  const receipt = await callAuctionContract("createWaveAuction", [
     waveNum, startTime, endTime, reserveWei, title,
   ]);
 
@@ -81,12 +81,12 @@ export async function auctionCreateToken(params: {
   title: string;
 }): Promise<{ receipt: ethers.TransactionReceipt; auctionId: bigint }> {
   const { tokenId, startTime, endTime, reservePriceEth, title } = params;
-  if (tokenId < 1)          throw new Error("tokenId must be >= 1");
+  if (tokenId < 1) throw new Error("tokenId must be >= 1");
   if (endTime <= startTime) throw new Error("endTime must be after startTime");
-  if (!title?.trim())       throw new Error("title is required");
+  if (!title?.trim()) throw new Error("title is required");
 
   const reserveWei = ethers.parseEther(reservePriceEth ?? "0");
-  const receipt    = await callAuctionContract("createTokenAuction", [
+  const receipt = await callAuctionContract("createTokenAuction", [
     tokenId, startTime, endTime, reserveWei, title,
   ]);
 
@@ -135,17 +135,17 @@ export async function auctionUnpause(): Promise<ethers.TransactionReceipt> {
 export async function auctionGet(onChainId: number) {
   const a = await getAuctionContractReadOnly().getAuction(onChainId);
   return {
-    highBidder:     a.highBidder,
-    highBidEth:     ethers.formatEther(a.highBid),
-    endTime:        Number(a.endTime),
-    startTime:      Number(a.startTime),
+    highBidder: a.highBidder,
+    highBidEth: ethers.formatEther(a.highBid),
+    endTime: Number(a.endTime),
+    startTime: Number(a.startTime),
     extensionCount: Number(a.extensionCount),
-    waveNum:        Number(a.waveNum),
-    tokenId:        Number(a.tokenId),
+    waveNum: Number(a.waveNum),
+    tokenId: Number(a.tokenId),
     reservePriceEth: ethers.formatEther(a.reservePrice),
-    mode:           Number(a.mode),   // 0=WAVE 1=TOKEN
-    status:         Number(a.status), // 0=OPEN 1=SETTLED 2=CANCELLED
-    title:          a.title,
+    mode: Number(a.mode),
+    status: Number(a.status),
+    title: a.title,
   };
 }
 

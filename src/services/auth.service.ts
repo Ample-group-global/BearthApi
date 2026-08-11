@@ -1,10 +1,8 @@
 import authPool from "../auth-pool";
 import bcrypt from "bcryptjs";
 import { encodeHmacToken, decodeHmacToken } from "../utils/hmac-token";
-
 const RESET_SECRET = process.env.RESET_SECRET ?? process.env.AUTH_SECRET ?? "bearth-reset-secret";
-const RESET_EXPIRES_MS = 60 * 60 * 1000; // 1 hour
-
+const RESET_EXPIRES_MS = 60 * 60 * 1000;
 export interface AuthUser {
   id: string;
   email: string;
@@ -13,7 +11,6 @@ export interface AuthUser {
   passwordHash: string;
   isActive: boolean;
 }
-
 interface AuthUserRow {
   id: string;
   email: string;
@@ -22,21 +19,19 @@ interface AuthUserRow {
   password_hash: string;
   is_active: boolean;
 }
-
 export async function getUserByEmail(email: string): Promise<AuthUser | null> {
-  // Retry up to 3 times (1s, 2s backoff) — Railway proxy can be slow under load
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const { rows } = await authPool.query("SELECT * FROM users_get_by_email($1)", [email]);
       const row = rows[0] as AuthUserRow | undefined;
       if (!row) return null;
       return {
-        id:           row.id,
-        email:        row.email,
-        name:         row.name,
-        roleCode:     row.role_code,
+        id: row.id,
+        email: row.email,
+        name: row.name,
+        roleCode: row.role_code,
         passwordHash: row.password_hash,
-        isActive:     row.is_active,
+        isActive: row.is_active,
       };
     } catch (err) {
       const e = err as { code?: string; message?: string };
