@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
-import pool from "../pool"; // patch_v37 added 2026-08-11
+import pool from "../pool"; // patch_v38 added 2026-08-11
 import { logger } from "../logger";
 
 const DB_DIR = join(__dirname, "../../db");
