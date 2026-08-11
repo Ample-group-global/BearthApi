@@ -205,7 +205,8 @@ router.post("/bulk-transfer", requireAdmin, async (req, res, next) => {
 });
 
 // POST /api/nfts/testnet-reset — full DB reset for testnet wave testing only.
-// Blocked on mainnet. Resets nft_records, nft_waves, nft_wave_pool, customer_wallets to pre-mint state.
+// Blocked on mainnet. Resets nft_records, nft_waves, nft_wave_pool, customer_wallets,
+// nft_activity_log, and nft_collection_config counters to pre-mint state.
 router.post("/testnet-reset", requireAdmin, async (req, res, next) => {
   try {
     const network = process.env.NEXT_PUBLIC_CONTRACT_NET ?? process.env.CONTRACT_NET ?? "";
@@ -213,9 +214,11 @@ router.post("/testnet-reset", requireAdmin, async (req, res, next) => {
       res.status(403).json({ error: "testnet-reset is blocked on mainnet" }); return;
     }
 
+    // Clear all mint/transfer/reveal state from NFT records (rows are permanent — never deleted)
     await pool.query(`
       UPDATE nft_records SET
         wave_id              = NULL,
+        wave_num             = NULL,
         token_id             = NULL,
         mint_type            = NULL,
         is_revealed          = FALSE,
@@ -225,12 +228,24 @@ router.post("/testnet-reset", requireAdmin, async (req, res, next) => {
         mint_tx_hash         = NULL,
         owner_address        = NULL,
         synced_at            = NULL,
+        sold_at              = NULL,
+        on_chain_wave_num    = NULL,
+        token_wave           = NULL,
+        last_sale_price_eth  = NULL,
+        last_tx_hash         = NULL,
+        price_eth            = NULL,
+        is_burned            = FALSE,
+        burned_at            = NULL,
+        burn_tx_hash         = NULL,
+        token_sbt            = FALSE,
         delivery_status_id   = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = 'pending'),
         updated_at           = NOW()
     `);
 
+    // Reset all 7 waves to pre-scheduling state
     await pool.query(`
       UPDATE nft_waves SET
+        status                = 'upcoming',
         scheduled_start       = NULL,
         scheduled_end         = NULL,
         wave_start_triggered  = FALSE,
@@ -238,20 +253,39 @@ router.post("/testnet-reset", requireAdmin, async (req, res, next) => {
         wave_reveal_triggered = FALSE,
         wave_closed           = FALSE,
         is_revealed           = FALSE,
+        wave_revealed         = FALSE,
         wave_revealed_at      = NULL,
         wave_reveal_uri       = NULL,
         starting_index        = NULL,
+        wave_starting_index   = NULL,
         reveal_scheduled_at   = NULL,
+        vrf_request_id        = NULL,
+        vrf_requested_at      = NULL,
+        vrf_fulfilled_at      = NULL,
         close_action          = NULL,
         treasury_recipient    = NULL,
         treasury_minted_count = 0,
         price_locked          = FALSE,
         sold_count            = 0,
         last_tx_hash          = NULL,
+        synced_at             = NULL,
         updated_at            = NOW()
     `);
 
     await pool.query("TRUNCATE nft_wave_pool");
+    await pool.query("TRUNCATE nft_activity_log");
+
+    // Reset collection config counters to match fresh contract state
+    await pool.query(`
+      UPDATE nft_collection_config SET
+        current_phase  = 'Whitelist',
+        reveal_count   = 0,
+        total_counter  = 0,
+        reveal_uri     = NULL,
+        synced_at      = NULL,
+        updated_at     = NOW()
+      WHERE id = 1
+    `);
 
     await pool.query(`
       UPDATE customer_wallets SET
