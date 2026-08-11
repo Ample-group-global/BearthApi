@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { ethers } from "ethers";
 import { requireAdmin } from "../../adminAuth";
-import { abi as SchedulerABI } from "../../abi/BearthScheduler.abi.json";
+import SchedulerABI from "../../abi/BearthScheduler.abi.json";
 
 const router = Router();
 

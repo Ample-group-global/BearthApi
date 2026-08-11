@@ -1,5 +1,5 @@
 import { ethers, type Contract } from "ethers";
-import { abi as BearthAuction_ABI } from "../abi/BearthAuction.abi.json";
+import BearthAuction_ABI from "../abi/BearthAuction.abi.json";
 import { getProvider } from "../utils/contract-factory";
 
 // ── Singletons ────────────────────────────────────────────────────────────────
