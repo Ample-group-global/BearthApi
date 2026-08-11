@@ -196,14 +196,6 @@ async function syncEvent(
         break;
       }
 
-      case "Revealed": {
-        // Revealed(uri, timestamp)
-        const [uri] = args as [string, bigint];
-        await pool.query("SELECT nft_collection_config_update($1,$2,$3,$4,$5)", [null, null, null, null, uri]);
-        await pool.query("SELECT nft_record_sync_reveal(TRUE)");
-        break;
-      }
-
       case "WaveRevealed": {
         // WaveRevealed(waveNum indexed, uri, timestamp)
         const [waveNum, uri] = args as [bigint, string, bigint];
@@ -268,7 +260,6 @@ async function syncEvent(
 
       // Log-only events (no DB state change needed)
       case "Bred":
-      case "TokenPriceSet":
       case "TransferValidatorUpdated":
       case "Paused":
       case "Unpaused":
@@ -309,10 +300,9 @@ export function startEventListeners(): void {
   const contract = getContractReadOnly();
 
   const watchedEvents = [
-    "WaveSold", "WaveScheduleUpdated", "WavePriceUpdated",
-    "WaveRevealed",
-    "PhaseChanged", "Revealed", "PurchaseLimitChanged", "VIPStatusChanged",
-    "RoyaltyUpdated", "SBTChanged", "TokenSBTChanged", "Transfer", "TokenPriceSet",
+    "WaveSold", "WaveScheduleUpdated", "WavePriceUpdated", "WaveRevealed",
+    "PhaseChanged", "PurchaseLimitChanged", "VIPStatusChanged",
+    "RoyaltyUpdated", "SBTChanged", "TokenSBTChanged", "Transfer",
     "TransferValidatorUpdated", "Paused", "Unpaused",
   ];
 
