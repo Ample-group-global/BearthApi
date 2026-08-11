@@ -45,7 +45,7 @@ import wavesRouter from "./routes/waves";
 import filebaseRouter from "./routes/filebase";
 import { startEventListeners } from "./services/contract.service";
 import { startWaveAutoTrigger } from "./services/wave-auto-trigger.service";
-import pool from "./pool";
+import pool, { startPoolKeepalive } from "./pool";
 import { runPendingMigrations } from "./services/auto-migrate.service";
 import { buildMerkleTree } from "./merkle";
 import { errorHandler } from "./errorHandler";
@@ -195,6 +195,7 @@ if (!process.env.VERCEL) {
 
     app.listen(PORT, () => {
       console.log(`BearthApi listening on port ${PORT}`);
+      startPoolKeepalive();
       recalcMerkleOnStartup().catch(e => console.warn("Startup Merkle recalc failed:", e));
       if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL) {
         setTimeout(() => startEventListeners(), 30_000);

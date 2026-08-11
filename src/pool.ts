@@ -24,10 +24,24 @@ function getPool(): Pool {
   });
   return _pool;
 }
+
 const pool = new Proxy({} as Pool, {
   get(_target, prop) {
     return (getPool() as unknown as Record<string | symbol, unknown>)[prop];
   },
 });
+
+// Ping the DB every 4 minutes so Railway never closes the idle connection.
+// Railway's idle TCP timeout is ~5 min; staying under that prevents
+// the "db_connection_timeout" 503 errors on the first request after inactivity.
+export function startPoolKeepalive(intervalMs = 4 * 60 * 1000): void {
+  setInterval(async () => {
+    try {
+      await getPool().query("SELECT 1");
+    } catch (err) {
+      logger.warn("[pool] keepalive ping failed — pool will reconnect on next request", err);
+    }
+  }, intervalMs);
+}
 
 export default pool;
