@@ -10,32 +10,32 @@ const router = Router();
 router.get("/", async (req, res, next) => {
   try {
     requirePermission(req, "nft.view");
-    const revealedRaw   = req.query.revealed    as string | undefined;
-    const mintedRaw     = req.query.minted      as string | undefined;
-    const sortDirRaw    = req.query.sort_dir    as string | undefined;
-    const waveNumRaw    = req.query.wave_number as string | undefined;
-    const mintTypeRaw   = req.query.mint_type   as string | undefined;
+    const revealedRaw = req.query.revealed as string | undefined;
+    const mintedRaw = req.query.minted as string | undefined;
+    const sortDirRaw = req.query.sort_dir as string | undefined;
+    const waveNumRaw = req.query.wave_number as string | undefined;
+    const mintTypeRaw = req.query.mint_type as string | undefined;
     const rarityTierRaw = req.query.rarity_tier as string | undefined;
 
-    const VALID_MINT_TYPES   = new Set(["free", "paid", "admin", "treasury"]);
+    const VALID_MINT_TYPES = new Set(["free", "paid", "admin", "treasury"]);
     const VALID_RARITY_TIERS = new Set(["legendary", "epic", "rare", "common"]);
 
     const result = await nftService.listNft({
-      search:             (req.query.search          as string) ?? null,
+      search: (req.query.search as string) ?? null,
       deliveryStatusCode: (req.query.delivery_status as string) ?? null,
-      stageCode:          (req.query.stage           as string) ?? null,
-      revealed:           revealedRaw === "true" ? true : revealedRaw === "false" ? false : null,
-      minted:             mintedRaw   === "true" ? true : mintedRaw   === "false" ? false : null,
-      waveId:             (req.query.wave_id         as string) ?? null,
-      waveNumber:         waveNumRaw ? Number(waveNumRaw) : null,
-      mintedFrom:         (req.query.minted_from     as string) ?? null,
-      mintedTo:           (req.query.minted_to       as string) ?? null,
-      mintType:           (mintTypeRaw   && VALID_MINT_TYPES.has(mintTypeRaw.toLowerCase()))     ? mintTypeRaw.toLowerCase()   : null,
-      rarityTier:         (rarityTierRaw && VALID_RARITY_TIERS.has(rarityTierRaw.toLowerCase())) ? rarityTierRaw.toLowerCase() : null,
-      limit:              Number(req.query.limit  ?? 20),
-      offset:             Number(req.query.offset ?? 0),
-      sortBy:             (req.query.sort_by         as string) ?? null,
-      sortDir:            sortDirRaw === "desc" ? "desc" : sortDirRaw === "asc" ? "asc" : null,
+      stageCode: (req.query.stage as string) ?? null,
+      revealed: revealedRaw === "true" ? true : revealedRaw === "false" ? false : null,
+      minted: mintedRaw === "true" ? true : mintedRaw === "false" ? false : null,
+      waveId: (req.query.wave_id as string) ?? null,
+      waveNumber: waveNumRaw ? Number(waveNumRaw) : null,
+      mintedFrom: (req.query.minted_from as string) ?? null,
+      mintedTo: (req.query.minted_to as string) ?? null,
+      mintType: (mintTypeRaw && VALID_MINT_TYPES.has(mintTypeRaw.toLowerCase())) ? mintTypeRaw.toLowerCase() : null,
+      rarityTier: (rarityTierRaw && VALID_RARITY_TIERS.has(rarityTierRaw.toLowerCase())) ? rarityTierRaw.toLowerCase() : null,
+      limit: Number(req.query.limit ?? 20),
+      offset: Number(req.query.offset ?? 0),
+      sortBy: (req.query.sort_by as string) ?? null,
+      sortDir: sortDirRaw === "desc" ? "desc" : sortDirRaw === "asc" ? "asc" : null,
     });
     res.json(result);
   } catch (e) { next(e); }
@@ -57,7 +57,7 @@ router.post("/bulk", async (req, res, next) => {
     if (!records.length) { res.status(400).json({ error: "No records provided" }); return; }
     const results = await nftService.bulkCreateNft(records);
     const succeeded = results.filter(r => !r.error).length;
-    const failed    = results.filter(r => r.error).length;
+    const failed = results.filter(r => r.error).length;
     res.status(201).json({ created: succeeded, failed, results });
   } catch (e) { next(e); }
 });
@@ -72,9 +72,6 @@ router.get("/:id", async (req, res, next) => {
 });
 
 // POST /api/nfts/:id/treasury-move
-// Per-token treasury flow for a reserved (unminted) NFT.
-// Calls contractTreasuryClose for the NFT's wave (mints all unsold in wave to recipient).
-// Body: { recipient?: string } â€” 0x address or omit to use contract's treasury wallet.
 router.post("/:id/treasury-move", async (req, res, next) => {
   try {
     const { userId: actorId } = requirePermission(req, "nft.edit");
@@ -135,12 +132,12 @@ router.post("/:id/treasury-move", async (req, res, next) => {
       [wave_number, deliveryCode, txHash],
     );
     logNftActivity({
-      action:      "treasury_move",
-      source:      "on_chain",
-      platform:    "bearth_admin",
+      action: "treasury_move",
+      source: "on_chain",
+      platform: "bearth_admin",
       actorUserId: actorId,
-      txHash:      txHash ?? undefined,
-      details:     { waveNumber: wave_number, deliveryCode, recipient: recipient ?? null },
+      txHash: txHash ?? undefined,
+      details: { waveNumber: wave_number, deliveryCode, recipient: recipient ?? null },
     });
 
     // Fire-and-forget repair: assigns token_ids from on-chain Transfer events,

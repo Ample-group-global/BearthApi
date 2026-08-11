@@ -6,7 +6,7 @@ import { logNftActivity } from "../services/nft-log.service";
 
 const router = Router();
 
-// GET /api/nfts â€” list with filters, pagination, sorting
+// GET /api/nfts list with filters, pagination, sorting
 router.get("/", async (req, res, next) => {
   try {
     const {
@@ -15,31 +15,31 @@ router.get("/", async (req, res, next) => {
       limit, offset, sort_by, sort_dir,
     } = req.query as Record<string, string>;
 
-    const VALID_MINT_TYPES  = new Set(["free", "paid", "admin", "treasury"]);
+    const VALID_MINT_TYPES = new Set(["free", "paid", "admin", "treasury"]);
     const VALID_RARITY_TIERS = new Set(["legendary", "epic", "rare", "common"]);
 
     const result = await nftService.listNft({
-      search:             search  || null,
+      search: search || null,
       deliveryStatusCode: delivery_status || null,
-      stageCode:          stage   || null,
-      revealed:           revealed  === "true" ? true  : revealed  === "false" ? false : null,
-      minted:             minted    === "true" ? true  : minted    === "false" ? false : null,
-      waveId:             wave_id  || null,
-      waveNumber:         wave_number ? Number(wave_number) : null,
-      mintedFrom:         minted_from || null,
-      mintedTo:           minted_to   || null,
-      mintType:           (mint_type && VALID_MINT_TYPES.has(mint_type)) ? mint_type : null,
-      rarityTier:         (rarity_tier && VALID_RARITY_TIERS.has(rarity_tier.toLowerCase())) ? rarity_tier.toLowerCase() : null,
-      limit:              limit  ? Number(limit)  : 20,
-      offset:             offset ? Number(offset) : 0,
-      sortBy:             sort_by  || null,
-      sortDir:            (sort_dir === "asc" || sort_dir === "desc") ? sort_dir : null,
+      stageCode: stage || null,
+      revealed: revealed === "true" ? true : revealed === "false" ? false : null,
+      minted: minted === "true" ? true : minted === "false" ? false : null,
+      waveId: wave_id || null,
+      waveNumber: wave_number ? Number(wave_number) : null,
+      mintedFrom: minted_from || null,
+      mintedTo: minted_to || null,
+      mintType: (mint_type && VALID_MINT_TYPES.has(mint_type)) ? mint_type : null,
+      rarityTier: (rarity_tier && VALID_RARITY_TIERS.has(rarity_tier.toLowerCase())) ? rarity_tier.toLowerCase() : null,
+      limit: limit ? Number(limit) : 20,
+      offset: offset ? Number(offset) : 0,
+      sortBy: sort_by || null,
+      sortDir: (sort_dir === "asc" || sort_dir === "desc") ? sort_dir : null,
     });
     res.json(result);
   } catch (e) { next(e); }
 });
 
-// POST /api/nfts â€” create single NFT record
+// POST /api/nfts create single NFT record
 router.post("/", requireAdmin, async (req, res, next) => {
   try {
     const { serialNumber, stageId, nftTypeId, deliveryStatusId, notes } = req.body ?? {};
@@ -51,7 +51,7 @@ router.post("/", requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// POST /api/nfts/bulk â€” bulk create
+// POST /api/nfts/bulk bulk create
 router.post("/bulk", requireAdmin, async (req, res, next) => {
   try {
     const { records } = req.body ?? {};
@@ -72,7 +72,7 @@ router.get("/:id", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// PUT /api/nfts/:id â€” update
+// PUT /api/nfts/:id update
 router.put("/:id", requireAdmin, async (req, res, next) => {
   try {
     const { stageId, nftTypeId, deliveryStatusId, notes, waveId, priceEth, clearPriceEth } = req.body ?? {};
@@ -84,7 +84,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// POST /api/nfts/trait-stats â€” batch rarity % for a set of traits
+// POST /api/nfts/trait-stats batch rarity % for a set of traits
 router.post("/trait-stats", async (req, res, next) => {
   try {
     const { traits } = req.body ?? {};
@@ -139,13 +139,13 @@ router.put("/:id/sbt", requireAdmin, async (req, res, next) => {
     const { userId: sbtActorId } = requireRole(req);
     const receipt = await contractSetTokenSBT(rows[0].token_id, enabled);
     logNftActivity({
-      tokenId:     rows[0].token_id,
-      action:      enabled ? "soulbound_set" : "soulbound_remove",
-      source:      "on_chain",
-      platform:    "bearth_admin",
+      tokenId: rows[0].token_id,
+      action: enabled ? "soulbound_set" : "soulbound_remove",
+      source: "on_chain",
+      platform: "bearth_admin",
       actorUserId: sbtActorId,
-      txHash:      receipt.hash,
-      details:     { enabled },
+      txHash: receipt.hash,
+      details: { enabled },
     });
     // DB update is handled automatically via TokenSBTChanged event listener
     res.json({ ok: true, txHash: receipt.hash });

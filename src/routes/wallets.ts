@@ -10,8 +10,8 @@ const router = Router();
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 const connectLimit = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: "draft-7", legacyHeaders: false });
-const readLimit    = rateLimit({ windowMs: 60_000, limit: 100, standardHeaders: "draft-7", legacyHeaders: false });
-const writeLimit   = rateLimit({ windowMs: 60_000, limit: 10,  standardHeaders: "draft-7", legacyHeaders: false });
+const readLimit = rateLimit({ windowMs: 60_000, limit: 100, standardHeaders: "draft-7", legacyHeaders: false });
+const writeLimit = rateLimit({ windowMs: 60_000, limit: 10, standardHeaders: "draft-7", legacyHeaders: false });
 
 // ── POST /api/wallets/connect ─────────────────────────────────────────────────
 // Public — no auth. Called immediately when a customer connects their wallet.
@@ -30,12 +30,12 @@ router.post("/connect", connectLimit, async (req: Request, res: Response, next: 
       return;
     }
     res.json({
-      address:       row.address        as string,
-      isBlocked:     row.is_blocked     as boolean,
+      address: row.address as string,
+      isBlocked: row.is_blocked as boolean,
       blockedReason: row.blocked_reason as string | null,
       isAllowlisted: row.is_whitelisted as boolean,
-      registeredNow: row.registered     as boolean,
-      addedAt:       (row.added_at as Date)?.toISOString() ?? null,
+      registeredNow: row.registered as boolean,
+      addedAt: (row.added_at as Date)?.toISOString() ?? null,
     });
   } catch (e) { next(e); }
 });
@@ -45,8 +45,8 @@ router.post("/connect", connectLimit, async (req: Request, res: Response, next: 
 router.get("/", readLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
     requirePermission(req, "customers.view");
-    const limit       = Math.min(Number(req.query.limit  ?? 50), 500);
-    const offset      = Number(req.query.offset ?? 0);
+    const limit = Math.min(Number(req.query.limit ?? 50), 500);
+    const offset = Number(req.query.offset ?? 0);
     const blockedOnly = req.query.blocked === "true";
     const { rows } = await pool.query(
       "SELECT * FROM wallets_list($1, $2, $3)",
@@ -55,14 +55,14 @@ router.get("/", readLimit, async (req: Request, res: Response, next: NextFunctio
     const total = rows.length > 0 ? Number(rows[0].total_count) : 0;
     res.json({
       wallets: rows.map(r => ({
-        id:            r.id,
-        address:       r.address,
-        userId:        r.user_id ?? null,
+        id: r.id,
+        address: r.address,
+        userId: r.user_id ?? null,
         isAllowlisted: r.is_whitelisted,
-        isBlocked:     r.is_blocked,
+        isBlocked: r.is_blocked,
         blockedReason: r.blocked_reason ?? null,
-        blockedAt:     r.blocked_at ? (r.blocked_at as Date).toISOString() : null,
-        addedAt:       r.added_at  ? (r.added_at  as Date).toISOString() : null,
+        blockedAt: r.blocked_at ? (r.blocked_at as Date).toISOString() : null,
+        addedAt: r.added_at ? (r.added_at as Date).toISOString() : null,
       })),
       total, limit, offset,
       hasMore: offset + limit < total,
@@ -84,22 +84,19 @@ router.get("/:address", readLimit, async (req: Request, res: Response, next: Nex
     if (!rows[0]) throw new HttpError(404, "Wallet not found");
     const r = rows[0];
     res.json({
-      id:            r.id,
-      address:       r.address,
-      userId:        r.user_id ?? null,
+      id: r.id,
+      address: r.address,
+      userId: r.user_id ?? null,
       isAllowlisted: r.is_whitelisted,
-      isBlocked:     r.is_blocked,
+      isBlocked: r.is_blocked,
       blockedReason: r.blocked_reason ?? null,
-      blockedAt:     r.blocked_at ? (r.blocked_at as Date).toISOString() : null,
-      addedAt:       r.added_at  ? (r.added_at  as Date).toISOString() : null,
+      blockedAt: r.blocked_at ? (r.blocked_at as Date).toISOString() : null,
+      addedAt: r.added_at ? (r.added_at as Date).toISOString() : null,
     });
   } catch (e) { next(e); }
 });
 
 // ── POST /api/wallets/:address/block ──────────────────────────────────────────
-// Admin: block a wallet both in DB and on-chain.
-// Body: { reason?: string, onChain?: boolean }
-// onChain defaults to true — set false to block only in DB (faster, no gas).
 router.post("/:address/block", writeLimit, async (req: Request, res: Response, next: NextFunction) => {
   try {
     requirePermission(req, "customers.edit");
@@ -135,28 +132,28 @@ router.post("/:address/block", writeLimit, async (req: Request, res: Response, n
       } catch (chainErr) {
         // Return partial success — DB block applied, on-chain failed
         res.status(207).json({
-          ok:            true,
-          dbBlocked:     true,
+          ok: true,
+          dbBlocked: true,
           onChainBlocked: false,
-          onChainError:  chainErr instanceof Error ? chainErr.message : "On-chain block failed",
-          address:       dbRow.address,
-          isBlocked:     dbRow.is_blocked,
+          onChainError: chainErr instanceof Error ? chainErr.message : "On-chain block failed",
+          address: dbRow.address,
+          isBlocked: dbRow.is_blocked,
           blockedReason: dbRow.blocked_reason ?? null,
-          blockedAt:     dbRow.blocked_at ? (dbRow.blocked_at as Date).toISOString() : null,
+          blockedAt: dbRow.blocked_at ? (dbRow.blocked_at as Date).toISOString() : null,
         });
         return;
       }
     }
 
     res.json({
-      ok:             true,
-      dbBlocked:      true,
+      ok: true,
+      dbBlocked: true,
       onChainBlocked: onChain,
       txHash,
-      address:        dbRow.address,
-      isBlocked:      dbRow.is_blocked,
-      blockedReason:  dbRow.blocked_reason ?? null,
-      blockedAt:      dbRow.blocked_at ? (dbRow.blocked_at as Date).toISOString() : null,
+      address: dbRow.address,
+      isBlocked: dbRow.is_blocked,
+      blockedReason: dbRow.blocked_reason ?? null,
+      blockedAt: dbRow.blocked_at ? (dbRow.blocked_at as Date).toISOString() : null,
     });
   } catch (e) { next(e); }
 });
@@ -185,12 +182,12 @@ router.delete("/:address/block", writeLimit, async (req: Request, res: Response,
         txHash = receipt.hash;
       } catch (chainErr) {
         res.status(207).json({
-          ok:              true,
-          dbUnblocked:     true,
+          ok: true,
+          dbUnblocked: true,
           onChainUnblocked: false,
-          onChainError:    chainErr instanceof Error ? chainErr.message : "On-chain unblock failed",
-          address:         rows[0].address,
-          isBlocked:       rows[0].is_blocked,
+          onChainError: chainErr instanceof Error ? chainErr.message : "On-chain unblock failed",
+          address: rows[0].address,
+          isBlocked: rows[0].is_blocked,
         });
         return;
       }
