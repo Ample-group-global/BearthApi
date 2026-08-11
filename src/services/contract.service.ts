@@ -635,7 +635,7 @@ export async function contractGetCollectionInfo(): Promise<{
   const [currentPhase, maxSupply, totalMinted, sbt, purchaseLimitEnabled, normalMaxPerWallet] = await Promise.all([
     c.currentPhase() as Promise<bigint>,
     c.MAX_SUPPLY() as Promise<bigint>,
-    c.totalMinted() as Promise<bigint>,
+    c.totalSupply() as Promise<bigint>,
     c.sbt() as Promise<boolean>,
     c.purchaseLimitEnabled() as Promise<boolean>,
     c.normalMaxPerWallet() as Promise<bigint>,

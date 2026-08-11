@@ -276,16 +276,19 @@ router.post("/testnet-reset", requireAdmin, async (req, res, next) => {
     await pool.query("TRUNCATE nft_activity_log");
 
     // Reset collection config counters to match fresh contract state
+    // Treasury wallet synced from env so DB stays consistent with deployment
+    const treasuryWallet = process.env.TREASURY_WALLET ?? null;
     await pool.query(`
       UPDATE nft_collection_config SET
-        current_phase  = 'Whitelist',
-        reveal_count   = 0,
-        total_counter  = 0,
-        reveal_uri     = NULL,
-        synced_at      = NULL,
-        updated_at     = NOW()
+        current_phase   = 'Whitelist',
+        reveal_count    = 0,
+        total_counter   = 0,
+        reveal_uri      = NULL,
+        treasury_wallet = COALESCE($1, treasury_wallet),
+        synced_at       = NULL,
+        updated_at      = NOW()
       WHERE id = 1
-    `);
+    `, [treasuryWallet]);
 
     await pool.query(`
       UPDATE customer_wallets SET
