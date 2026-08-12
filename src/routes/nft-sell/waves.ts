@@ -6,6 +6,8 @@ import {
   contractSetWavePrice,
   contractTreasuryClose,
   contractGetWaveInfo,
+  contractGetWavePurchaseLimit,
+  contractSetWavePurchaseLimit,
   contractSetAllowlistRoot,
   resyncFromBlock,
 } from "../../services/contract.service";
@@ -100,7 +102,10 @@ router.get("/:num", async (req, res, next) => {
     let onChain = null;
     if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL) {
       try {
-        const info = await withChainTimeout(contractGetWaveInfo(num), 6000);
+        const [info, purchaseLimit] = await Promise.all([
+          withChainTimeout(contractGetWaveInfo(num), 6000),
+          withChainTimeout(contractGetWavePurchaseLimit(num), 6000),
+        ]);
         if (info) {
           onChain = {
             price: ethers.formatEther(info.price),
@@ -111,6 +116,7 @@ router.get("/:num", async (req, res, next) => {
             closed: info.closed,
             active: info.active,
             revealed: info.revealed,
+            purchaseLimit: purchaseLimit ?? 0,
           };
         }
       } catch { onChain = null; }
@@ -215,7 +221,48 @@ router.put("/:num/price", requireAdmin, async (req, res, next) => {
 
     const priceWei = ethers.parseEther(priceStr);
     const receipt = await contractSetWavePrice(num, priceWei);
+
+    // Mirror confirmed price to DB so listings, cards, and exports show the correct value
+    await pool.query(
+      "UPDATE nft_waves SET default_price_eth = $2, last_tx_hash = $3, updated_at = NOW() WHERE wave_number = $1",
+      [num, parseFloat(priceStr), receipt.hash],
+    );
+
     res.json({ ok: true, txHash: receipt.hash });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/nft-sell/waves/:num/purchase-limit  set per-wave mint cap (0 = use global limit)
+// Body: { maxPerWallet: number }
+router.put("/:num/purchase-limit", requireAdmin, async (req, res, next) => {
+  try {
+    const num = parseInt(req.params.num, 10);
+    const maxPerWallet = parseInt(req.body.maxPerWallet, 10);
+
+    if (isNaN(num) || num < 1 || num > 7)
+      return res.status(400).json({ error: "Wave number must be 1-7" });
+    if (isNaN(maxPerWallet) || maxPerWallet < 0)
+      return res.status(400).json({ error: "maxPerWallet must be a non-negative integer (0 = use global limit)" });
+
+    const { rows } = await pool.query(
+      "SELECT wave_number, wave_closed, is_revealed FROM nft_waves WHERE wave_number = $1",
+      [num],
+    );
+    if (!rows[0]) return res.status(404).json({ error: `Wave ${num} not found` });
+    if (rows[0].is_revealed)
+      return res.status(409).json({ error: `Wave ${num} has already been revealed — purchase limit cannot be changed.` });
+
+    const receipt = await contractSetWavePurchaseLimit(num, maxPerWallet);
+
+    // Mirror to DB
+    await pool.query(
+      "UPDATE nft_waves SET max_per_wallet = $2, updated_at = NOW() WHERE wave_number = $1",
+      [num, maxPerWallet],
+    );
+
+    res.json({ ok: true, txHash: receipt.hash, waveNum: num, maxPerWallet });
   } catch (err) {
     next(err);
   }

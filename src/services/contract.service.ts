@@ -693,6 +693,20 @@ export async function contractGetWaveInfo(waveNum: number): Promise<{
   return { price, qty, soldCount, startTime, endTime, closed, active, revealed };
 }
 
+export async function contractGetWavePurchaseLimit(waveNum: number): Promise<number> {
+  const limit: bigint = await (getContractReadOnly().wavePurchaseLimit(waveNum) as Promise<bigint>);
+  return Number(limit);
+}
+
+export async function contractSetWavePurchaseLimit(
+  waveNum: number,
+  maxPerWallet: number
+): Promise<ethers.TransactionReceipt> {
+  if (waveNum < 1 || waveNum > 7) throw new Error("Wave number must be 1-7");
+  if (maxPerWallet < 0) throw new Error("maxPerWallet must be >= 0");
+  return callContract("setWavePurchaseLimit", [waveNum, maxPerWallet]);
+}
+
 export async function contractRevealWave(
   waveNum: number,
   uri: string
