@@ -4,7 +4,7 @@ import pool from "../pool";
 import { requirePermission } from "../adminAuth";
 import { HttpError } from "../errors";
 import { contractBlockAccount } from "../services/contract.service";
-import { addWalletAndSyncAsync } from "../services/customer-whitelist.service";
+import { autoRegisterAndSync } from "../services/customer-whitelist.service";
 
 const router = Router();
 
@@ -30,9 +30,9 @@ router.post("/connect", connectLimit, async (req: Request, res: Response, next: 
       res.status(500).json({ error: "Failed to register wallet" });
       return;
     }
-    // Auto-whitelist: new wallets or previously unwhitelisted wallets get synced to chain.
+    // Auto-register: new wallets get a stub customer user created and Merkle root rebuilt.
     if (row.registered || !row.is_whitelisted) {
-      addWalletAndSyncAsync(address, "wallet_connect").catch(() => null);
+      autoRegisterAndSync(address, "wallet_connect").catch(() => null);
     }
     res.json({
       address: row.address as string,

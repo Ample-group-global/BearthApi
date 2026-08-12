@@ -155,8 +155,8 @@ async function syncEvent(
         const onChainCount: bigint = await getContractReadOnly().waveSoldCount(waveNum);
         await pool.query("SELECT nft_wave_sync_sold($1,$2,$3)", [waveNumN, Number(onChainCount), txHash]);
         await pool.query("SELECT nft_wallet_sync_mint($1,$2,$3,$4)", [buyer.toLowerCase(), Number(qty), isWl || null, txHash]);
-        // Record buyer in customer_whitelist (direct pool query to avoid circular import)
-        await pool.query("SELECT customer_whitelist_upsert($1, $2, NULL)", [buyer.toLowerCase(), "customer_mint"]);
+        // Auto-register buyer (creates customer user if wallet has no user_id)
+        await pool.query("SELECT customer_wallet_auto_register($1, $2)", [buyer.toLowerCase(), "customer_mint"]);
         break;
       }
 

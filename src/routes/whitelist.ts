@@ -6,6 +6,7 @@ import { buildMerkleTree, getProof } from "../merkle";
 import { requirePermission } from "../adminAuth";
 import { HttpError } from "../errors";
 import { contractSetAllowlistRoot } from "../services/contract.service";
+import { triggerChainSync } from "../services/customer-whitelist.service";
 
 const router = Router();
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
@@ -202,6 +203,48 @@ router.delete("/merkle-root", writeLimit, async (req: Request, res: Response, ne
   } finally {
     client.release();
   }
+});
+
+// POST /api/whitelist/register - admin registers a wallet with user type (strict mode).
+// Creates a user with the chosen role and links the wallet. Triggers chain sync.
+router.post("/register", writeLimit, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    requirePermission(req, "nft.waves.manage");
+    const {
+      address, role_code = "customer",
+      first_name, last_name, email,
+    } = (req.body ?? {}) as {
+      address?: string;
+      role_code?: string;
+      first_name?: string;
+      last_name?: string;
+      email?: string;
+    };
+
+    if (!address || !ETH_ADDRESS_RE.test(address)) {
+      res.status(422).json({ error: "Invalid Ethereum address" }); return;
+    }
+    if (!first_name?.trim()) {
+      res.status(422).json({ error: "first_name is required" }); return;
+    }
+
+    const { rows } = await pool.query(
+      "SELECT * FROM customer_wallet_register_with_details($1,$2,$3,$4,$5,$6)",
+      [address, role_code, first_name.trim(), last_name?.trim() ?? "", email ?? null, "manual"]
+    );
+    const row = rows[0];
+
+    // Rebuild Merkle root in background
+    triggerChainSync();
+
+    res.json({
+      ok: true,
+      userId: row.out_user_id,
+      walletAddress: row.out_wallet,
+      roleCode: row.out_role_code,
+      isNewUser: row.out_is_new_user,
+    });
+  } catch (e) { next(e); }
 });
 
 // POST /api/whitelist/add - add (no replace)
