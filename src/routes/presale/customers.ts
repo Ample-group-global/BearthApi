@@ -50,6 +50,14 @@ router.post("/", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+router.get("/wallet-status", async (req, res, next) => {
+  try {
+    requirePermission(req, "customers.view");
+    const wallets = await customersService.listAllCustomerWallets();
+    res.json({ wallets });
+  } catch (e) { next(e); }
+});
+
 router.get("/:id", async (req, res, next) => {
   try {
     requirePermission(req, "customers.view");

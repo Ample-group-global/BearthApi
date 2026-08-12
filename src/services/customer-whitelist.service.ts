@@ -5,9 +5,7 @@ import { contractSetAllowlistRoot } from "./contract.service";
 // ── Chain sync ────────────────────────────────────────────────────────────────
 
 async function rebuildMerkleAndPush(): Promise<void> {
-  const { rows } = await pool.query(
-    "SELECT address FROM customer_wallets WHERE is_whitelisted = TRUE"
-  );
+  const { rows } = await pool.query("SELECT * FROM whitelist_addresses_all()");
   const addresses = rows.map((r: { address: string }) => r.address);
   if (!addresses.length) return;
   const { root } = buildMerkleTree(addresses);

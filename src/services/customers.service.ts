@@ -83,3 +83,26 @@ export async function removeCustomerWallet(walletId: string) {
   );
   return rows[0] ?? null;
 }
+
+export async function listAllCustomerWallets() {
+  const { rows } = await pool.query(`
+    SELECT
+      u.id               AS user_id,
+      u.user_code,
+      CONCAT(u.first_name, ' ', u.last_name) AS full_name,
+      u.email,
+      cw.id              AS wallet_id,
+      cw.address,
+      cw.is_whitelisted,
+      cw.is_blocked,
+      cw.is_vip,
+      cw.wallet_total_minted,
+      cw.added_at
+    FROM users u
+    INNER JOIN customer_wallets cw ON cw.user_id = u.id
+    WHERE u.role_id = (SELECT id FROM roles WHERE code = 'customer')
+      AND u.is_active = TRUE
+    ORDER BY u.first_name, u.last_name, cw.added_at
+  `);
+  return toCamel(rows);
+}
