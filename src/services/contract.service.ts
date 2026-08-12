@@ -421,13 +421,6 @@ export async function contractTreasuryClose(
   return callContract("treasuryClose", [waveNum, to]);
 }
 
-export async function contractRevealAll(
-  revealUri: string
-): Promise<ethers.TransactionReceipt> {
-  if (!revealUri?.startsWith("ipfs://")) throw new Error("Reveal URI must start with ipfs://");
-  return callContract("revealAll", [revealUri]);
-}
-
 export async function contractSetRoyalty(
   receiverAddress: string,
   feeBps: number

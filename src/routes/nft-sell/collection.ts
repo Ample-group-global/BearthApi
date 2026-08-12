@@ -2,9 +2,7 @@ import { Router } from "express";
 import { ethers } from "ethers";
 import pool from "../../pool";
 import {
-  contractRevealAll,
   contractSetPhase,
-  contractSetMerkleRoot,
   contractSetTreasuryWallet,
   contractWithdraw,
   contractReserveMint,
@@ -95,20 +93,6 @@ router.post("/phase", requireAdmin, async (req, res, next) => {
   }
 });
 
-// POST /api/nft-sell/collection/reveal — reveal collection with reveal URI
-// Body: { revealUri: string }  e.g. "ipfs://Qm..."
-// Requires: currentPhase=PaidMint AND all 7 waves closed (enforced on-chain)
-router.post("/reveal", requireAdmin, async (req, res, next) => {
-  try {
-    const { revealUri } = req.body as { revealUri: string };
-    if (!revealUri) return res.status(400).json({ error: "revealUri required" });
-    const receipt = await contractRevealAll(revealUri);
-    res.json({ ok: true, txHash: receipt.hash });
-  } catch (err) {
-    next(err);
-  }
-});
-
 // POST /api/nft-sell/collection/reveal-wave — reveal a single wave with its URI
 // Body: { waveNum: number, uri: string }  e.g. { waveNum: 1, uri: "ipfs://Qm..." }
 // Uses executeWaveReveal for random token assignment (Fisher-Yates shuffle)
@@ -129,19 +113,6 @@ router.post("/reveal-wave", requireAdmin, async (req, res, next) => {
     // Execute reveal with Fisher-Yates random token assignment
     const txHash = await executeWaveReveal(Number(waveNum));
     res.json({ success: true, txHash, waveNum: Number(waveNum) });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /api/nft-sell/collection/merkle-root — update whitelist merkle root
-// Body: { root: string }
-router.post("/merkle-root", requireAdmin, async (req, res, next) => {
-  try {
-    const { root } = req.body as { root: string };
-    if (!root) return res.status(400).json({ error: "root required" });
-    const receipt = await contractSetMerkleRoot(root);
-    res.json({ ok: true, txHash: receipt.hash });
   } catch (err) {
     next(err);
   }
@@ -264,13 +235,14 @@ router.post("/tokens/rarity-batch", requireAdmin, async (req, res, next) => {
 // Returns: phase, minted, remaining, WL stats, Paid stats, revenue, reveal status
 router.get("/stats", async (_req, res, next) => {
   try {
-    const [configResult, wavesResult, onChainResult, revenueResult] = await Promise.all([
+    const [configResult, wavesResult, onChainResult, revenueResult, treasuryWalletResult] = await Promise.all([
       pool.query("SELECT nft_collection_config_get()", []),
       pool.query("SELECT * FROM nft_wave_get_all()", []),
       process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL
         ? withChainTimeout(contractGetCollectionInfo()).catch(() => null)
         : Promise.resolve(null),
       pool.query("SELECT * FROM nft_revenue_summary()", []).catch(() => ({ rows: [null] })),
+      pool.query("SELECT COUNT(*) AS cnt FROM nft_records WHERE mint_type = 'treasury' AND token_id IS NOT NULL").catch(() => ({ rows: [{ cnt: 0 }] })),
     ]);
     const blindBoxMetaUri = configResult.rows[0]?.nft_collection_config_get?.blind_box_uri ?? null;
 
@@ -310,6 +282,7 @@ router.get("/stats", async (_req, res, next) => {
       blindBoxImageUrl: await resolveBlindBoxImageUrl(blindBoxMetaUri),
       revealed: Number(cfg?.reveal_count ?? 0),
       isRevealed: (cfg?.current_phase ?? "") === "Revealed",
+      treasuryWalletCount: Number(treasuryWalletResult.rows[0]?.cnt ?? 0),
       adminRevenue: rev ? {
         totalEth: Number(rev.admin_sales_total_eth ?? 0),
         totalSales: Number(rev.admin_sales_count ?? 0),
