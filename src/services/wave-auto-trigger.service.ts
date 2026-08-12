@@ -24,6 +24,35 @@ function withTxTimeout<T>(p: Promise<T>, ms = 20_000): Promise<T> {
 const hasContractEnv =
   () => !!(process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL && process.env.FIXED_PRIVATE_KEY);
 
+// Mirrors the DB sync the manual treasury-close route performs after contractTreasuryClose.
+async function syncTreasuryCloseDB(waveNum: number): Promise<void> {
+  await pool.query(
+    `UPDATE nft_records nr
+        SET delivery_status_id = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = 'treasury_wallet'),
+            delivered_at       = NOW(),
+            updated_at         = NOW()
+      WHERE nr.wave_id = (SELECT id FROM nft_waves WHERE wave_number = $1)
+        AND nr.token_id IS NULL
+        AND nr.delivery_status_id IN (
+          SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('reserved','treasury_pending','pool_assigned')
+        )`,
+    [waveNum],
+  );
+  await pool.query(
+    `UPDATE nft_waves
+        SET close_action          = 'treasury',
+            treasury_minted_count = (
+              SELECT COUNT(*) FROM nft_records nr2
+                JOIN lookup_values lv ON lv.id = nr2.delivery_status_id
+                WHERE nr2.wave_id = (SELECT id FROM nft_waves WHERE wave_number = $1)
+                  AND lv.code IN ('treasury_wallet','transferred')
+            ),
+            updated_at = NOW()
+      WHERE wave_number = $1`,
+    [waveNum],
+  );
+}
+
 async function checkAndTriggerWaves(): Promise<void> {
   if (running) return;
   running = true;
@@ -77,7 +106,6 @@ async function checkAndTriggerWaves(): Promise<void> {
         } catch (e) {
           logger.warn(`[wave-auto-trigger] Wave ${num} on-chain start failed (will still mark triggered to prevent retry loops)`, e);
         }
-        // Always mark triggered regardless of TX outcome — prevents infinite retry loops
         try {
           await pool.query(
             `UPDATE nft_waves SET wave_start_triggered = TRUE,
@@ -98,7 +126,6 @@ async function checkAndTriggerWaves(): Promise<void> {
         wave.wave_start_triggered &&
         !wave.wave_end_triggered
       ) {
-        // Mark DB closed first so future ticks skip this wave
         try {
           await pool.query(
             `UPDATE nft_waves SET wave_end_triggered = TRUE, wave_closed = TRUE, status = 'closed', updated_at = NOW() WHERE wave_number = $1`,
@@ -125,6 +152,7 @@ async function checkAndTriggerWaves(): Promise<void> {
               try {
                 await withTxTimeout(contractTreasuryClose(num, null), 30_000);
                 logger.info(`[wave-auto-trigger] Wave ${num} auto-treasury close executed`);
+                await syncTreasuryCloseDB(num);
               } catch (e) {
                 logger.warn(`[wave-auto-trigger] Wave ${num} auto-treasury close failed (retry manually via UI)`, e);
               }
@@ -160,6 +188,7 @@ async function checkAndTriggerWaves(): Promise<void> {
             try {
               await withTxTimeout(contractTreasuryClose(num, null), 30_000);
               logger.info(`[wave-auto-trigger] Wave ${num} auto-treasury close executed after reveal`);
+              await syncTreasuryCloseDB(num);
             } catch (e) {
               logger.warn(`[wave-auto-trigger] Wave ${num} auto-treasury close after reveal failed (retry manually via UI)`, e);
             }
