@@ -973,7 +973,7 @@ BEGIN
     AND (p_delivery_status_code IS NULL OR nr.delivery_status_code = p_delivery_status_code)
     AND (p_stage_code           IS NULL OR nr.stage_code           = p_stage_code)
     AND (p_revealed             IS NULL OR nr.is_revealed          = p_revealed)
-  ORDER BY nr.token_id ASC NULLS LAST, nr.serial_number ASC
+  ORDER BY nr.token_id ASC NULLS LAST, REGEXP_REPLACE(nr.serial_number, '[^0-9]', '', 'g')::INTEGER ASC
   LIMIT p_limit OFFSET p_offset;
 END;
 $$;
@@ -1249,7 +1249,7 @@ BEGIN
     AND (p_stage_code           IS NULL OR nr.stage_code           = p_stage_code)
     AND (p_revealed             IS NULL OR nr.is_revealed          = p_revealed)
     AND (p_wave_id              IS NULL OR nr.wave_id              = p_wave_id)
-  ORDER BY nr.token_id ASC NULLS LAST, nr.serial_number ASC
+  ORDER BY nr.token_id ASC NULLS LAST, REGEXP_REPLACE(nr.serial_number, '[^0-9]', '', 'g')::INTEGER ASC
   LIMIT p_limit OFFSET p_offset;
 END;
 $$;

@@ -2,7 +2,7 @@ import pool from "../pool";
 import { toCamel } from "../utils/camel";
 
 const SORT_COLS: Record<string, string> = {
-  serial_number:   "nr.serial_number",
+  serial_number:   "REGEXP_REPLACE(nr.serial_number, '[^0-9]', '', 'g')::INTEGER",
   token_id:        "nr.token_id",
   wave:            "w.wave_number",
   price_eth:       "COALESCE(nr.price_eth, w.default_price_eth)",
@@ -43,7 +43,7 @@ export async function listNft(params: {
   const dir     = sortDir === "desc" ? "DESC" : "ASC";
   const orderBy = sortCol
     ? `${sortCol} ${dir} NULLS LAST`
-    : "nr.token_id ASC NULLS LAST, nr.serial_number ASC";
+    : "nr.token_id ASC NULLS LAST, REGEXP_REPLACE(nr.serial_number, '[^0-9]', '', 'g')::INTEGER ASC";
 
   const { rows } = await pool.query(
     `SELECT
