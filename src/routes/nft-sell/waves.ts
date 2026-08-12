@@ -100,17 +100,19 @@ router.get("/:num", async (req, res, next) => {
     let onChain = null;
     if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL) {
       try {
-        const info = await contractGetWaveInfo(num);
-        onChain = {
-          price: ethers.formatEther(info.price),
-          qty: Number(info.qty),
-          soldCount: Number(info.soldCount),
-          startTime: Number(info.startTime),
-          endTime: Number(info.endTime),
-          closed: info.closed,
-          active: info.active,
-          revealed: info.revealed,
-        };
+        const info = await withChainTimeout(contractGetWaveInfo(num), 6000);
+        if (info) {
+          onChain = {
+            price: ethers.formatEther(info.price),
+            qty: Number(info.qty),
+            soldCount: Number(info.soldCount),
+            startTime: Number(info.startTime),
+            endTime: Number(info.endTime),
+            closed: info.closed,
+            active: info.active,
+            revealed: info.revealed,
+          };
+        }
       } catch { onChain = null; }
     }
     res.json({ wave, onChain });
