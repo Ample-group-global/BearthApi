@@ -17,6 +17,7 @@ const SORT_COLS: Record<string, string> = {
 
 export async function listNft(params: {
   search?: string | null;
+  ownerAddress?: string | null;
   deliveryStatusCode?: string | null;
   stageCode?: string | null;
   revealed?: boolean | null;
@@ -33,7 +34,7 @@ export async function listNft(params: {
   sortDir?: "asc" | "desc" | null;
 }) {
   const {
-    search = null, deliveryStatusCode = null, stageCode = null,
+    search = null, ownerAddress = null, deliveryStatusCode = null, stageCode = null,
     revealed = null, minted = null, waveId = null, waveNumber = null,
     mintedFrom = null, mintedTo = null, mintType = null, rarityTier = null,
     limit = 20, offset = 0, sortBy = null, sortDir = null,
@@ -81,9 +82,10 @@ export async function listNft(params: {
        AND ($11::DATE IS NULL OR nr.minted_at <  ($11::DATE + interval '1 day'))
        AND ($12::VARCHAR IS NULL OR nr.mint_type = $12)
        AND ($13::VARCHAR IS NULL OR LOWER(nr.rarity_tier) = LOWER($13))
+       AND ($14::TEXT IS NULL OR LOWER(nr.owner_address) = LOWER($14))
      ORDER BY ${orderBy}
      LIMIT $7 OFFSET $8`,
-    [search, deliveryStatusCode, stageCode, revealed, waveId, waveNumber, limit, offset, minted, mintedFrom, mintedTo, mintType, rarityTier],
+    [search, deliveryStatusCode, stageCode, revealed, waveId, waveNumber, limit, offset, minted, mintedFrom, mintedTo, mintType, rarityTier, ownerAddress],
   );
   const { rows: statsRows } = await pool.query(
     `SELECT

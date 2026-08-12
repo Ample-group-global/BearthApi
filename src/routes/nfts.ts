@@ -10,7 +10,7 @@ const router = Router();
 router.get("/", async (req, res, next) => {
   try {
     const {
-      search, delivery_status, stage, revealed, minted,
+      search, owner_address, delivery_status, stage, revealed, minted,
       wave_id, wave_number, minted_from, minted_to, mint_type, rarity_tier,
       limit, offset, sort_by, sort_dir,
     } = req.query as Record<string, string>;
@@ -18,8 +18,10 @@ router.get("/", async (req, res, next) => {
     const VALID_MINT_TYPES = new Set(["free", "paid", "admin", "treasury"]);
     const VALID_RARITY_TIERS = new Set(["legendary", "epic", "rare", "common"]);
 
+    const ETH_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
     const result = await nftService.listNft({
       search: search || null,
+      ownerAddress: (owner_address && ETH_ADDR_RE.test(owner_address)) ? owner_address : null,
       deliveryStatusCode: delivery_status || null,
       stageCode: stage || null,
       revealed: revealed === "true" ? true : revealed === "false" ? false : null,
