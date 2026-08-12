@@ -1,4 +1,4 @@
-﻿import { config as loadEnv } from "dotenv";
+import { config as loadEnv } from "dotenv";
 if (!process.env.DATABASE_URL) loadEnv({ path: ".env.local" });
 import express from "express";
 import cors from "cors";

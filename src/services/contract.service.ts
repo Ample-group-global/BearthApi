@@ -1,4 +1,4 @@
-﻿import { ethers, type Contract, type EventLog } from "ethers";
+import { ethers, type Contract, type EventLog } from "ethers";
 import pool from "../pool";
 import BearthNFT_ABI from "../abi/BearthGenesisNFT.abi.json";
 import { getProvider } from "../utils/contract-factory";
@@ -247,7 +247,7 @@ async function syncEvent(
         const tokenIdN = Number(tokenId);
         if (from === ethers.ZeroAddress) {
           // Mint event — sync DB record and log
-          const waveNum: bigint = await getContractReadOnly().tokenWave(tokenId);
+          const waveNum: bigint = await getContractReadOnly().getTokenWave(tokenId);
           const waveNumN = Number(waveNum);
           await pool.query("SELECT nft_record_sync_mint($1,$2,$3,$4)", [tokenIdN, to.toLowerCase(), waveNumN, txHash]);
           logNftActivity({ tokenId: tokenIdN, action: "mint", source: "on_chain", platform: "bearth", toWallet: to.toLowerCase(), txHash, blockNumber, details: { waveNumber: waveNumN } });
@@ -304,7 +304,7 @@ export function startEventListeners(): void {
   const watchedEvents = [
     "WaveSold", "WaveScheduleUpdated", "WavePriceUpdated", "WaveRevealed",
     "PhaseChanged", "PurchaseLimitChanged", "VIPStatusChanged",
-    "RoyaltyUpdated", "SBTChanged", "TokenSBTChanged", "Transfer",
+    "WaveClosedTreasury", "RoyaltyUpdated", "SBTChanged", "TokenSBTChanged", "Transfer",
     "TransferValidatorUpdated", "Paused", "Unpaused",
   ];
 

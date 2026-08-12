@@ -12,10 +12,10 @@ function getPool(): Pool {
     ssl: (url.includes("localhost") || url.includes("127.0.0.1"))
       ? false
       : { rejectUnauthorized: false },
-    max: 3,
-    min: 0,
+    max: 10,
+    min: 1,
     idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 8_000,
+    connectionTimeoutMillis: 10_000,
     keepAlive: true,
     keepAliveInitialDelayMillis: 5_000,
   });

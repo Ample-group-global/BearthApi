@@ -1,6 +1,7 @@
 import pool from "../pool";
 import {
   contractSetWaveSchedule,
+  contractTreasuryClose,
 } from "./contract.service";
 import { logger } from "../logger";
 
@@ -10,6 +11,18 @@ async function getRevealService() {
 }
 
 let running = false;
+
+function withTxTimeout<T>(p: Promise<T>, ms = 20_000): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`TX timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
+const hasContractEnv =
+  () => !!(process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL && process.env.FIXED_PRIVATE_KEY);
 
 async function checkAndTriggerWaves(): Promise<void> {
   if (running) return;
@@ -29,10 +42,11 @@ async function checkAndTriggerWaves(): Promise<void> {
       status: string;
       is_revealed: boolean;
       reveal_strategy: string;
+      unsold_strategy: string;
     }>(
       `SELECT id, wave_number, scheduled_start, scheduled_end, reveal_scheduled_at,
               wave_start_triggered, wave_end_triggered, wave_reveal_triggered, status, is_revealed,
-              reveal_strategy
+              reveal_strategy, unsold_strategy
          FROM nft_waves
         WHERE (
           (scheduled_start IS NOT NULL AND scheduled_start <= $1 AND wave_start_triggered = FALSE)
@@ -46,25 +60,24 @@ async function checkAndTriggerWaves(): Promise<void> {
     for (const wave of waves) {
       const num = wave.wave_number;
 
-      // Auto-start: push schedule on-chain and mark active
+      // ── Wave start ────────────────────────────────────────────────────────────
       if (
         wave.scheduled_start &&
         new Date(wave.scheduled_start) <= new Date(now) &&
         !wave.wave_start_triggered
       ) {
         try {
-          if (process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL && process.env.FIXED_PRIVATE_KEY) {
+          if (hasContractEnv()) {
             const startUnix = Math.floor(new Date(wave.scheduled_start).getTime() / 1000);
             const endUnix = wave.scheduled_end
               ? Math.floor(new Date(wave.scheduled_end).getTime() / 1000)
-              : startUnix + 86400 * 30; // 30-day fallback if no end set
-            await contractSetWaveSchedule(num, startUnix, endUnix);
+              : startUnix + 86400 * 30;
+            await withTxTimeout(contractSetWaveSchedule(num, startUnix, endUnix));
           }
         } catch (e) {
           logger.warn(`[wave-auto-trigger] Wave ${num} on-chain start failed (will still mark triggered to prevent retry loops)`, e);
         }
         // Always mark triggered regardless of TX outcome — prevents infinite retry loops
-        // Respect 'paused' — if admin paused the wave, keep that status; only set 'active' otherwise
         try {
           await pool.query(
             `UPDATE nft_waves SET wave_start_triggered = TRUE,
@@ -72,30 +85,57 @@ async function checkAndTriggerWaves(): Promise<void> {
               updated_at = NOW() WHERE wave_number = $1`,
             [num],
           );
-          console.log(`[wave-auto-trigger] Wave ${num} started (status=${wave.status === 'paused' ? 'paused' : 'active'})`);
+          console.log(`[wave-auto-trigger] Wave ${num} started`);
         } catch (dbErr) {
-          logger.warn(`[wave-auto-trigger] Wave ${num} DB mark failed`, dbErr);
+          logger.warn(`[wave-auto-trigger] Wave ${num} DB mark-start failed`, dbErr);
         }
       }
 
+      // ── Wave end ──────────────────────────────────────────────────────────────
       if (
         wave.scheduled_end &&
         new Date(wave.scheduled_end) <= new Date(now) &&
         wave.wave_start_triggered &&
         !wave.wave_end_triggered
       ) {
+        // Mark DB closed first so future ticks skip this wave
         try {
           await pool.query(
             `UPDATE nft_waves SET wave_end_triggered = TRUE, wave_closed = TRUE, status = 'closed', updated_at = NOW() WHERE wave_number = $1`,
             [num],
           );
-          console.log(`[wave-auto-trigger] Wave ${num} closed`);
+          console.log(`[wave-auto-trigger] Wave ${num} closed in DB`);
         } catch (e) {
-          logger.warn(`[wave-auto-trigger] Wave ${num} end failed`, e);
+          logger.warn(`[wave-auto-trigger] Wave ${num} DB mark-end failed`, e);
+        }
+
+        // Auto-treasury: set on-chain schedule with near-future endTime, then close to treasury.
+        // setWaveSchedule requires endTime > block.timestamp (cannot be past), so we use now+90s.
+        // contractTreasuryClose is then called after 95s when the on-chain window has passed.
+        // For 0-minted waves the contract skips the reveal requirement (noSales = true).
+        if (wave.unsold_strategy === 'auto_treasury' && hasContractEnv()) {
+          const startUnix = wave.scheduled_start
+            ? Math.floor(new Date(wave.scheduled_start).getTime() / 1000)
+            : Math.floor(Date.now() / 1000) - 86400;
+          const endUnix = Math.floor(Date.now() / 1000) + 90;
+          try {
+            await withTxTimeout(contractSetWaveSchedule(num, startUnix, endUnix));
+            logger.info(`[wave-auto-trigger] Wave ${num} on-chain schedule set (endTime+90s) for auto-treasury`);
+            setTimeout(async () => {
+              try {
+                await withTxTimeout(contractTreasuryClose(num, null), 30_000);
+                logger.info(`[wave-auto-trigger] Wave ${num} auto-treasury close executed`);
+              } catch (e) {
+                logger.warn(`[wave-auto-trigger] Wave ${num} auto-treasury close failed (retry manually via UI)`, e);
+              }
+            }, 95_000);
+          } catch (e) {
+            logger.warn(`[wave-auto-trigger] Wave ${num} auto-treasury schedule failed`, e);
+          }
         }
       }
 
-      // Auto-reveal: random shuffle + on-chain reveal
+      // ── Auto-reveal ───────────────────────────────────────────────────────────
       // Skipped entirely when reveal_strategy = 'manual' — admin triggers via UI
       if (
         wave.reveal_scheduled_at &&
@@ -113,6 +153,17 @@ async function checkAndTriggerWaves(): Promise<void> {
             [num],
           );
           console.log(`[wave-auto-trigger] Wave ${num} reveal executed`);
+
+          // After auto-reveal, trigger auto-treasury close for waves with customer mints.
+          // (0-minted waves are handled in wave-end above without needing reveal first.)
+          if (wave.unsold_strategy === 'auto_treasury' && hasContractEnv()) {
+            try {
+              await withTxTimeout(contractTreasuryClose(num, null), 30_000);
+              logger.info(`[wave-auto-trigger] Wave ${num} auto-treasury close executed after reveal`);
+            } catch (e) {
+              logger.warn(`[wave-auto-trigger] Wave ${num} auto-treasury close after reveal failed (retry manually via UI)`, e);
+            }
+          }
         } catch (e) {
           logger.warn(`[wave-auto-trigger] Wave ${num} reveal failed`, e);
         }
@@ -129,7 +180,6 @@ export function startWaveAutoTrigger(): void {
     return;
   }
   console.log("[wave-auto-trigger] Auto-trigger scheduler started (30s interval)");
-  // Initial check after 10s — give the server time to settle after start
   setTimeout(() => checkAndTriggerWaves().catch(e => logger.warn("[wave-auto-trigger] tick error", e)), 10_000);
   setInterval(() => checkAndTriggerWaves().catch(e => logger.warn("[wave-auto-trigger] tick error", e)), 30_000);
 }
