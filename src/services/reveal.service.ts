@@ -203,20 +203,20 @@ async function _updateWaveRevealedInDB(
     [waveId],
   );
 
-  // 3. Unsold NFTs (no token_id): set to treasury_pending so admin can mint & move them
+  // 3. Unsold NFTs (no token_id): enter the reveal pool as 'reserved' — awaiting treasury process
   const { rowCount: pendingRows } = await pool.query(
     `UPDATE nft_records
-        SET delivery_status_id = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = 'treasury_pending'),
+        SET delivery_status_id = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = 'reserved'),
             updated_at         = NOW()
       WHERE wave_id  = $1::uuid
         AND token_id IS NULL
         AND delivery_status_id NOT IN (
-          SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('treasury_pending','treasury_wallet','delivered','transferred')
+          SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('reserved','treasury_pending','treasury_wallet','delivered','transferred')
         )`,
     [waveId],
   );
 
-  console.log(`[reveal] Wave ${waveNum} reveal state synced to DB — ${revealedRows ?? 0} customer NFTs marked revealed, ${pendingRows ?? 0} unsold → treasury_pending`);
+  console.log(`[reveal] Wave ${waveNum} reveal state synced to DB — ${revealedRows ?? 0} customer NFTs marked revealed, ${pendingRows ?? 0} unsold → reserved`);
 }
 
 // ── Post-reveal metadata sync ──────────────────────────────────────────────────

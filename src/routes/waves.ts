@@ -1,4 +1,4 @@
-﻿import { Router } from "express";
+import { Router } from "express";
 import pool from "../pool";
 import { requireAdmin } from "../adminAuth";
 import { _syncRevealedMetadata } from "../services/reveal.service";
@@ -231,6 +231,20 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
         .catch(e => logger.warn(`[waves-save] Wave ${waveNumber} on-chain pre-push failed â€” auto-trigger will retry`, e));
     }
 
+
+    // Link nft_records to this wave by serial number range (idempotent — only touches unlinked rows).
+    // Ensures records are wave-linked before auto-trigger reveal/treasury runs.
+    await pool.query(
+      `UPDATE nft_records
+          SET wave_id    = $1::uuid,
+              wave_num   = $2,
+              updated_at = NOW()
+        WHERE wave_id IS NULL
+          AND CAST(REPLACE(serial_number, '#', '') AS INTEGER)
+              BETWEEN (SELECT cumulative_start FROM nft_waves WHERE id = $1::uuid)
+                  AND (SELECT cumulative_end   FROM nft_waves WHERE id = $1::uuid)`,
+      [id, waveNumber],
+    );
     const { rows } = await pool.query("SELECT * FROM nft_waves WHERE id = $1::uuid", [id]);
     res.json({ ok: true, wave: rows[0] });
   } catch (err) {

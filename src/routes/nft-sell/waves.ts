@@ -323,7 +323,7 @@ router.post("/:num/reveal", requireAdmin, async (req, res, next) => {
             WHERE nr.wave_id = (SELECT id FROM nft_waves WHERE wave_number = $1)
               AND nr.token_id IS NULL
           AND nr.delivery_status_id IN (
-            SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('treasury_pending','pool_assigned')
+            SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('reserved','treasury_pending','pool_assigned')
           )`,
           [num],
         );
@@ -497,7 +497,7 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
         WHERE nr.wave_id = (SELECT id FROM nft_waves WHERE wave_number = $1)
           AND nr.token_id IS NULL
           AND nr.delivery_status_id IN (
-            SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('treasury_pending','pool_assigned')
+            SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('reserved','treasury_pending','pool_assigned')
           )`,
       [num, deliveryCode],
     );
@@ -717,7 +717,7 @@ router.post("/:num/repair-treasury-mints", requireAdmin, async (req, res, next) 
          JOIN lookup_values lv ON lv.id = nr.delivery_status_id
         WHERE nr.wave_id = $1::uuid
           AND nr.token_id IS NULL
-          AND lv.code IN ('transferred', 'treasury_wallet')
+          AND lv.code NOT IN ('revealed', 'sold', 'delivered')
         ORDER BY REGEXP_REPLACE(nr.serial_number, '[^0-9]', '', 'g')::INTEGER ASC`,
       [waveId],
     );
@@ -785,14 +785,16 @@ router.post("/:num/repair-treasury-mints", requireAdmin, async (req, res, next) 
       assigned++;
     }
 
-    // 5. Mark all assigned records as revealed (delivery_status preserved — already set correctly)
+    // 5. Set delivery_status=treasury_wallet + mark assigned records revealed
     let revealed = 0;
     if (toReveal.length) {
       const { rowCount } = await pool.query(
         `UPDATE nft_records
-            SET is_revealed = TRUE,
-                revealed_at = COALESCE(revealed_at, NOW()),
-                updated_at  = NOW()
+            SET is_revealed        = TRUE,
+                revealed_at        = COALESCE(revealed_at, NOW()),
+                mint_type          = 'treasury',
+                delivery_status_id = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = 'treasury_wallet'),
+                updated_at         = NOW()
           WHERE id = ANY($1::uuid[])`,
         [toReveal],
       );
