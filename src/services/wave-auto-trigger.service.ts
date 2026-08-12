@@ -28,14 +28,16 @@ async function checkAndTriggerWaves(): Promise<void> {
       wave_reveal_triggered: boolean;
       status: string;
       is_revealed: boolean;
+      reveal_strategy: string;
     }>(
       `SELECT id, wave_number, scheduled_start, scheduled_end, reveal_scheduled_at,
-              wave_start_triggered, wave_end_triggered, wave_reveal_triggered, status, is_revealed
+              wave_start_triggered, wave_end_triggered, wave_reveal_triggered, status, is_revealed,
+              reveal_strategy
          FROM nft_waves
         WHERE (
           (scheduled_start IS NOT NULL AND scheduled_start <= $1 AND wave_start_triggered = FALSE)
           OR (scheduled_end IS NOT NULL AND scheduled_end <= $1 AND wave_end_triggered = FALSE AND wave_start_triggered = TRUE)
-          OR (reveal_scheduled_at IS NOT NULL AND reveal_scheduled_at <= $1 AND wave_reveal_triggered = FALSE AND wave_end_triggered = TRUE AND is_revealed = FALSE)
+          OR (reveal_scheduled_at IS NOT NULL AND reveal_scheduled_at <= $1 AND wave_reveal_triggered = FALSE AND wave_end_triggered = TRUE AND is_revealed = FALSE AND reveal_strategy = 'auto')
         )
         ORDER BY wave_number`,
       [now],
@@ -94,12 +96,14 @@ async function checkAndTriggerWaves(): Promise<void> {
       }
 
       // Auto-reveal: random shuffle + on-chain reveal
+      // Skipped entirely when reveal_strategy = 'manual' — admin triggers via UI
       if (
         wave.reveal_scheduled_at &&
         new Date(wave.reveal_scheduled_at) <= new Date(now) &&
         wave.wave_end_triggered &&
         !wave.wave_reveal_triggered &&
-        !wave.is_revealed
+        !wave.is_revealed &&
+        wave.reveal_strategy !== 'manual'
       ) {
         try {
           const revealSvc = await getRevealService();

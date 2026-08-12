@@ -23,6 +23,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       tierPrices,
       unsoldStrategy,
       whitelistRequired,
+      revealStrategy,
     } = req.body as {
       defaultPriceEth?:    number | null;
       saleMethod?:         string | null;
@@ -35,6 +36,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       tierPrices?:         { legendary?: number; epic?: number; rare?: number; common?: number } | null;
       unsoldStrategy?:     'auto_treasury' | 'manual';
       whitelistRequired?:   boolean;
+      revealStrategy?:     'auto' | 'manual';
     };
 
     if (!id) return res.status(400).json({ error: "Wave id required" });
@@ -107,6 +109,21 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       return res.status(400).json({ error: "unsoldStrategy must be 'auto_treasury' or 'manual'" });
     }
 
+    // Rule: reveal strategy cannot be changed once the reveal is in progress or done
+    if (revealStrategy !== undefined && wave.is_revealed) {
+      return res.status(409).json({
+        error: `Wave ${waveNumber} has already been revealed - reveal strategy cannot be changed.`,
+      });
+    }
+    if (revealStrategy !== undefined && wave.wave_reveal_triggered) {
+      return res.status(409).json({
+        error: `Wave ${waveNumber} reveal is already in progress - reveal strategy cannot be changed.`,
+      });
+    }
+    if (revealStrategy !== undefined && !['auto', 'manual'].includes(revealStrategy)) {
+      return res.status(400).json({ error: "revealStrategy must be 'auto' or 'manual'" });
+    }
+
         // Rule: once scheduled_start has arrived the schedule is LOCKED â€” no date changes
     // reveal_scheduled_at is excluded; it has its own guard above
     const isDateChange = clearSchedule === true ||
@@ -176,6 +193,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
         tier_prices          = COALESCE($9::jsonb, tier_prices),
         unsold_strategy      = COALESCE($10, unsold_strategy),
         whitelist_required   = COALESCE($14, whitelist_required),
+        reveal_strategy      = COALESCE($15, reveal_strategy),
         wave_start_triggered = CASE WHEN $11::boolean AND $4::timestamptz IS DISTINCT FROM scheduled_start THEN FALSE ELSE wave_start_triggered END,
         wave_end_triggered   = CASE WHEN $12::boolean AND $5::timestamptz IS DISTINCT FROM scheduled_end   THEN FALSE ELSE wave_end_triggered   END,
         wave_reveal_triggered= CASE WHEN $13::boolean AND $8::timestamptz IS DISTINCT FROM reveal_scheduled_at THEN FALSE ELSE wave_reveal_triggered END,
@@ -196,6 +214,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
         updateEnd,                                   // $12
         updateReveal,                                // $13
         whitelistRequired ?? null,                   // $14
+        revealStrategy    ?? null,                   // $15
       ],
     );
 
