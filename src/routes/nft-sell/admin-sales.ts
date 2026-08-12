@@ -1,6 +1,7 @@
 import { Router } from "express";
 import pool from "../../pool";
 import { contractReserveMint } from "../../services/contract.service";
+import { addWalletsAndSyncAsync } from "../../services/customer-whitelist.service";
 import { requireAdmin } from "../../adminAuth";
 
 const router = Router();
@@ -150,8 +151,11 @@ router.post("/", requireAdmin, async (req, res, next) => {
     const { rows: [{ nft_admin_sale_create: saleId }] } = await pool.query("SELECT nft_admin_sale_create($1,$2,$3,$4,$5,$6,$7,$8,$9)", [saleMode, buyerAddress, quantity, amountEth ?? null, currencyUpper, paymentRef ?? null, waveNumber, notes ?? null, createdBy ?? null]);
 
     if (!mintNow) {
+      addWalletsAndSyncAsync([buyerAddress], "admin_sale").catch(() => null);
       return res.json({ ok: true, saleId, status: "pending", minted: false });
     }
+    // Whitelist buyer before minting so they can interact with the contract later.
+    addWalletsAndSyncAsync([buyerAddress], "admin_sale").catch(() => null);
     let txHash: string;
     try {
       const receipt = await contractReserveMint(buyerAddress, quantity);
@@ -177,6 +181,7 @@ router.post("/:id/mint", requireAdmin, async (req, res, next) => {
     if (sale.status !== "pending" && sale.status !== "failed")
       return res.status(400).json({ error: `Sale is already ${sale.status}` });
 
+    addWalletsAndSyncAsync([sale.buyer_address as string], "admin_sale").catch(() => null);
     const receipt = await contractReserveMint(sale.buyer_address as string, sale.quantity as number);
     await pool.query("SELECT nft_admin_sale_mark_minted($1,$2)", [id, receipt.hash]);
 

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS customer_wallets (
   user_id        UUID        REFERENCES users(id) ON DELETE SET NULL,
   address        TEXT        NOT NULL,
   is_whitelisted BOOLEAN     NOT NULL DEFAULT TRUE,
+  source         VARCHAR(50) DEFAULT 'manual',
   added_at       TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -130,6 +131,33 @@ CREATE OR REPLACE FUNCTION whitelist_clear()
 RETURNS VOID
 LANGUAGE sql AS $$
   DELETE FROM customer_wallets;
+$$;
+
+-- Upsert: add or re-whitelist a wallet with source tracking.
+-- Returns TRUE if newly inserted, FALSE if existing row was updated.
+CREATE OR REPLACE FUNCTION customer_whitelist_upsert(
+  p_address TEXT,
+  p_source  VARCHAR(50) DEFAULT 'manual',
+  p_user_id UUID        DEFAULT NULL
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_lower TEXT    := lower(p_address);
+  v_new   BOOLEAN := FALSE;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM customer_wallets WHERE lower(address) = v_lower) THEN
+    INSERT INTO customer_wallets(address, user_id, is_whitelisted, source)
+    VALUES (v_lower, p_user_id, TRUE, p_source);
+    v_new := TRUE;
+  ELSE
+    UPDATE customer_wallets
+    SET is_whitelisted = TRUE,
+        source         = COALESCE(p_source, source)
+    WHERE lower(address) = v_lower;
+  END IF;
+  RETURN v_new;
+END;
 $$;
 
 -- ── Whitelist: State ─────────────────────────────────────────────────
