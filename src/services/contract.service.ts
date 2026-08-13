@@ -136,15 +136,17 @@ async function detectMarketplace(txHash: string): Promise<{ platform: string; so
 async function syncEvent(
   eventName: string,
   args: unknown[],
-  txHash: string,
+  txHash: string | null,
   blockNumber: number,
   logIndex: number
 ): Promise<void> {
   try {
-    await pool.query(
-      "SELECT nft_event_log($1,$2,$3,$4,$5,$6,$7)",
-      [eventName, txHash, blockNumber, logIndex, null, null, JSON.stringify(argsToPayload(args))]
-    );
+    if (txHash) {
+      await pool.query(
+        "SELECT nft_event_log($1,$2,$3,$4,$5,$6,$7)",
+        [eventName, txHash, blockNumber, logIndex, null, null, JSON.stringify(argsToPayload(args))]
+      );
+    }
 
     switch (eventName) {
       case "WaveSold": {
@@ -325,7 +327,7 @@ export function startEventListeners(): void {
       contract.on(eventName, async (...rawArgs: unknown[]) => {
         const ev = rawArgs[rawArgs.length - 1] as EventLog;
         const args = rawArgs.slice(0, -1);
-        await syncEvent(eventName, args, ev.transactionHash, ev.blockNumber, ev.index);
+        await syncEvent(eventName, args, ev.transactionHash ?? null, ev.blockNumber, ev.index);
       });
       registered++;
     } catch (err) {
