@@ -31,10 +31,10 @@ const pool = new Proxy({} as Pool, {
   },
 });
 
-// Ping the DB every 4 minutes so Railway never closes the idle connection.
-// Railway's idle TCP timeout is ~5 min; staying under that prevents
-// the "db_connection_timeout" 503 errors on the first request after inactivity.
-export function startPoolKeepalive(intervalMs = 4 * 60 * 1000): void {
+// Ping the DB every 60 seconds so Railway never closes idle connections.
+// Railway's idle TCP timeout is ~5 min; 60s keepalive keeps all pool
+// connections warm and prevents "db_connection_timeout" 503 errors.
+export function startPoolKeepalive(intervalMs = 60_000): void {
   setInterval(async () => {
     try {
       await getPool().query("SELECT 1");
