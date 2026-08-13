@@ -1,4 +1,4 @@
-import { ethers, type Contract, type EventLog } from "ethers";
+﻿import { ethers, type Contract, type EventLog } from "ethers";
 import pool from "../pool";
 import BearthNFT_ABI from "../abi/BearthGenesisNFT.abi.json";
 import { getProvider } from "../utils/contract-factory";
@@ -252,13 +252,13 @@ async function syncEvent(
           const waveNum: bigint = await getContractReadOnly().getTokenWave(tokenId);
           const waveNumN = Number(waveNum);
           await pool.query("SELECT nft_record_sync_mint($1,$2,$3,$4)", [tokenIdN, to.toLowerCase(), waveNumN, txHash]);
-          logNftActivity({ tokenId: tokenIdN, action: "mint", source: "on_chain", platform: "bearth", toWallet: to.toLowerCase(), txHash, blockNumber, details: { waveNumber: waveNumN } });
+          logNftActivity({ tokenId: tokenIdN, action: "mint", source: "on_chain", platform: "bearth", toWallet: to.toLowerCase(), txHash: txHash ?? undefined, blockNumber, details: { waveNumber: waveNumN } });
           break;
         }
         if (to === ethers.ZeroAddress) break; // burn — no action needed
         await pool.query("SELECT nft_record_sync_transfer($1,$2,$3,$4)", [tokenIdN, to.toLowerCase(), null, txHash]);
-        const { platform: mktPlatform, source: mktSource } = await detectMarketplace(txHash);
-        logNftActivity({ tokenId: tokenIdN, action: mktSource === "external" ? "sale" : "transfer", source: mktSource, platform: mktPlatform, fromWallet: from.toLowerCase(), toWallet: to.toLowerCase(), txHash, blockNumber });
+        const { platform: mktPlatform, source: mktSource } = await detectMarketplace(txHash ?? "");
+        logNftActivity({ tokenId: tokenIdN, action: mktSource === "external" ? "sale" : "transfer", source: mktSource, platform: mktPlatform, fromWallet: from.toLowerCase(), toWallet: to.toLowerCase(), txHash: txHash ?? undefined, blockNumber });
         break;
       }
 
