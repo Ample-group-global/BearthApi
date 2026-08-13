@@ -10,7 +10,9 @@ import {
   contractSetWavePurchaseLimit,
   contractSetAllowlistRoot,
   resyncFromBlock,
+  getContractReadOnly,
 } from "../../services/contract.service";
+import { getProvider } from "../../utils/contract-factory";
 import { executeWaveReveal, _syncRevealedMetadata } from "../../services/reveal.service";
 import { buildMerkleTree } from "../../merkle";
 import { requireAdmin } from "../../adminAuth";
@@ -436,6 +438,49 @@ router.post("/:num/resync-reveal", requireAdmin, async (req, res, next) => {
   }
 });
 
+// GET /api/nft-sell/waves/:num/treasury-close-estimate
+// Returns signer wallet balance + estimated gas cost for treasury-close so the UI can warn before submission.
+router.get("/:num/treasury-close-estimate", requireAdmin, async (req, res, next) => {
+  try {
+    const num = parseInt(req.params.num, 10);
+    if (isNaN(num) || num < 1 || num > 7)
+      return res.status(400).json({ error: "Wave number must be 1-7" });
+
+    const privateKey = process.env.CONTRACT_PRIVATE_KEY ?? process.env.FIXED_PRIVATE_KEY;
+    if (!privateKey) return res.status(500).json({ error: "Signer key not configured" });
+
+    const provider = getProvider();
+    const signer = new ethers.Wallet(privateKey, provider);
+
+    const [balanceWei, feeData, treasuryAddr] = await Promise.all([
+      provider.getBalance(signer.address),
+      provider.getFeeData(),
+      getContractReadOnly().treasuryWallet() as Promise<string>,
+    ]);
+
+    const gasPrice = feeData.gasPrice ?? BigInt(2_000_000_000);
+
+    let estimatedGasWei = BigInt(300_000) * gasPrice; // conservative fallback
+    try {
+      const gasUnits = await getContractReadOnly().treasuryClose.estimateGas(num, treasuryAddr, { from: signer.address });
+      estimatedGasWei = gasUnits * gasPrice;
+    } catch {
+      // estimateGas can fail if wave guards are not met — use fallback
+    }
+
+    const balanceEth    = parseFloat(ethers.formatEther(balanceWei));
+    const estimatedEth  = parseFloat(ethers.formatEther(estimatedGasWei));
+
+    res.json({
+      walletAddress: signer.address,
+      balanceEth,
+      estimatedGasEth: estimatedEth,
+      sufficient: balanceWei >= estimatedGasWei,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 // POST /api/nft-sell/waves/:num/treasury-close
 // Mints all unsold NFTs to the treasury wallet configured in the smart contract.
 // For waves with customer sales: wave MUST be revealed first.
