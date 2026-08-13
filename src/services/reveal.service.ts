@@ -122,7 +122,7 @@ export async function executeWaveReveal(waveNum: number): Promise<string | null>
   const txHash = receipt.hash;
   console.log(`[reveal] Wave ${waveNum}: revealed directly, tx: ${txHash}`);
 
-  await _updateWaveRevealedInDB(wave.id, waveNum, revealUri, txHash, null, null);
+  await _updateWaveRevealedInDB(wave.id, waveNum, revealUri, txHash, null, 0);
   await _syncRevealedMetadata(waveNum);
   return txHash;
 }
@@ -293,6 +293,20 @@ export async function _syncRevealedMetadata(waveNum: number): Promise<void> {
     synced++;
   }
   console.log(`[reveal] Wave ${waveNum}: artwork sync complete — ${synced} updated, ${missing} missing`);
+  // Backfill rarity_tier from rarity_rank (Filebase metadata lacks tier field)
+  await pool.query(
+    `UPDATE nft_records SET rarity_tier = CASE
+       WHEN rarity_rank BETWEEN 1   AND 100  THEN 'legendary'
+       WHEN rarity_rank BETWEEN 101 AND 500  THEN 'epic'
+       WHEN rarity_rank BETWEEN 501 AND 1500 THEN 'rare'
+       WHEN rarity_rank > 1500               THEN 'common'
+     END
+     WHERE on_chain_wave_num = $1
+       AND token_id IS NOT NULL
+       AND rarity_rank IS NOT NULL
+       AND rarity_tier IS NULL`,
+    [waveNum],
+  );
 }
 // ─────────────────────────────────────────────────────────────────────────────
 export async function repairTreasuryMintsForWave(waveNum: number): Promise<{ assigned: number; revealed: number }> {

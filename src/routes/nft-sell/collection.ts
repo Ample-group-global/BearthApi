@@ -235,7 +235,7 @@ router.post("/tokens/rarity-batch", requireAdmin, async (req, res, next) => {
 // Returns: phase, minted, remaining, WL stats, Paid stats, revenue, reveal status
 router.get("/stats", async (_req, res, next) => {
   try {
-    const [configResult, wavesResult, onChainResult, revenueResult, treasuryWalletResult] = await Promise.all([
+    const [configResult, wavesResult, onChainResult, revenueResult, treasuryWalletResult, revealedResult] = await Promise.all([
       pool.query("SELECT nft_collection_config_get()", []),
       pool.query("SELECT * FROM nft_wave_get_all()", []),
       process.env.CONTRACT_ADDRESS && process.env.ETH_RPC_URL
@@ -243,6 +243,7 @@ router.get("/stats", async (_req, res, next) => {
         : Promise.resolve(null),
       pool.query("SELECT * FROM nft_revenue_summary()", []).catch(() => ({ rows: [null] })),
       pool.query("SELECT COUNT(*) AS cnt FROM nft_records WHERE mint_type = 'treasury' AND token_id IS NOT NULL").catch(() => ({ rows: [{ cnt: 0 }] })),
+      pool.query("SELECT COUNT(*) AS cnt FROM nft_records WHERE is_revealed = true AND token_id IS NOT NULL").catch(() => ({ rows: [{ cnt: 0 }] })),
     ]);
     const blindBoxMetaUri = configResult.rows[0]?.nft_collection_config_get?.blind_box_uri ?? null;
 
@@ -280,7 +281,7 @@ router.get("/stats", async (_req, res, next) => {
       },
       blindBoxUri: cfg?.blind_box_uri ?? null,
       blindBoxImageUrl: await resolveBlindBoxImageUrl(blindBoxMetaUri),
-      revealed: Number(cfg?.reveal_count ?? 0),
+      revealed: Number(revealedResult.rows[0]?.cnt ?? 0),
       isRevealed: (cfg?.current_phase ?? "") === "Revealed",
       treasuryWalletCount: Number(treasuryWalletResult.rows[0]?.cnt ?? 0),
       adminRevenue: rev ? {

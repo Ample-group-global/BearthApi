@@ -34,7 +34,7 @@ async function syncTreasuryCloseDB(waveNum: number): Promise<void> {
       WHERE nr.wave_id = (SELECT id FROM nft_waves WHERE wave_number = $1)
         AND nr.token_id IS NULL
         AND nr.delivery_status_id IN (
-          SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('reserved','treasury_pending','pool_assigned')
+          SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('pre_mint','reserved','treasury_pending','pool_assigned')
         )`,
     [waveNum],
   );

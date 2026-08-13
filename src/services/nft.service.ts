@@ -72,7 +72,7 @@ export async function listNft(params: {
      FROM v_nft_records nr
      LEFT JOIN nft_waves w ON nr.wave_id = w.id
      WHERE ($1::TEXT IS NULL OR nr.serial_number ILIKE '%' || $1 || '%' OR nr.token_id::TEXT = $1)
-       AND ($2::VARCHAR IS NULL OR (CASE WHEN $2 = 'treasury_wallet' THEN nr.delivery_status_code IN ('treasury_wallet','transferred') ELSE nr.delivery_status_code = $2 END))
+       AND ($2::VARCHAR IS NULL OR (CASE WHEN $2 = 'treasury_wallet' THEN nr.delivery_status_code IN ('treasury_wallet','transferred') WHEN $2 = 'unsold' THEN nr.delivery_status_code IN ('reserved','treasury_pending') ELSE nr.delivery_status_code = $2 END))
        AND ($3::VARCHAR IS NULL OR nr.stage_code = $3)
        AND ($4::BOOLEAN IS NULL OR nr.is_revealed = $4)
        AND ($5::UUID IS NULL OR nr.wave_id = $5::UUID)
@@ -91,7 +91,8 @@ export async function listNft(params: {
     `SELECT
       COUNT(*)                                                                AS total_all,
       COUNT(*) FILTER (WHERE nr.delivery_status_code = 'pending')            AS pre_mint_count,
-      COUNT(*) FILTER (WHERE nr.delivery_status_code = 'treasury_pending')   AS reserved_count,
+      COUNT(*) FILTER (WHERE nr.delivery_status_code = 'reserved')           AS reserved_count,
+      COUNT(*) FILTER (WHERE nr.delivery_status_code = 'treasury_pending')      AS treasury_pending_count,
       COUNT(*) FILTER (WHERE nr.delivery_status_code IN ('treasury_wallet','transferred')) AS treasury_wallet_count,
       COUNT(*) FILTER (WHERE nr.token_id IS NOT NULL AND NOT nr.is_revealed) AS blind_count,
       COUNT(*) FILTER (WHERE nr.is_revealed AND nr.token_id IS NOT NULL)     AS revealed_count,
@@ -109,6 +110,7 @@ export async function listNft(params: {
     totalAll:            Number(st.total_all              ?? 0),
     preMintCount:        Number(st.pre_mint_count         ?? 0),
     reservedCount:       Number(st.reserved_count         ?? 0),
+    treasuryPendingCount: Number(st.treasury_pending_count  ?? 0),
     treasuryWalletCount: Number(st.treasury_wallet_count  ?? 0),
     blindCount:          Number(st.blind_count            ?? 0),
     revealedCount:       Number(st.revealed_count         ?? 0),

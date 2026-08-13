@@ -24,6 +24,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       unsoldStrategy,
       whitelistRequired,
       revealStrategy,
+      waveRevealUri,
     } = req.body as {
       defaultPriceEth?:    number | null;
       saleMethod?:         string | null;
@@ -37,6 +38,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
       unsoldStrategy?:     'auto_treasury' | 'manual';
       whitelistRequired?:   boolean;
       revealStrategy?:     'auto' | 'manual';
+      waveRevealUri?:      string | null;
     };
 
     if (!id) return res.status(400).json({ error: "Wave id required" });
@@ -194,6 +196,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
         unsold_strategy      = COALESCE($10, unsold_strategy),
         whitelist_required   = COALESCE($14, whitelist_required),
         reveal_strategy      = COALESCE($15, reveal_strategy),
+        wave_reveal_uri      = COALESCE($16, wave_reveal_uri),
         wave_start_triggered = CASE WHEN $11::boolean AND $4::timestamptz IS DISTINCT FROM scheduled_start THEN FALSE ELSE wave_start_triggered END,
         wave_end_triggered   = CASE WHEN $12::boolean AND $5::timestamptz IS DISTINCT FROM scheduled_end   THEN FALSE ELSE wave_end_triggered   END,
         wave_reveal_triggered= CASE WHEN $13::boolean AND $8::timestamptz IS DISTINCT FROM reveal_scheduled_at THEN FALSE ELSE wave_reveal_triggered END,
@@ -215,6 +218,7 @@ router.put("/:id", requireAdmin, async (req, res, next) => {
         updateReveal,                                // $13
         whitelistRequired ?? null,                   // $14
         revealStrategy    ?? null,                   // $15
+        waveRevealUri     ?? null,                     // $16
       ],
     );
 

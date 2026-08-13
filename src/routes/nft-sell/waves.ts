@@ -61,7 +61,7 @@ router.get("/", async (_req, res, next) => {
 // GET /api/nft-sell/waves/schedule-status auto-trigger timeline for scheduler page
 router.get("/schedule-status", async (_req, res, next) => {
   try {
-    const { rows } = await pool.query("SELECT * FROM v_wave_schedule_status");
+    const { rows } = await pool.query(`SELECT v.*, w.wave_reveal_uri FROM v_wave_schedule_status v JOIN nft_waves w ON w.wave_number = v.wave_number ORDER BY v.wave_number`);
     res.json({ waves: rows });
   } catch (err) {
     next(err);
@@ -325,7 +325,7 @@ router.post("/:num/reveal", requireAdmin, async (req, res, next) => {
             WHERE nr.wave_id = (SELECT id FROM nft_waves WHERE wave_number = $1)
               AND nr.token_id IS NULL
           AND nr.delivery_status_id IN (
-            SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('reserved','treasury_pending','pool_assigned')
+            SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('pre_mint','reserved','treasury_pending','pool_assigned')
           )`,
           [num],
         );
@@ -521,7 +521,23 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
       });
     }
 
-    const receipt = await contractTreasuryClose(num, null);
+    // Check on-chain state first — auto-trigger may have closed the wave but DB sync was skipped
+    let txHash: string | null = null;
+    let alreadyClosedOnChain = false;
+    try {
+      const onChain = await contractGetWaveInfo(num);
+      if (onChain?.closed) {
+        alreadyClosedOnChain = true;
+        console.log(`[treasury-close] Wave ${num} already closed on-chain — syncing DB only`);
+      }
+    } catch {
+      // ignore — proceed to contract call if on-chain state is unreadable
+    }
+
+    if (!alreadyClosedOnChain) {
+      const receipt = await contractTreasuryClose(num, null);
+      txHash = receipt.hash;
+    }
 
     await pool.query(
       `UPDATE nft_records nr
@@ -531,7 +547,7 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
         WHERE nr.wave_id = (SELECT id FROM nft_waves WHERE wave_number = $1)
           AND nr.token_id IS NULL
           AND nr.delivery_status_id IN (
-            SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('reserved','treasury_pending','pool_assigned')
+            SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('pre_mint','reserved','treasury_pending','pool_assigned')
           )`,
       [num],
     );
@@ -550,7 +566,7 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
       [num],
     );
 
-    res.json({ ok: true, txHash: receipt.hash });
+    res.json({ ok: true, txHash: txHash ?? "already-closed" });
   } catch (err) {
     next(err);
   }
