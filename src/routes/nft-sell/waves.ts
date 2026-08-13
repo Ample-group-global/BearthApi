@@ -437,22 +437,17 @@ router.post("/:num/resync-reveal", requireAdmin, async (req, res, next) => {
 });
 
 // POST /api/nft-sell/waves/:num/treasury-close
-// Mints all unsold NFTs to recipient wallet.
+// Mints all unsold NFTs to the treasury wallet configured in the smart contract.
 // For waves with customer sales: wave MUST be revealed first.
-// For 0-minted waves: reveal is handled internally (pass revealUri in body if not yet set in DB).
-// Body: { recipient?: string, revealUri?: string }
+// For 0-minted waves: contract allows treasury-close without reveal (waveSoldCount == 0).
 router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
   try {
     const num = parseInt(req.params.num, 10);
     if (isNaN(num) || num < 1 || num > 7)
-      return res.status(400).json({ error: "Wave number must be 1â€“7" });
-
-    const { recipient, revealUri } = req.body as { recipient?: string; revealUri?: string };
-    if (recipient && !/^0x[0-9a-fA-F]{40}$/.test(recipient))
-      return res.status(400).json({ error: "recipient must be a valid Ethereum address (0x + 40 hex chars)" });
+      return res.status(400).json({ error: "Wave number must be 1-7" });
 
     const { rows: waveRows } = await pool.query(
-      "SELECT scheduled_end, wave_revealed, wave_reveal_uri FROM nft_waves WHERE wave_number = $1",
+      "SELECT scheduled_end, wave_revealed FROM nft_waves WHERE wave_number = $1",
       [num],
     );
     const waveRow = waveRows[0];
@@ -472,26 +467,20 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
         WHERE w.wave_number = $1 AND nr.token_id IS NOT NULL`,
       [num],
     );
-    const hasCustomerSales = parseInt(salesRows[0]?.cnt ?? '0') > 0;
+    const hasCustomerSales = parseInt(salesRows[0]?.cnt ?? "0") > 0;
 
-    if (!waveRow.wave_revealed) {
-      if (hasCustomerSales) {
-        // Guard 2: waves with customer sales must be revealed first (customers should see artwork)
-        return res.status(409).json({
-          error: `Wave ${num} has not been revealed yet. Reveal the wave first before moving to treasury.`,
-        });
-      }
-      // 0-minted wave: skip reveal contract allows treasury-close without waveRevealed
-      // when waveSoldCount == 0 (no customers need to see artwork)
+    if (!waveRow.wave_revealed && hasCustomerSales) {
+      // Guard 2: waves with customer sales must be revealed first
+      return res.status(409).json({
+        error: `Wave ${num} has not been revealed yet. Reveal the wave first before moving to treasury.`,
+      });
     }
 
-    const receipt = await contractTreasuryClose(num, recipient ?? null);
+    const receipt = await contractTreasuryClose(num, null);
 
-    // Delivery status: treasury_wallet (default) or transferred (custom wallet)
-    const deliveryCode = recipient ? "transferred" : "treasury_wallet";
     await pool.query(
       `UPDATE nft_records nr
-          SET delivery_status_id = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = $2),
+          SET delivery_status_id = (SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code = 'treasury_wallet'),
               delivered_at       = NOW(),
               updated_at         = NOW()
         WHERE nr.wave_id = (SELECT id FROM nft_waves WHERE wave_number = $1)
@@ -499,12 +488,12 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
           AND nr.delivery_status_id IN (
             SELECT id FROM lookup_values WHERE category = 'delivery_status' AND code IN ('reserved','treasury_pending','pool_assigned')
           )`,
-      [num, deliveryCode],
+      [num],
     );
     await pool.query(
       `UPDATE nft_waves
           SET close_action          = 'treasury',
-              treasury_recipient    = $2,
+              treasury_recipient    = NULL,
               treasury_minted_count = (
                 SELECT COUNT(*) FROM nft_records nr2
                   JOIN lookup_values lv ON lv.id = nr2.delivery_status_id
@@ -513,7 +502,7 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
               ),
               updated_at = NOW()
         WHERE wave_number = $1`,
-      [num, recipient ?? null],
+      [num],
     );
 
     res.json({ ok: true, txHash: receipt.hash });
@@ -521,7 +510,6 @@ router.post("/:num/treasury-close", requireAdmin, async (req, res, next) => {
     next(err);
   }
 });
-
 
 
 // GET /api/nft-sell/waves/:num/holder-snapshot list current holders for a wave
