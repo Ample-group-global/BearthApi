@@ -238,12 +238,7 @@ export async function deleteFailedJob(id: string): Promise<boolean> {
     "DELETE FROM nft_generation_jobs WHERE id = $1::uuid AND status = 'failed'",
     [id]
   );
-  const deleted = (rowCount ?? 0) > 0;
-  if (deleted) {
-    // Reclaim disk space from cascaded deletes — fire-and-forget, non-blocking
-    pool.query("VACUUM nft_generated_items, nft_item_traits").catch(() => { });
-  }
-  return deleted;
+  return (rowCount ?? 0) > 0;
 }
 
 // ── Generated Items ──────────────────────────────────────────────────────────
@@ -446,7 +441,11 @@ export async function batchUpdateItemIpfsCids(params: {
 }
 
 // ── Sync generated items → nft_records ───────────────────────────────────────
-export async function syncGeneratedItemsToNftRecords(jobId: string): Promise<number> {
+// Promotes exported items into nft_records for wave selling. Pass a jobId
+// to promote just that job's items, or omit it to sweep every job — when
+// sweeping all jobs, DISTINCT ON + created_at DESC picks the most recent
+// item per edition_number in case more than one job produced that edition.
+export async function syncGeneratedItemsToNftRecords(jobId?: string): Promise<number> {
   const { rows: lookupRows } = await pool.query(
     `SELECT id, category, code FROM lookup_values
      WHERE (category = 'nft_stage'       AND code = 'genesis')
@@ -459,15 +458,24 @@ export async function syncGeneratedItemsToNftRecords(jobId: string): Promise<num
     throw new Error("Required lookup values (nft_stage:genesis, delivery_status:pending) not found");
   }
 
-  const { rows: items } = await pool.query(
-    `SELECT edition_number, ipfs_image_cid, ipfs_metadata_cid, metadata_json
-     FROM nft_generated_items
-     WHERE job_id = $1::uuid
-       AND ipfs_image_cid    IS NOT NULL
-       AND ipfs_metadata_cid IS NOT NULL
-     ORDER BY edition_number ASC`,
-    [jobId],
-  );
+  const { rows: items } = jobId
+    ? await pool.query(
+        `SELECT edition_number, ipfs_image_cid, ipfs_metadata_cid, metadata_json
+         FROM nft_generated_items
+         WHERE job_id = $1::uuid
+           AND ipfs_image_cid    IS NOT NULL
+           AND ipfs_metadata_cid IS NOT NULL
+         ORDER BY edition_number ASC`,
+        [jobId],
+      )
+    : await pool.query(
+        `SELECT DISTINCT ON (edition_number)
+           edition_number, ipfs_image_cid, ipfs_metadata_cid, metadata_json
+         FROM nft_generated_items
+         WHERE ipfs_image_cid    IS NOT NULL
+           AND ipfs_metadata_cid IS NOT NULL
+         ORDER BY edition_number ASC, created_at DESC`,
+      );
 
   if (!items.length) return 0;
 
@@ -657,90 +665,6 @@ export async function syncFromFilebaseBucket(bucket: string): Promise<{ synced: 
   }
 
   return { synced: totalSynced, skipped };
-}
-
-// ── Sync ALL jobs (nft_generated_items → nft_records) ────────────────────────
-// Sync ALL jobs — finds every item with both IPFS CIDs across all generation jobs.
-// Uses a single batch INSERT with unnest for performance.
-export async function syncAllGeneratedItemsToNftRecords(): Promise<number> {
-  const { rows: lookupRows } = await pool.query(
-    `SELECT id, category, code FROM lookup_values
-     WHERE (category = 'nft_stage'       AND code = 'genesis')
-        OR (category = 'delivery_status' AND code = 'pending')`,
-  );
-  const genesisStageId = lookupRows.find((r: { category: string; code: string }) => r.category === 'nft_stage' && r.code === 'genesis')?.id as string | undefined;
-  const pendingStatusId = lookupRows.find((r: { category: string; code: string }) => r.category === 'delivery_status' && r.code === 'pending')?.id as string | undefined;
-
-  if (!genesisStageId || !pendingStatusId) {
-    throw new Error("Required lookup values (nft_stage:genesis, delivery_status:pending) not found");
-  }
-
-  const { rows: items } = await pool.query(
-    `SELECT DISTINCT ON (edition_number)
-       edition_number, ipfs_image_cid, ipfs_metadata_cid, metadata_json
-     FROM nft_generated_items
-     WHERE ipfs_image_cid    IS NOT NULL
-       AND ipfs_metadata_cid IS NOT NULL
-     ORDER BY edition_number ASC, created_at DESC`,
-  );
-
-  if (!items.length) return 0;
-
-  const rows = items.map(item => {
-    const meta = typeof item.metadata_json === 'string'
-      ? JSON.parse(item.metadata_json) as Record<string, unknown>
-      : (item.metadata_json as Record<string, unknown>) ?? {};
-    const traits: Record<string, string> = {};
-    if (Array.isArray(meta.attributes)) {
-      for (const attr of meta.attributes as Array<{ trait_type?: string; value?: unknown }>) {
-        if (attr.trait_type && attr.value !== undefined) traits[attr.trait_type] = String(attr.value);
-      }
-    }
-    return {
-      serial_number: `#${item.edition_number}`,
-      stage_id: genesisStageId,
-      delivery_status_id: pendingStatusId,
-      image_ipfs_hash: item.ipfs_image_cid,
-      metadata_ipfs_hash: item.ipfs_metadata_cid,
-      metadata_uri: `ipfs://${item.ipfs_metadata_cid}`,
-      traits,
-      rarity_score: meta.score != null ? Number(meta.score) : null,
-      rarity_rank: meta.rank != null ? Number(meta.rank) : null,
-      rarity_tier: meta.tier != null ? String(meta.tier) : null,
-    };
-  });
-
-  const { rowCount } = await pool.query(
-    `INSERT INTO nft_records (serial_number, stage_id, delivery_status_id, image_ipfs_hash, metadata_ipfs_hash, metadata_uri, traits, rarity_score, rarity_rank, rarity_tier)
-     SELECT
-       x.serial_number,
-       x.stage_id::uuid,
-       x.delivery_status_id::uuid,
-       x.image_ipfs_hash,
-       x.metadata_ipfs_hash,
-       x.metadata_uri,
-       x.traits,
-       x.rarity_score,
-       x.rarity_rank,
-       x.rarity_tier
-     FROM json_to_recordset($1::json) AS x(
-       serial_number text, stage_id text, delivery_status_id text,
-       image_ipfs_hash text, metadata_ipfs_hash text, metadata_uri text, traits jsonb,
-       rarity_score numeric, rarity_rank int, rarity_tier text
-     )
-     ON CONFLICT (serial_number) DO UPDATE SET
-       image_ipfs_hash    = EXCLUDED.image_ipfs_hash,
-       metadata_ipfs_hash = EXCLUDED.metadata_ipfs_hash,
-       metadata_uri       = EXCLUDED.metadata_uri,
-       traits             = EXCLUDED.traits,
-       rarity_score       = COALESCE(EXCLUDED.rarity_score, nft_records.rarity_score),
-       rarity_rank        = COALESCE(EXCLUDED.rarity_rank,  nft_records.rarity_rank),
-       rarity_tier        = COALESCE(EXCLUDED.rarity_tier,  nft_records.rarity_tier),
-       updated_at         = NOW()`,
-    [JSON.stringify(rows)],
-  );
-
-  return rowCount ?? items.length;
 }
 
 // Returns the layers root directory.

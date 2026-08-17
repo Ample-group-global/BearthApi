@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { requirePermission } from "../../adminAuth";
 import * as svc from "../../services/nft-gen.service";
-import { syncGeneratedItemsToNftRecords, syncAllGeneratedItemsToNftRecords, syncFromFilebaseBucket } from "../../services/nft-gen.service";
+import { syncGeneratedItemsToNftRecords, syncFromFilebaseBucket } from "../../services/nft-gen.service";
 import pool from "../../pool";
 
 const router = Router();
@@ -20,7 +20,7 @@ router.post("/sync-from-filebase", async (req, res, next) => {
 router.post("/sync-all-records", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.generate");
-    const synced = await syncAllGeneratedItemsToNftRecords();
+    const synced = await syncGeneratedItemsToNftRecords();
     res.json({ synced });
   } catch (e) {
     next(e);

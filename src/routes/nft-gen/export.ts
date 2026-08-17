@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { randomUUID } from "crypto";
 import path from "path";
 import fs from "fs";
@@ -10,6 +10,7 @@ import { requirePermission } from "../../adminAuth";
 import pool from "../../pool";
 import { getS3Client } from "../../clients/s3";
 import { batchUpdateItemIpfsCids, syncGeneratedItemsToNftRecords } from "../../services/nft-gen.service";
+import { pollCid } from "../../utils/pollCid";
 
 const router = Router();
 
@@ -208,17 +209,41 @@ const PREVIEW_THUMB = 64;
 const PREVIEW_CONCURRENCY = 20;
 const PREVIEW_BATCH = 200;
 
-async function pollCid(s3: ReturnType<typeof getS3Client>, bucket: string, key: string, maxMs = 3000): Promise<string> {
-  const deadline = Date.now() + maxMs;
-  while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 80));
-    try {
-      const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
-      const cid = head.Metadata?.cid ?? "";
-      if (cid) return cid;
-    } catch { /* not ready yet */ }
-  }
-  return "";
+interface EditionRow {
+  edition_number: number;
+  trait_type: string;
+  trait_value: string;
+  file_path: string | null;
+  sort_order: number;
+  rarity_score: string | null;
+  rarity_rank: string | null;
+  rarity_tier: string | null;
+}
+
+// Shared by runExport and runPreview — identical join/filter/order, only
+// the composited output differs. Rarity columns are always selected (same
+// table, no extra join cost); runPreview just doesn't read them.
+async function fetchEditionRows(jobId: string, offset: number, batchEnd: number): Promise<EditionRow[]> {
+  const { rows } = await pool.query<EditionRow>(`
+    SELECT gi.edition_number, nit.trait_type, nit.trait_value, nt.file_path, nl.sort_order,
+           (gi.metadata_json->>'score') AS rarity_score,
+           (gi.metadata_json->>'rank')  AS rarity_rank,
+           (gi.metadata_json->>'tier')  AS rarity_tier
+    FROM   nft_generated_items gi
+    JOIN   nft_item_traits        nit ON nit.item_id        = gi.id
+    JOIN   nft_generation_jobs    j   ON j.id               = gi.job_id
+    JOIN   nft_layers             nl  ON nl.collection_id   = j.collection_id
+                                    AND nl.display_name     = nit.trait_type
+    LEFT JOIN nft_traits          nt  ON nt.layer_id        = nl.id
+                                    AND nt.name             = nit.trait_value
+    WHERE  gi.job_id = $1::uuid
+      AND  gi.edition_number >  $2
+      AND  gi.edition_number <= $3
+    ORDER BY gi.edition_number,
+             CAST(SPLIT_PART(nl.name, '-', 1) AS INTEGER),
+             nl.sort_order
+  `, [jobId, offset, batchEnd]);
+  return rows;
 }
 
 async function runExport(
@@ -240,34 +265,7 @@ async function runExport(
     const batchEnd = Math.min(offset + BATCH, total);
     state.phase = `Compositing ${offset + 1}–${batchEnd} of ${total}…`;
 
-    const { rows } = await pool.query<{
-      edition_number: number;
-      trait_type: string;
-      trait_value: string;
-      file_path: string | null;
-      sort_order: number;
-      rarity_score: string | null;
-      rarity_rank: string | null;
-      rarity_tier: string | null;
-    }>(`
-      SELECT gi.edition_number, nit.trait_type, nit.trait_value, nt.file_path, nl.sort_order,
-             (gi.metadata_json->>'score') AS rarity_score,
-             (gi.metadata_json->>'rank')  AS rarity_rank,
-             (gi.metadata_json->>'tier')  AS rarity_tier
-      FROM   nft_generated_items gi
-      JOIN   nft_item_traits        nit ON nit.item_id        = gi.id
-      JOIN   nft_generation_jobs    j   ON j.id               = gi.job_id
-      JOIN   nft_layers             nl  ON nl.collection_id   = j.collection_id
-                                      AND nl.display_name     = nit.trait_type
-      LEFT JOIN nft_traits          nt  ON nt.layer_id        = nl.id
-                                      AND nt.name             = nit.trait_value
-      WHERE  gi.job_id = $1::uuid
-        AND  gi.edition_number >  $2
-        AND  gi.edition_number <= $3
-      ORDER BY gi.edition_number,
-               CAST(SPLIT_PART(nl.name, '-', 1) AS INTEGER),
-               nl.sort_order
-    `, [jobId, offset, batchEnd]);
+    const rows = await fetchEditionRows(jobId, offset, batchEnd);
 
     type LayerRow = { trait_type: string; trait_value: string; file_path: string | null; sort_order: number };
     type EditionData = { layers: LayerRow[]; rarityScore: number; rarityRank: number; rarityTier: string };
@@ -391,28 +389,7 @@ async function runPreview(
     const batchEnd = Math.min(offset + PREVIEW_BATCH, total);
     state.phase = `Compositing ${offset + 1}–${batchEnd} of ${total}…`;
 
-    const { rows } = await pool.query<{
-      edition_number: number;
-      trait_type: string;
-      trait_value: string;
-      file_path: string | null;
-      sort_order: number;
-    }>(`
-      SELECT gi.edition_number, nit.trait_type, nit.trait_value, nt.file_path, nl.sort_order
-      FROM   nft_generated_items gi
-      JOIN   nft_item_traits        nit ON nit.item_id        = gi.id
-      JOIN   nft_generation_jobs    j   ON j.id               = gi.job_id
-      JOIN   nft_layers             nl  ON nl.collection_id   = j.collection_id
-                                      AND nl.display_name     = nit.trait_type
-      LEFT JOIN nft_traits          nt  ON nt.layer_id        = nl.id
-                                      AND nt.name             = nit.trait_value
-      WHERE  gi.job_id = $1::uuid
-        AND  gi.edition_number >  $2
-        AND  gi.edition_number <= $3
-      ORDER BY gi.edition_number,
-               CAST(SPLIT_PART(nl.name, '-', 1) AS INTEGER),
-               nl.sort_order
-    `, [jobId, offset, batchEnd]);
+    const rows = await fetchEditionRows(jobId, offset, batchEnd);
 
     type LayerRow = { trait_type: string; trait_value: string; file_path: string | null; sort_order: number };
     const byEdition = new Map<number, LayerRow[]>();

@@ -4,13 +4,13 @@ import {
   CreateBucketCommand,
   HeadBucketCommand,
   PutObjectCommand,
-  HeadObjectCommand,
   DeleteObjectCommand,
-  DeleteObjectsCommand,
   ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
 import { requirePermission } from "../adminAuth";
 import { getS3Client } from "../clients/s3";
+import { pollCid } from "../utils/pollCid";
+import { deleteObjectsChunked } from "../utils/deleteObjects";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -62,19 +62,17 @@ router.post("/nft-upload/image", upload.single("file"), async (req, res, next) =
     if (!bucket) { res.status(422).json({ error: "bucket is required." }); return; }
     if (!key)    { res.status(422).json({ error: "key is required." }); return; }
 
-    await getS3Client().send(new PutObjectCommand({
+    const s3 = getS3Client();
+    await s3.send(new PutObjectCommand({
       Bucket:      bucket,
       Key:         key,
       Body:        file.buffer,
       ContentType: file.mimetype,
     }));
 
-    await new Promise(r => setTimeout(r, 500));
+    const cid = await pollCid(s3, bucket, key);
 
-    const head = await getS3Client().send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
-    const cid  = head.Metadata?.cid ?? null;
-
-    res.status(201).json({ bucket, key, size: file.size, cid });
+    res.status(201).json({ bucket, key, size: file.size, cid: cid || null });
   } catch (e) { next(e); }
 });
 
@@ -92,6 +90,7 @@ router.post("/nft-upload/metadata", async (req, res, next) => {
     if (!bucket)        { res.status(422).json({ error: "bucket is required." }); return; }
     if (!items?.length) { res.status(422).json({ error: "items[] is required." }); return; }
 
+    const s3 = getS3Client();
     const CONCURRENCY = 10;
     const results: { key: string; cid: string | null }[] = items.map(i => ({ key: i.key, cid: null }));
     let cursor = 0;
@@ -101,17 +100,14 @@ router.post("/nft-upload/metadata", async (req, res, next) => {
         const idx  = cursor++;
         const item = items![idx];
 
-        await getS3Client().send(new PutObjectCommand({
+        await s3.send(new PutObjectCommand({
           Bucket:      bucket,
           Key:         item.key,
           Body:        item.content,
           ContentType: "application/json",
         }));
 
-        await new Promise(r => setTimeout(r, 300));
-
-        const head = await getS3Client().send(new HeadObjectCommand({ Bucket: bucket!, Key: item.key }));
-        results[idx].cid = head.Metadata?.cid ?? null;
+        results[idx].cid = (await pollCid(s3, bucket!, item.key)) || null;
       }
     }
 
@@ -171,17 +167,7 @@ router.delete("/objects/batch", async (req, res, next) => {
     if (!bucket)       { res.status(422).json({ error: "bucket is required." }); return; }
     if (!keys?.length) { res.status(422).json({ error: "keys[] is required." }); return; }
 
-    const CHUNK = 1000;
-    let deleted = 0;
-    for (let i = 0; i < keys.length; i += CHUNK) {
-      const chunk = keys.slice(i, i + CHUNK);
-      const result = await getS3Client().send(new DeleteObjectsCommand({
-        Bucket: bucket,
-        Delete: { Objects: chunk.map(k => ({ Key: k })), Quiet: true },
-      }));
-      deleted += chunk.length - (result.Errors?.length ?? 0);
-    }
-
+    const deleted = await deleteObjectsChunked(getS3Client(), bucket, keys);
     res.json({ deleted, bucket, total: keys.length });
   } catch (e) { next(e); }
 });

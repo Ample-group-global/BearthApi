@@ -1,9 +1,10 @@
 import multer from "multer";
 import { Router } from "express";
-import { ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
+import { ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { requirePermission } from "../../adminAuth";
 import * as svc from "../../services/nft-gen.service";
 import { getS3Client } from "../../clients/s3";
+import { deleteObjectsChunked } from "../../utils/deleteObjects";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -23,13 +24,7 @@ router.post("/clear-bucket", async (req, res, next) => {
       }));
 
       const keys = (list.Contents ?? []).map(o => o.Key!).filter(Boolean);
-      if (keys.length) {
-        await s3.send(new DeleteObjectsCommand({
-          Bucket: bucket,
-          Delete: { Objects: keys.map(k => ({ Key: k })), Quiet: true },
-        }));
-        deleted += keys.length;
-      }
+      if (keys.length) deleted += await deleteObjectsChunked(s3, bucket, keys);
 
       continuationToken = list.IsTruncated ? list.NextContinuationToken : undefined;
     } while (continuationToken);
