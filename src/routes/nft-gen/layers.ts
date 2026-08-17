@@ -48,20 +48,26 @@ router.post("/upload", upload.array("files"), async (req, res, next) => {
     const s3Uploaded: string[] = [];
     const s3Failures: string[] = [];
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const sub = (subpaths[i] ?? "").replace(/\.\./g, "").replace(/^\//, "");
-      const base = file.originalname.split(/[\\/]/).pop() ?? file.originalname;
-      const safeName = base.replace(/[^a-zA-Z0-9.\-_]/g, "_");
-      if (!safeName.match(/\.(png|webp|jpg|jpeg|gif)$/i)) continue;
-      const rel = sub ? `${safe}/${sub}` : `${safe}/${safeName}`;
-      try {
-        await svc.uploadLayerImage(rel, file.buffer);
-        s3Uploaded.push(rel);
-        added.push(rel);
-      } catch {
-        s3Failures.push(rel);
-      }
+    // S3 PUTs don't touch the DB pool, so these can run at higher concurrency
+    // than DB-bound work — bounded batches instead of one sequential loop so
+    // a large layer (50+ files) doesn't upload one file at a time.
+    const S3_CONCURRENCY = 12;
+    for (let i = 0; i < files.length; i += S3_CONCURRENCY) {
+      await Promise.all(files.slice(i, i + S3_CONCURRENCY).map(async (file, j) => {
+        const idx = i + j;
+        const sub = (subpaths[idx] ?? "").replace(/\.\./g, "").replace(/^\//, "");
+        const base = file.originalname.split(/[\\/]/).pop() ?? file.originalname;
+        const safeName = base.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+        if (!safeName.match(/\.(png|webp|jpg|jpeg|gif)$/i)) return;
+        const rel = sub ? `${safe}/${sub}` : `${safe}/${safeName}`;
+        try {
+          await svc.uploadLayerImage(rel, file.buffer);
+          s3Uploaded.push(rel);
+          added.push(rel);
+        } catch {
+          s3Failures.push(rel);
+        }
+      }));
     }
 
     res.json({ ok: true, added, s3Uploaded, s3Failures });
