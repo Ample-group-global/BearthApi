@@ -38,15 +38,22 @@ export async function createCollection(params: {
   royaltyBps?: number; creatorWallet?: string; formatWidth?: number; formatHeight?: number;
   smoothing?: boolean; bgGenerate?: boolean; bgStaticColor?: string;
   shuffleOutput?: boolean; dnaTolerance?: number; createdBy?: string;
+  supply?: number; nameFormat?: string; formatType?: string; conflictRules?: unknown[];
 }) {
   const {
     name, description, symbol, network, royaltyBps, creatorWallet,
     formatWidth, formatHeight, smoothing, bgGenerate, bgStaticColor,
-    shuffleOutput, dnaTolerance, createdBy,
+    shuffleOutput, dnaTolerance, createdBy, supply, nameFormat, formatType, conflictRules,
   } = params;
   const { rows } = await pool.query(
-    "SELECT * FROM nft_gen_collection_create($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
-    [name, description ?? null, symbol ?? null, network ?? "eth", royaltyBps ?? 0, creatorWallet ?? null, formatWidth ?? 512, formatHeight ?? 512, smoothing ?? false, bgGenerate ?? false, bgStaticColor ?? null, shuffleOutput ?? true, dnaTolerance ?? 10000, createdBy ?? null],
+    "SELECT * FROM nft_gen_collection_create($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
+    [
+      name, description ?? null, symbol ?? null, network ?? "eth", royaltyBps ?? 0, creatorWallet ?? null,
+      formatWidth ?? 512, formatHeight ?? 512, smoothing ?? false, bgGenerate ?? false, bgStaticColor ?? null,
+      shuffleOutput ?? true, dnaTolerance ?? 10000, createdBy ?? null,
+      supply ?? null, nameFormat ?? null, formatType ?? null,
+      conflictRules ? JSON.stringify(conflictRules) : null,
+    ],
   );
   return rows[0] ?? null;
 }
@@ -56,15 +63,22 @@ export async function updateCollection(id: string, params: {
   royaltyBps?: number; creatorWallet?: string; formatWidth?: number; formatHeight?: number;
   smoothing?: boolean; bgGenerate?: boolean; bgStaticColor?: string;
   shuffleOutput?: boolean; dnaTolerance?: number; baseUri?: string; status?: string;
+  supply?: number; nameFormat?: string; formatType?: string; conflictRules?: unknown[];
 }) {
   const {
     name, description, symbol, network, royaltyBps, creatorWallet,
     formatWidth, formatHeight, smoothing, bgGenerate, bgStaticColor,
-    shuffleOutput, dnaTolerance, baseUri, status,
+    shuffleOutput, dnaTolerance, baseUri, status, supply, nameFormat, formatType, conflictRules,
   } = params;
   const { rows } = await pool.query(
-    "SELECT * FROM nft_gen_collection_update($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
-    [id, name ?? null, description ?? null, symbol ?? null, network ?? null, royaltyBps ?? null, creatorWallet ?? null, formatWidth ?? null, formatHeight ?? null, smoothing ?? null, bgGenerate ?? null, bgStaticColor ?? null, shuffleOutput ?? null, dnaTolerance ?? null, baseUri ?? null, status ?? null],
+    "SELECT * FROM nft_gen_collection_update($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)",
+    [
+      id, name ?? null, description ?? null, symbol ?? null, network ?? null, royaltyBps ?? null, creatorWallet ?? null,
+      formatWidth ?? null, formatHeight ?? null, smoothing ?? null, bgGenerate ?? null, bgStaticColor ?? null,
+      shuffleOutput ?? null, dnaTolerance ?? null, baseUri ?? null, status ?? null,
+      supply ?? null, nameFormat ?? null, formatType ?? null,
+      conflictRules ? JSON.stringify(conflictRules) : null,
+    ],
   );
   return rows[0] ?? null;
 }
@@ -148,24 +162,24 @@ export async function listTraits(layerId: string) {
 
 export async function createTrait(params: {
   layerId: string; name: string; filePath: string;
-  rarityTier?: string; storageProvider?: string;
+  rarityTier?: string; storageProvider?: string; rarityWeight?: number;
 }) {
-  const { layerId, name, filePath, rarityTier, storageProvider } = params;
+  const { layerId, name, filePath, rarityTier, storageProvider, rarityWeight } = params;
   const { rows } = await pool.query(
-    "SELECT * FROM nft_gen_trait_create($1, $2, $3, $4, $5)",
-    [layerId, name, filePath, rarityTier ?? "common", storageProvider ?? "filebase"],
+    "SELECT * FROM nft_gen_trait_create($1, $2, $3, $4, $5, $6)",
+    [layerId, name, filePath, rarityTier ?? "common", storageProvider ?? "filebase", rarityWeight ?? null],
   );
   return rows[0] ?? null;
 }
 
 export async function updateTrait(id: string, params: {
   name?: string; filePath?: string; storageProvider?: string;
-  rarityTier?: string; isActive?: boolean;
+  rarityTier?: string; isActive?: boolean; rarityWeight?: number;
 }) {
-  const { name, filePath, storageProvider, rarityTier, isActive } = params;
+  const { name, filePath, storageProvider, rarityTier, isActive, rarityWeight } = params;
   const { rows } = await pool.query(
-    "SELECT * FROM nft_gen_trait_update($1, $2, $3, $4, $5, $6)",
-    [id, name ?? null, filePath ?? null, storageProvider ?? null, rarityTier ?? null, isActive ?? null],
+    "SELECT * FROM nft_gen_trait_update($1, $2, $3, $4, $5, $6, $7)",
+    [id, name ?? null, filePath ?? null, storageProvider ?? null, rarityTier ?? null, isActive ?? null, rarityWeight ?? null],
   );
   return rows[0] ?? null;
 }

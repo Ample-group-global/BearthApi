@@ -36,6 +36,9 @@ blob-report/
 .idea/
 .vscode/
 
+# Claude Code internal folder
+.claude/
+
 # Documentation — no markdown files pushed to GitHub
 *.md
 mddoc-divakar/

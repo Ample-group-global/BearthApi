@@ -1,10 +1,8 @@
-import path from "path";
-import fs from "fs";
+import path   from "path";
 import { Router } from "express";
 import { requirePermission } from "../../adminAuth";
 import pool from "../../pool";
 import * as svc from "../../services/nft-gen.service";
-import { getLayersDir } from "../../utils/layers-dir";
 
 const router = Router();
 
@@ -77,16 +75,19 @@ router.get("/:id/layers-organise", async (req, res, next) => {
     const layers = active.map((l: any) => {
       const traits = traitRows.filter((t: any) => t.layer_id === l.id);
       return {
-        folder: l.name,
-        label: l.display_name ?? l.name,
-        count: traits.length,
-        optional: l.layer_rarity_pct != null && Number(l.layer_rarity_pct) < 100,
+        id:        l.id,
+        folder:    l.name,
+        label:     l.display_name ?? l.name,
+        count:     traits.length,
+        optional:  l.layer_rarity_pct != null && Number(l.layer_rarity_pct) < 100,
         bypassDna: l.bypass_dna ?? false,
         rarityPct: Number(l.layer_rarity_pct ?? 100),
+        sortOrder: Number(l.sort_order ?? 0),
         assets: traits.map((t: any) => ({
-          stem: path.basename(t.file_path, path.extname(t.file_path)),
-          name: t.name,
-          rel: t.file_path,
+          id:            t.id,
+          stem:          path.basename(t.file_path, path.extname(t.file_path)),
+          name:          t.name,
+          rel:           t.file_path,
           defaultWeight: Number(t.rarity_weight ?? 1),
         })),
       };
@@ -134,96 +135,6 @@ router.put("/:id/layers/reorder", async (req, res, next) => {
     }
     const result = await svc.reorderLayers(req.params.id, items);
     res.json(result);
-  } catch (e) { next(e); }
-});
-
-// ── Sync layers from BearthApi's own LAYERS_DIR into DB ─────────────────────
-const IMAGE_RE = /\.(png|webp|jpg|jpeg|gif)$/i;
-function inferTier(stem: string): string {
-  const s = stem.toLowerCase();
-  if (s.includes("legendary")) return "legendary";
-  if (s.includes("epic")) return "epic";
-  if (s.includes("rare")) return "rare";
-  return "common";
-}
-
-function scanApiLayers(layersDir: string): { folder: string; label: string; assets: { stem: string; name: string; rel: string }[] }[] {
-  if (!fs.existsSync(layersDir)) return [];
-  const entries = fs.readdirSync(layersDir, { withFileTypes: true });
-  const folders = entries
-    .filter(e => e.isDirectory())
-    .map(e => e.name)
-    .sort((a, b) => {
-      const na = parseInt(a), nb = parseInt(b);
-      return (isNaN(na) ? 999 : na) - (isNaN(nb) ? 999 : nb);
-    });
-
-  return folders.map(folder => {
-    const label = folder.replace(/^\d+[-_]/, '').replace(/[_-]+/g, ' ')
-      .replace(/\b\w/g, (c: string) => c.toUpperCase()).trim() || folder;
-    const folderPath = path.join(layersDir, folder);
-    const assets: { stem: string; name: string; rel: string }[] = [];
-
-    function walk(dir: string, prefix: string) {
-      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, ent.name);
-        const rel = prefix ? `${prefix}/${ent.name}` : ent.name;
-        if (ent.isDirectory()) { walk(full, rel); }
-        else if (IMAGE_RE.test(ent.name)) {
-          const stem = ent.name.replace(IMAGE_RE, '');
-          const name = stem.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()).trim() || stem;
-          assets.push({ stem, name, rel: `${folder}/${rel}` });
-        }
-      }
-    }
-    walk(folderPath, '');
-    assets.sort((a, b) => a.stem.localeCompare(b.stem, undefined, { numeric: true, sensitivity: 'base' }));
-    return { folder, label, assets };
-  });
-}
-
-router.post("/:id/sync-from-api-layers", async (req, res, next) => {
-  try {
-    requirePermission(req, "nft_gen.manage_layers");
-    const collectionId = req.params.id;
-    const layersDir = getLayersDir();
-    const diskLayers = scanApiLayers(layersDir);
-
-    if (!diskLayers.length) {
-      res.status(404).json({ error: "No layers found on API disk.", layersDir });
-      return;
-    }
-
-    const results = await Promise.all(diskLayers.map(async (dl) => {
-      const layerRow = await svc.createLayer({
-        collectionId,
-        name: dl.folder,
-        displayName: dl.label,
-        layerRarityPct: 100,
-      });
-      const layerId: string | null = layerRow?.id ?? null;
-      if (!layerId) return { folder: dl.folder, layerId: null, traits: 0 };
-
-      const BATCH = 50;
-      let traits = 0;
-      for (let i = 0; i < dl.assets.length; i += BATCH) {
-        await Promise.all(dl.assets.slice(i, i + BATCH).map(async (a) => {
-          const t = await svc.createTrait({
-            layerId,
-            name: a.name,
-            filePath: a.rel,
-            rarityTier: inferTier(a.stem),
-            storageProvider: "filebase",
-          });
-          if (t?.id) traits++;
-        }));
-      }
-      await svc.reconcileTraits(layerId, dl.assets.map(a => a.rel));
-      return { folder: dl.folder, layerId, traits };
-    }));
-
-    const { deactivated } = await svc.reconcileLayers(collectionId, diskLayers.map(d => d.folder));
-    res.json({ collectionId, layersSynced: results.filter(r => r.layerId).length, layersDeactivated: deactivated, results });
   } catch (e) { next(e); }
 });
 
