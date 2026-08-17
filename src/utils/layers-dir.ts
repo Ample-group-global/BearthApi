@@ -14,7 +14,3 @@ export function getLayersDir(): string {
   } catch { }
   return process.env.LAYERS_DIR ?? path.resolve(process.cwd(), "layers");
 }
-
-export function setLayersDir(dir: string): void {
-  fs.writeFileSync(CFG, JSON.stringify({ layersDir: dir }), "utf8");
-}
