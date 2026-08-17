@@ -80,6 +80,23 @@ router.post("/upload", upload.array("files"), async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── GET /server-info — lightweight probe: how many layer folders are in LAYERS_DIR ──
+router.get("/server-info", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.view");
+    const dir = process.env.LAYERS_DIR ?? path.resolve(process.cwd(), "layers");
+    let folderCount = 0;
+    let folders: string[] = [];
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true })
+        .filter(e => e.isDirectory() && /^\d+/.test(e.name));
+      folderCount = entries.length;
+      folders = entries.slice(0, 20).map(e => e.name);
+    } catch { /* dir not found — return zeros */ }
+    res.json({ layersDir: dir, folderCount, folders });
+  } catch (e) { next(e); }
+});
+
 router.get("/image", async (req, res, next) => {
   try {
     const rel = req.query.rel as string | undefined;
