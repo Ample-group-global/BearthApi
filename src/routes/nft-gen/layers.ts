@@ -42,7 +42,15 @@ router.post("/upload", upload.array("files"), async (req, res, next) => {
     const subpaths = ([] as string[]).concat(req.body?.subpaths ?? []);
     const files = (req.files ?? []) as Express.Multer.File[];
 
-    const safe = layer.replace(/[^a-zA-Z0-9\-_]/g, "");
+    // Must preserve the folder name exactly as uploaded (spaces included) —
+    // the DB's trait.file_path and every read-side fetch (/api/thumb,
+    // /api/layer-img, layers-organise) use the original folder name
+    // untouched. Previously this stripped spaces (e.g. "01_BEAR HEAD" ->
+    // "01_BEARHEAD"), so the upload landed at a key nothing ever looked for
+    // — confirmed live 2026-08-17: two whole layers uploaded successfully
+    // per the API response but were permanently unreachable as 404s,
+    // because the write path and every read path disagreed on the key.
+    const safe = layer.trim().replace(/[^a-zA-Z0-9\-_ ]/g, "");
     if (!safe) { res.status(400).json({ error: "layer name required" }); return; }
     const added: string[] = [];
     const s3Uploaded: string[] = [];
