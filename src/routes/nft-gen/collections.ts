@@ -67,8 +67,15 @@ router.get("/:id/layers-organise", async (req, res, next) => {
     if (!active.length) { res.json({ layers: [] }); return; }
 
     const layerIds = active.map((l: any) => l.id);
+    // ORDER BY is required here — without it, Postgres returns rows in
+    // physical/scan order, which can silently reshuffle after any UPDATE to
+    // a trait (e.g. a rarity-weight change). AssetGrid.tsx renders traits in
+    // whatever order they arrive with no client-side re-sort, so an
+    // unordered query meant a user's rarity edit looked like it "moved" to
+    // a different card on the next load, even though the DB write was
+    // correct the whole time. created_at preserves original upload order.
     const { rows: traitRows } = await pool.query(
-      "SELECT * FROM nft_traits WHERE layer_id = ANY($1::uuid[]) AND is_active = true",
+      "SELECT * FROM nft_traits WHERE layer_id = ANY($1::uuid[]) AND is_active = true ORDER BY created_at ASC",
       [layerIds]
     );
 
