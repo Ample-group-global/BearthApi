@@ -170,30 +170,30 @@ export async function createTrait(params: {
   return rows[0] ?? null;
 }
 
-// Layer-folder sync used to call createTrait() once per file over HTTP — for a
-// real layer set (200+ traits) that's 200+ separate BearthAdmin→BearthApi round
-// trips. This holds ONE pool connection for the whole layer and runs every
-// insert on it directly, cutting sync time from tens of seconds to ~1-2s per
-// layer (confirmed live 2026-08-17: user reported "Save & Continue" feeling
-// stuck — root cause was per-trait HTTP overhead, not an actual hang).
+// Layer-folder sync used to call createTrait() once per file over HTTP, then
+// (after a first fix) once per file over a single held connection — for a real
+// layer set (200+ traits) that's still 200+ sequential round-trips to Railway's
+// remote Postgres, each ~200-300ms, adding up to over a minute. This does the
+// whole layer as ONE set-based INSERT via nft_gen_traits_create_bulk (db/patch_v56),
+// cutting sync time from tens of seconds to under a second per layer (confirmed
+// live 2026-08-17: user reported "Save & Continue" feeling stuck; the per-trait
+// round-trip count, not HTTP overhead, was the real bottleneck).
 export async function createTraitsBulk(
   layerId: string,
   traits: Array<{ name: string; filePath: string; rarityTier?: string; storageProvider?: string; rarityWeight?: number }>,
 ) {
-  const client = await getClient();
-  try {
-    const created: unknown[] = [];
-    for (const t of traits) {
-      const { rows } = await client.query(
-        "SELECT * FROM nft_gen_trait_create($1, $2, $3, $4, $5, $6)",
-        [layerId, t.name, t.filePath, t.rarityTier ?? "common", t.storageProvider ?? "filebase", t.rarityWeight ?? null],
-      );
-      if (rows[0]) created.push(rows[0]);
-    }
-    return created;
-  } finally {
-    client.release();
-  }
+  const payload = traits.map((t) => ({
+    name: t.name,
+    file_path: t.filePath,
+    rarity_tier: t.rarityTier ?? "common",
+    storage_provider: t.storageProvider ?? "filebase",
+    rarity_weight: t.rarityWeight ?? null,
+  }));
+  const { rows } = await pool.query(
+    "SELECT * FROM nft_gen_traits_create_bulk($1, $2::jsonb)",
+    [layerId, JSON.stringify(payload)],
+  );
+  return rows;
 }
 
 export async function updateTrait(id: string, params: {
