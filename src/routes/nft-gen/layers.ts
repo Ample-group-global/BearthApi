@@ -69,7 +69,10 @@ router.post("/upload", upload.array("files"), async (req, res, next) => {
         if (!safeName.match(/\.(png|webp|jpg|jpeg|gif)$/i)) return;
         const rel = sub ? `${safe}/${sub}` : `${safe}/${safeName}`;
         try {
-          await svc.uploadLayerImage(rel, file.buffer);
+          // Generates + stores the display thumbnail right here, from the
+          // buffer already in memory — Organize/Preview never have to resize
+          // this file on the fly.
+          await svc.uploadLayerImageWithThumb(rel, file.buffer);
           s3Uploaded.push(rel);
           added.push(rel);
         } catch {

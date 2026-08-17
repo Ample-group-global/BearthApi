@@ -709,32 +709,14 @@ export async function fetchLayerImage(rel: string): Promise<Buffer | null> {
   }
 }
 
-// Organize/Preview only ever display these at a few hundred px — this used to
-// stream the full 2000x2000 original PNG per image (86-213 of them per load),
-// which is what made Preview's "Loading images…" step slow. Resize once and
-// cache in memory; a real layer set is only ~200 unique files so this stays
-// small for the process lifetime.
-const thumbCache = new Map<string, Buffer>();
-export async function fetchLayerThumb(rel: string, size = 200): Promise<Buffer | null> {
-  const cacheKey = `${size}:${rel}`;
-  const cached = thumbCache.get(cacheKey);
-  if (cached) return cached;
-
-  const full = await fetchLayerImage(rel);
-  if (!full) return null;
-  try {
-    const thumb = await sharp(full).resize(size, size, { fit: 'inside' }).png().toBuffer();
-    thumbCache.set(cacheKey, thumb);
-    return thumb;
-  } catch {
-    return full; // fall back to original if it isn't a decodable image
-  }
-}
-
 const MIME_MAP: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
   gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
 };
+
+function thumbKeyFor(rel: string, size: number): string {
+  return `_thumbs/${size}/${rel}`;
+}
 
 export async function uploadLayerImage(rel: string, buf: Buffer): Promise<void> {
   const ext = rel.split('.').pop()?.toLowerCase() ?? '';
@@ -745,4 +727,53 @@ export async function uploadLayerImage(rel: string, buf: Buffer): Promise<void> 
     Body: buf,
     ContentType: MIME_MAP[ext] ?? 'image/png',
   }));
+}
+
+// Generates the display thumbnail once, at upload time, from the buffer
+// already in memory (no extra S3 round-trip to re-fetch the original) and
+// stores it durably in S3 next to the source. This is what makes Organize/
+// Preview loads fast for anything uploaded from here on — no per-request
+// resize, no in-process cache that's lost on every restart.
+const THUMB_SIZE = 200;
+export async function uploadLayerImageWithThumb(rel: string, buf: Buffer): Promise<void> {
+  const bucket = process.env.FILEBASE_LAYERS_BUCKET || 'bearth-layers';
+  const thumbBuf = await sharp(buf).resize(THUMB_SIZE, THUMB_SIZE, { fit: 'inside' }).png().toBuffer().catch(() => null);
+  await Promise.all([
+    uploadLayerImage(rel, buf),
+    thumbBuf
+      ? s3.send(new PutObjectCommand({ Bucket: bucket, Key: thumbKeyFor(rel, THUMB_SIZE), Body: thumbBuf, ContentType: 'image/png' }))
+      : Promise.resolve(),
+  ]);
+}
+
+// Organize/Preview only ever display these at a few hundred px. Tries the
+// pre-generated thumbnail first (fast S3 GetObject, no resize work at all —
+// this is what uploadLayerImageWithThumb produces going forward). Falls back
+// to resizing the original on demand for anything uploaded before this
+// existed, and self-heals by writing the result back to S3 so it's a
+// persistent thumb from then on — no manual backfill needed, and nothing
+// breaks for pre-existing collections in the meantime.
+const thumbMemCache = new Map<string, Buffer>();
+export async function fetchLayerThumb(rel: string, size = THUMB_SIZE): Promise<Buffer | null> {
+  const cacheKey = `${size}:${rel}`;
+  const mem = thumbMemCache.get(cacheKey);
+  if (mem) return mem;
+
+  const persisted = await fetchLayerImage(thumbKeyFor(rel, size));
+  if (persisted) {
+    thumbMemCache.set(cacheKey, persisted);
+    return persisted;
+  }
+
+  const full = await fetchLayerImage(rel);
+  if (!full) return null;
+  try {
+    const thumb = await sharp(full).resize(size, size, { fit: 'inside' }).png().toBuffer();
+    thumbMemCache.set(cacheKey, thumb);
+    const bucket = process.env.FILEBASE_LAYERS_BUCKET || 'bearth-layers';
+    s3.send(new PutObjectCommand({ Bucket: bucket, Key: thumbKeyFor(rel, size), Body: thumb, ContentType: 'image/png' })).catch(() => {});
+    return thumb;
+  } catch {
+    return full; // fall back to original if it isn't a decodable image
+  }
 }
