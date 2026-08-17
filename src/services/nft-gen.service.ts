@@ -1,6 +1,7 @@
 import pool, { getClient } from "../pool";
 import { toCamel } from "../utils/camel";
 import { S3Client, ListObjectsV2Command, HeadObjectCommand, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import sharp from "sharp";
 
 const s3 = new S3Client({
   endpoint: "https://s3.filebase.com",
@@ -705,6 +706,28 @@ export async function fetchLayerImage(rel: string): Promise<Buffer | null> {
     return Buffer.concat(chunks);
   } catch {
     return null;
+  }
+}
+
+// Organize/Preview only ever display these at a few hundred px — this used to
+// stream the full 2000x2000 original PNG per image (86-213 of them per load),
+// which is what made Preview's "Loading images…" step slow. Resize once and
+// cache in memory; a real layer set is only ~200 unique files so this stays
+// small for the process lifetime.
+const thumbCache = new Map<string, Buffer>();
+export async function fetchLayerThumb(rel: string, size = 200): Promise<Buffer | null> {
+  const cacheKey = `${size}:${rel}`;
+  const cached = thumbCache.get(cacheKey);
+  if (cached) return cached;
+
+  const full = await fetchLayerImage(rel);
+  if (!full) return null;
+  try {
+    const thumb = await sharp(full).resize(size, size, { fit: 'inside' }).png().toBuffer();
+    thumbCache.set(cacheKey, thumb);
+    return thumb;
+  } catch {
+    return full; // fall back to original if it isn't a decodable image
   }
 }
 

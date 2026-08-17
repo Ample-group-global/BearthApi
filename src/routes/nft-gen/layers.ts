@@ -89,7 +89,13 @@ router.get("/image", async (req, res, next) => {
       res.status(400).json({ error: "Invalid rel path." });
       return;
     }
-    const buf = await svc.fetchLayerImage(rel);
+    // Only the Organize/Preview thumb strip calls this route, displayed at a few
+    // hundred px — default to a resized thumbnail instead of the full 2000x2000
+    // original (?full=1 opts back into the original for any future caller that
+    // genuinely needs it).
+    const buf = req.query.full
+      ? await svc.fetchLayerImage(rel)
+      : await svc.fetchLayerThumb(rel);
     if (!buf) { res.status(404).json({ error: "Image not found." }); return; }
     res.set("Content-Type", "image/png");
     res.set("Cache-Control", "public, max-age=86400");
