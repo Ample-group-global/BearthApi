@@ -160,7 +160,7 @@ export async function listTraits(layerId: string) {
 }
 
 export async function createTrait(params: {
-  layerId: string; name: string; filePath: string;
+  layerId: string; name: string; filePath: string | null;
   rarityTier?: string; storageProvider?: string; rarityWeight?: number;
 }) {
   const { layerId, name, filePath, rarityTier, storageProvider, rarityWeight } = params;

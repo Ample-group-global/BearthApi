@@ -181,7 +181,11 @@ router.post("/:id/traits", async (req, res, next) => {
     requirePermission(req, "nft_gen.manage_layers");
     const { name, filePath } = req.body ?? {};
     if (!name?.trim()) { res.status(422).json({ error: "Trait name is required." }); return; }
-    if (!filePath?.trim()) { res.status(422).json({ error: "File path is required." }); return; }
+    // filePath is required UNLESS the caller explicitly sends null — a real
+    // image upload always has a real path, so an accidentally-omitted
+    // filePath (undefined) still errors here rather than silently creating a
+    // file-less trait. "Add Custom Asset" sends filePath: null on purpose.
+    if (filePath !== null && !filePath?.trim()) { res.status(422).json({ error: "File path is required." }); return; }
     const VALID_TIERS = ["legendary", "epic", "rare", "common"];
     const tier = (req.body.rarityTier ?? "common").toLowerCase();
     if (!VALID_TIERS.includes(tier)) {

@@ -231,7 +231,10 @@ async function runGenerate(generateId: string, collectionId: string, editionSize
       bypassDna: l.bypass_dna ?? false,
       rarityPct: l.layer_rarity_pct ?? 100,
       assets: layerTraits.map((t: any) => ({
-        stem: path.basename(t.file_path, path.extname(t.file_path)),
+        // "Add Custom Asset" traits have no file — path.basename would throw
+        // on null. Falling back to the trait's own id keeps stem stable and
+        // unique (it's used as the DNA/uniqueness key during combo picking).
+        stem: t.file_path ? path.basename(t.file_path, path.extname(t.file_path)) : t.id,
         name: t.name,
         rel: t.file_path,
         defaultWeight: Number(t.rarity_weight ?? 1),

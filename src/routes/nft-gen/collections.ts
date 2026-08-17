@@ -92,7 +92,9 @@ router.get("/:id/layers-organise", async (req, res, next) => {
         sortOrder: Number(l.sort_order ?? 0),
         assets: traits.map((t: any) => ({
           id:            t.id,
-          stem:          path.basename(t.file_path, path.extname(t.file_path)),
+          // "Add Custom Asset" traits have no file — fall back to the
+          // trait's own id so stem stays stable/unique (matches generate.ts).
+          stem:          t.file_path ? path.basename(t.file_path, path.extname(t.file_path)) : t.id,
           name:          t.name,
           rel:           t.file_path,
           defaultWeight: Number(t.rarity_weight ?? 1),
