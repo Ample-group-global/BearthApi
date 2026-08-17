@@ -27,9 +27,21 @@ function getPool(): Pool {
 
 const pool = new Proxy({} as Pool, {
   get(_target, prop) {
-    return (getPool() as unknown as Record<string | symbol, unknown>)[prop];
+    const real = getPool() as unknown as Record<string | symbol, unknown>;
+    const value = real[prop];
+    // Methods (query, connect, end, ...) must run with `this` bound to the real
+    // Pool, not this Proxy — pg's Pool relies on internal instance state that a
+    // bare `proxy.connect()` call would otherwise read/write on the wrong object.
+    return typeof value === "function" ? value.bind(real) : value;
   },
 });
+
+// Properly-bound client checkout for callers that need one connection held
+// across multiple sequential queries (e.g. bulk inserts) instead of a fresh
+// pool.query() per statement.
+export async function getClient() {
+  return getPool().connect();
+}
 
 // Ping the DB every 60 seconds so Railway never closes idle connections.
 // Railway's idle TCP timeout is ~5 min; 60s keepalive keeps all pool

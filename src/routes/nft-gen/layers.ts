@@ -145,6 +145,28 @@ router.post("/:id/traits/reconcile", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+router.post("/:id/traits/bulk", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.manage_layers");
+    const { traits } = req.body ?? {};
+    if (!Array.isArray(traits) || !traits.length) {
+      res.status(422).json({ error: "traits must be a non-empty array." }); return;
+    }
+    const VALID_TIERS = ["legendary", "epic", "rare", "common"];
+    for (const t of traits) {
+      if (!t?.name?.trim()) { res.status(422).json({ error: "Every trait needs a name." }); return; }
+      if (!t?.filePath?.trim()) { res.status(422).json({ error: "Every trait needs a filePath." }); return; }
+      const tier = (t.rarityTier ?? "common").toLowerCase();
+      if (!VALID_TIERS.includes(tier)) {
+        res.status(422).json({ error: "rarityTier must be one of: legendary, epic, rare, common." }); return;
+      }
+      t.rarityTier = tier;
+    }
+    const created = await svc.createTraitsBulk(req.params.id, traits);
+    res.status(201).json({ traits: created, count: created.length });
+  } catch (e) { next(e); }
+});
+
 router.post("/:id/traits", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.manage_layers");

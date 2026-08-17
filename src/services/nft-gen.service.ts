@@ -1,4 +1,4 @@
-import pool from "../pool";
+import pool, { getClient } from "../pool";
 import { toCamel } from "../utils/camel";
 import { S3Client, ListObjectsV2Command, HeadObjectCommand, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 
@@ -170,6 +170,32 @@ export async function createTrait(params: {
   return rows[0] ?? null;
 }
 
+// Layer-folder sync used to call createTrait() once per file over HTTP — for a
+// real layer set (200+ traits) that's 200+ separate BearthAdmin→BearthApi round
+// trips. This holds ONE pool connection for the whole layer and runs every
+// insert on it directly, cutting sync time from tens of seconds to ~1-2s per
+// layer (confirmed live 2026-08-17: user reported "Save & Continue" feeling
+// stuck — root cause was per-trait HTTP overhead, not an actual hang).
+export async function createTraitsBulk(
+  layerId: string,
+  traits: Array<{ name: string; filePath: string; rarityTier?: string; storageProvider?: string; rarityWeight?: number }>,
+) {
+  const client = await getClient();
+  try {
+    const created: unknown[] = [];
+    for (const t of traits) {
+      const { rows } = await client.query(
+        "SELECT * FROM nft_gen_trait_create($1, $2, $3, $4, $5, $6)",
+        [layerId, t.name, t.filePath, t.rarityTier ?? "common", t.storageProvider ?? "filebase", t.rarityWeight ?? null],
+      );
+      if (rows[0]) created.push(rows[0]);
+    }
+    return created;
+  } finally {
+    client.release();
+  }
+}
+
 export async function updateTrait(id: string, params: {
   name?: string; filePath?: string; storageProvider?: string;
   rarityTier?: string; isActive?: boolean; rarityWeight?: number;
@@ -255,7 +281,7 @@ export async function insertItemsBatch(params: {
   const { jobId, items } = params;
   if (!items.length) return [];
 
-  const client = await pool.connect();
+  const client = await getClient();
   try {
     await client.query("BEGIN");
 
