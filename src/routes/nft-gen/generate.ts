@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
 import path from "path";
-import fs from "fs";
 import { requirePermission } from "../../adminAuth";
 import pool from "../../pool";
 import * as svc from "../../services/nft-gen.service";
@@ -29,12 +28,11 @@ router.post("/", async (req, res, next) => {
     const { collectionId, editionSize } = req.body ?? {};
     if (!collectionId) { res.status(422).json({ error: "collectionId is required." }); return; }
     if (!editionSize || Number(editionSize) < 1) { res.status(422).json({ error: "editionSize must be >= 1." }); return; }
-    const layersDir = svc.getLocalLayersDir();
     const generateId = randomUUID();
     generateJobs.set(generateId, { status: "running", phase: "Loading layers…", progress: 0, total: Number(editionSize) });
 
     const createdBy: string | null = (req as any).user?.userId ?? null;
-    runGenerate(generateId, String(collectionId), Number(editionSize), layersDir, createdBy)
+    runGenerate(generateId, String(collectionId), Number(editionSize), createdBy)
       .catch(err => {
         const s = generateJobs.get(generateId);
         if (s) { s.status = "error"; s.error = err instanceof Error ? err.message : String(err); }
@@ -190,7 +188,7 @@ async function cleanOldGenerationData(collectionId: string, newJobId: string): P
 const BATCH_SIZE = 500;
 const BATCH_CONCUR = 5;
 
-async function runGenerate(generateId: string, collectionId: string, editionSize: number, layersDir: string, createdBy: string | null) {
+async function runGenerate(generateId: string, collectionId: string, editionSize: number, createdBy: string | null) {
   const state = generateJobs.get(generateId)!;
 
   // 1. Load layers from DB
@@ -206,17 +204,23 @@ async function runGenerate(generateId: string, collectionId: string, editionSize
   // 2. Load traits
   const layerIds = activeLayers.map((l: any) => l.id);
   const { rows: traitRows } = await pool.query(
-    "SELECT * FROM nft_traits WHERE layer_id = ANY($1::uuid[]) AND is_active = true",
+    "SELECT * FROM nft_traits WHERE layer_id = ANY($1::uuid[]) AND is_active = true ORDER BY created_at ASC",
     [layerIds]
   );
 
-  // 3. Read weights + conflicts from filesystem
-  const weightsPath = path.join(layersDir, ".weights.json");
-  const conflictsPath = path.join(layersDir, ".conflicts.json");
-  const weights: Record<string, Record<string, number>> =
-    fs.existsSync(weightsPath) ? JSON.parse(fs.readFileSync(weightsPath, "utf8")) : {};
-  const conflicts: ConflictRule[] =
-    fs.existsSync(conflictsPath) ? JSON.parse(fs.readFileSync(conflictsPath, "utf8")) : [];
+  // 3. Conflict rules live on the collection row (DB is the single source of
+  // truth — this used to read a local .conflicts.json that nothing has
+  // written since the DB migration, so every conflict rule was silently
+  // ignored during actual generation while Preview correctly enforced them
+  // client-side from this same column). Per-trait weight doesn't need a
+  // separate source: rarity_weight is already read straight from nft_traits
+  // below as each asset's defaultWeight.
+  const { rows: collRows } = await pool.query(
+    "SELECT conflict_rules FROM nft_collections WHERE id = $1::uuid",
+    [collectionId]
+  );
+  const conflicts: ConflictRule[] = collRows[0]?.conflict_rules ?? [];
+  const weights: Record<string, Record<string, number>> = {};
 
   // 4. Build layer structure
   const layers: Layer[] = activeLayers.map((l: any) => {

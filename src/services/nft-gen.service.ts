@@ -1,5 +1,3 @@
-import fs from "fs";
-import path from "path";
 import pool from "../pool";
 import { toCamel } from "../utils/camel";
 import { S3Client, ListObjectsV2Command, HeadObjectCommand, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
@@ -665,13 +663,6 @@ export async function syncFromFilebaseBucket(bucket: string): Promise<{ synced: 
   }
 
   return { synced: totalSynced, skipped };
-}
-
-// Returns the layers root directory.
-// Uses LAYERS_DIR env var on Railway/prod; falls back to a 'layers' folder
-// inside BearthApi for zero-config local development.
-export function getLocalLayersDir(): string {
-  return process.env.LAYERS_DIR ?? path.resolve(process.cwd(), 'layers');
 }
 
 export async function fetchLayerImage(rel: string): Promise<Buffer | null> {
