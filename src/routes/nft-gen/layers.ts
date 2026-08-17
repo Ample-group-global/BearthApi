@@ -6,6 +6,7 @@ import { ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { requirePermission } from "../../adminAuth";
 import * as svc from "../../services/nft-gen.service";
 import { getS3Client } from "../../clients/s3";
+import { getLayersDir, setLayersDir } from "../../utils/layers-dir";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -51,7 +52,7 @@ router.post("/upload", upload.array("files"), async (req, res, next) => {
 
     const safe = layer.replace(/[^a-zA-Z0-9\-_]/g, "");
     if (!safe) { res.status(400).json({ error: "layer name required" }); return; }
-    const layersDir = process.env.LAYERS_DIR ?? path.resolve(process.cwd(), "layers");
+    const layersDir = getLayersDir();
     const added: string[] = [];
     const s3Uploaded: string[] = [];
     const s3Failures: string[] = [];
@@ -80,11 +81,11 @@ router.post("/upload", upload.array("files"), async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// ── GET /server-info — lightweight probe: how many layer folders are in LAYERS_DIR ──
+// ── GET /server-info — probe layer folder count (no DB write) ────────────────
 router.get("/server-info", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.view");
-    const dir = process.env.LAYERS_DIR ?? path.resolve(process.cwd(), "layers");
+    const dir = getLayersDir();
     let folderCount = 0;
     let folders: string[] = [];
     try {
@@ -94,6 +95,24 @@ router.get("/server-info", async (req, res, next) => {
       folders = entries.slice(0, 20).map(e => e.name);
     } catch { /* dir not found — return zeros */ }
     res.json({ layersDir: dir, folderCount, folders });
+  } catch (e) { next(e); }
+});
+
+// ── POST /set-folder — save layers folder path to config file ────────────────
+router.post("/set-folder", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.manage_layers");
+    const folderPath = (req.body?.path ?? "").trim();
+    if (!folderPath) { res.status(400).json({ error: "path is required" }); return; }
+    if (folderPath.includes("..")) { res.status(400).json({ error: "Invalid path" }); return; }
+    setLayersDir(folderPath);
+    let folderCount = 0;
+    try {
+      const entries = fs.readdirSync(folderPath, { withFileTypes: true })
+        .filter(e => e.isDirectory() && /^\d+/.test(e.name));
+      folderCount = entries.length;
+    } catch { }
+    res.json({ ok: true, layersDir: folderPath, folderCount });
   } catch (e) { next(e); }
 });
 

@@ -4,6 +4,7 @@ import { Router } from "express";
 import { requirePermission } from "../../adminAuth";
 import pool from "../../pool";
 import * as svc from "../../services/nft-gen.service";
+import { getLayersDir } from "../../utils/layers-dir";
 
 const router = Router();
 
@@ -185,7 +186,7 @@ router.post("/:id/sync-from-api-layers", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.manage_layers");
     const collectionId = req.params.id;
-    const layersDir = process.env.LAYERS_DIR ?? path.resolve(process.cwd(), "layers");
+    const layersDir = getLayersDir();
     const diskLayers = scanApiLayers(layersDir);
 
     if (!diskLayers.length) {
