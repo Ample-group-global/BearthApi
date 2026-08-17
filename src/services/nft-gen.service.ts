@@ -762,15 +762,6 @@ export function getLocalLayersDir(): string {
 export async function fetchLayerImage(rel: string): Promise<Buffer | null> {
   if (!rel || rel.includes('..') || rel.startsWith('/')) return null;
 
-  // 1. Try local disk first (Railway + local dev both work via getLocalLayersDir)
-  const layersDir = getLocalLayersDir();
-  const abs = path.resolve(layersDir, rel);
-  const check = path.relative(path.resolve(layersDir), abs);
-  if (!check.startsWith('..') && !path.isAbsolute(check)) {
-    try { return fs.readFileSync(abs); } catch { }
-  }
-
-  // 2. Fall back to Filebase S3 (Vercel + any env without local disk)
   const bucket = process.env.FILEBASE_LAYERS_BUCKET || 'bearth-layers';
   try {
     const resp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: rel }));

@@ -9,7 +9,7 @@ import sharp from "sharp";
 import { requirePermission } from "../../adminAuth";
 import pool from "../../pool";
 import { getS3Client } from "../../clients/s3";
-import { batchUpdateItemIpfsCids, syncGeneratedItemsToNftRecords, getLocalLayersDir } from "../../services/nft-gen.service";
+import { batchUpdateItemIpfsCids, syncGeneratedItemsToNftRecords } from "../../services/nft-gen.service";
 
 const router = Router();
 
@@ -49,26 +49,18 @@ function layersBucket(): string | null {
   return process.env.LAYERS_BUCKET || process.env.FILEBASE_LAYERS_BUCKET || null;
 }
 
-function makeLayerFetcher(layersDir: string | null) {
+function makeLayerFetcher() {
   const cache = new Map<string, Buffer>();
-  const resolvedDir = layersDir ? path.resolve(layersDir) : null;
   const bucket = layersBucket();
 
   return async function fetchLayerBuf(filePath: string): Promise<Buffer | null> {
     if (cache.has(filePath)) return cache.get(filePath)!;
+    if (!bucket) return null;
     let buf: Buffer | null = null;
-    if (resolvedDir) {
-      const abs = path.resolve(resolvedDir, filePath);
-      if (abs.startsWith(resolvedDir) && fs.existsSync(abs)) {
-        buf = fs.readFileSync(abs);
-      }
-    }
-    if (!buf && bucket) {
-      try {
-        const res = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: filePath }));
-        buf = await streamToBuffer(res.Body);
-      } catch { buf = null; }
-    }
+    try {
+      const res = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: filePath }));
+      buf = await streamToBuffer(res.Body);
+    } catch { buf = null; }
 
     if (buf) cache.set(filePath, buf);
     return buf;
@@ -77,13 +69,7 @@ function makeLayerFetcher(layersDir: string | null) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function resolveLayersDir(): string | null {
-  const dir = getLocalLayersDir();
-  return fs.existsSync(dir) ? dir : null;
-}
-
 function hasLayerSource(): boolean {
-  if (fs.existsSync(getLocalLayersDir())) return true;
   return !!layersBucket();
 }
 
@@ -103,7 +89,7 @@ router.post("/", async (req, res, next) => {
     if (!bucket) { res.status(422).json({ error: "bucket is required." }); return; }
 
     if (!hasLayerSource()) {
-      res.status(500).json({ error: "No layer source configured. Set LAYERS_DIR (local path) or LAYERS_BUCKET (Filebase bucket name)." });
+      res.status(500).json({ error: "No layer source configured. Set LAYERS_BUCKET (Filebase bucket name)." });
       return;
     }
 
@@ -129,7 +115,6 @@ router.post("/", async (req, res, next) => {
       width: Number(width),
       height: Number(height),
       total,
-      layersDir: resolveLayersDir(),
       collectionName: String(collectionName),
       description: String(description),
       nameFormat: String(nameFormat),
@@ -152,7 +137,7 @@ router.post("/preview", async (req, res, next) => {
     if (!jobId) { res.status(422).json({ error: "jobId is required." }); return; }
 
     if (!hasLayerSource()) {
-      res.status(500).json({ error: "No layer source configured. Set LAYERS_DIR (local path) or LAYERS_BUCKET (Filebase bucket name)." });
+      res.status(500).json({ error: "No layer source configured. Set LAYERS_BUCKET (Filebase bucket name)." });
       return;
     }
 
@@ -164,12 +149,9 @@ router.post("/preview", async (req, res, next) => {
     if (total === 0) { res.status(422).json({ error: "No generated items for this job." }); return; }
 
     const previewId = randomUUID();
-    const layersDir = resolveLayersDir();
 
-    // Use /tmp on Vercel (no local LAYERS_DIR); use sibling folder in dev
-    const previewDir = layersDir
-      ? path.join(path.dirname(path.resolve(layersDir)), "nft-previews", previewId)
-      : path.join(os.tmpdir(), "bearth-previews", previewId);
+    // Thumbnails are a scratch cache, not layer source data — always OS temp dir.
+    const previewDir = path.join(os.tmpdir(), "bearth-previews", previewId);
     fs.mkdirSync(previewDir, { recursive: true });
 
     previewJobs.set(previewId, {
@@ -177,7 +159,7 @@ router.post("/preview", async (req, res, next) => {
       phase: "Starting…", validCount: 0, invalidItems: [], dir: previewDir,
     });
 
-    runPreview(previewId, jobId, { width: Number(width), height: Number(height), total, layersDir, previewDir })
+    runPreview(previewId, jobId, { width: Number(width), height: Number(height), total, previewDir })
       .catch(err => {
         const s = previewJobs.get(previewId);
         if (s) { s.status = "error"; s.error = String(err?.message ?? err); }
@@ -244,15 +226,15 @@ async function runExport(
   jobId: string,
   opts: {
     bucket: string; format: string; width: number; height: number; total: number;
-    layersDir: string | null; collectionName: string; description: string; nameFormat: string; externalUrl: string;
+    collectionName: string; description: string; nameFormat: string; externalUrl: string;
   },
 ) {
-  const { bucket, format, width, height, total, layersDir, collectionName, description, nameFormat, externalUrl } = opts;
+  const { bucket, format, width, height, total, collectionName, description, nameFormat, externalUrl } = opts;
   const ext = format === "webp" ? "webp" : "png";
   const mime = ext === "webp" ? "image/webp" : "image/png";
   const state = exportJobs.get(exportId)!;
   const s3 = getS3Client();
-  const fetchLayerBuf = makeLayerFetcher(layersDir);
+  const fetchLayerBuf = makeLayerFetcher();
 
   for (let offset = 0; offset < total; offset += BATCH) {
     const batchEnd = Math.min(offset + BATCH, total);
@@ -389,11 +371,11 @@ async function runExport(
 async function runPreview(
   previewId: string,
   jobId: string,
-  opts: { width: number; height: number; total: number; layersDir: string | null; previewDir: string },
+  opts: { width: number; height: number; total: number; previewDir: string },
 ) {
-  const { total, layersDir, previewDir } = opts;
+  const { total, previewDir } = opts;
   const state = previewJobs.get(previewId)!;
-  const fetchLayerBuf = makeLayerFetcher(layersDir);
+  const fetchLayerBuf = makeLayerFetcher();
   const resizedCache = new Map<string, Promise<Buffer>>();
   function getResized(filePath: string, raw: Buffer): Promise<Buffer> {
     if (!resizedCache.has(filePath)) {

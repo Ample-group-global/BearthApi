@@ -1,12 +1,9 @@
-import fs from "fs";
-import path from "path";
 import multer from "multer";
 import { Router } from "express";
 import { ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { requirePermission } from "../../adminAuth";
 import * as svc from "../../services/nft-gen.service";
 import { getS3Client } from "../../clients/s3";
-import { getLayersDir } from "../../utils/layers-dir";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -41,7 +38,7 @@ router.post("/clear-bucket", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// ── POST /upload — receive layer PNGs from BearthAdmin, save to disk + S3 ────
+// ── POST /upload — receive layer PNGs from BearthAdmin, save to Filebase S3 ──
 router.post("/upload", upload.array("files"), async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.manage_layers");
@@ -52,7 +49,6 @@ router.post("/upload", upload.array("files"), async (req, res, next) => {
 
     const safe = layer.replace(/[^a-zA-Z0-9\-_]/g, "");
     if (!safe) { res.status(400).json({ error: "layer name required" }); return; }
-    const layersDir = getLayersDir();
     const added: string[] = [];
     const s3Uploaded: string[] = [];
     const s3Failures: string[] = [];
@@ -64,17 +60,13 @@ router.post("/upload", upload.array("files"), async (req, res, next) => {
       const safeName = base.replace(/[^a-zA-Z0-9.\-_]/g, "_");
       if (!safeName.match(/\.(png|webp|jpg|jpeg|gif)$/i)) continue;
       const rel = sub ? `${safe}/${sub}` : `${safe}/${safeName}`;
-      const targetDir = path.join(layersDir, safe, path.dirname(sub || safeName));
-      fs.mkdirSync(targetDir, { recursive: true });
-      fs.writeFileSync(path.join(layersDir, rel), file.buffer);
       try {
         await svc.uploadLayerImage(rel, file.buffer);
         s3Uploaded.push(rel);
+        added.push(rel);
       } catch {
         s3Failures.push(rel);
       }
-
-      added.push(rel);
     }
 
     res.json({ ok: true, added, s3Uploaded, s3Failures });
