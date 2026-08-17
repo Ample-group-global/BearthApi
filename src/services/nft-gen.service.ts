@@ -248,29 +248,6 @@ export async function deleteFailedJob(id: string): Promise<boolean> {
 
 // ── Generated Items ──────────────────────────────────────────────────────────
 
-export async function insertItem(params: {
-  jobId: string; editionNumber: number; dnaHash: string;
-  imagePath?: string; metadataJson?: object;
-}) {
-  const { jobId, editionNumber, dnaHash, imagePath, metadataJson } = params;
-  const { rows } = await pool.query(
-    "SELECT * FROM nft_gen_item_insert($1::uuid, $2, $3, $4, $5)",
-    [jobId, editionNumber, dnaHash, imagePath ?? null, metadataJson ? JSON.stringify(metadataJson) : null],
-  );
-  return rows[0] ?? null;
-}
-
-export async function insertItemTrait(params: {
-  itemId: string; traitId: string | null; traitType: string; traitValue: string; rarityTier?: string;
-}) {
-  const { itemId, traitId, traitType, traitValue, rarityTier } = params;
-  const { rows } = await pool.query(
-    "SELECT * FROM nft_gen_item_trait_insert($1::uuid, $2::uuid, $3, $4, $5)",
-    [itemId, traitId ?? null, traitType, traitValue, rarityTier ?? null],
-  );
-  return rows[0] ?? null;
-}
-
 export async function insertItemsBatch(params: {
   jobId: string;
   items: Array<{
