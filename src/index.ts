@@ -53,8 +53,17 @@ import { logger } from "./logger";
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 8000);
+// Transient RPC/network noise from the always-on chain event listeners (contract.service.ts)
+// floods this handler constantly on a public RPC endpoint. Ethers v6 gives these errors a
+// structured `.code` (e.g. TIMEOUT, NETWORK_ERROR, SERVER_ERROR) — check that instead of
+// matching `.message` substrings, which silently stopped matching once ethers' message format
+// changed (confirmed live 2026-08-17: 6,600 of 6,647 log lines were an unfiltered TIMEOUT whose
+// message never matched any of the substrings below).
+const TRANSIENT_RPC_ERROR_CODES = new Set(["TIMEOUT", "NETWORK_ERROR", "SERVER_ERROR"]);
 process.on("unhandledRejection", (reason) => {
   if (reason instanceof Error) {
+    const code = (reason as { code?: string }).code;
+    if (code && TRANSIENT_RPC_ERROR_CODES.has(code)) return;
     const msg = reason.message ?? "";
     if (
       msg.includes("request timed out") ||
