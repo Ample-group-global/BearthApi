@@ -261,51 +261,60 @@ router.get("/download-zip/:jobId", async (req, res, next) => {
         }
 
         const editions = [...byEdition.keys()].sort((a, b) => a - b);
+        const results: Array<{ editionNum: number; imgBuf: Buffer; metaJson: string }> = [];
+        let cursor = 0;
 
-        // Composite concurrently (CPU/IO-bound), but write to the ZIP
-        // stream sequentially afterward — ZipStream tracks a running byte
-        // offset and is not safe for concurrent writes.
-        const results = await Promise.all(editions.map(async editionNum => {
-          const editionData = byEdition.get(editionNum)!;
-          const validLayers = editionData.layers.filter(l => l.file_path);
-          const resized: Buffer[] = [];
-          for (const layer of validLayers) {
-            const raw = await fetchLayerBuf(layer.file_path!);
-            if (!raw) continue;
-            resized.push(await sharp(raw).resize(width, height).toBuffer());
+        // Composite with bounded concurrency (CPU/IO-bound) — an unbounded
+        // Promise.all over a full 200-item batch can burst past the S3
+        // client's socket pool (confirmed live: requests queuing up under
+        // load). Write to the ZIP stream only after each batch settles —
+        // ZipStream tracks a running byte offset and is not safe for
+        // concurrent writes.
+        async function processOne() {
+          while (cursor < editions.length) {
+            const editionNum = editions[cursor++];
+            const editionData = byEdition.get(editionNum)!;
+            const validLayers = editionData.layers.filter(l => l.file_path);
+            const resized: Buffer[] = [];
+            for (const layer of validLayers) {
+              const raw = await fetchLayerBuf(layer.file_path!);
+              if (!raw) continue;
+              resized.push(await sharp(raw).resize(width, height).toBuffer());
+            }
+
+            let imgBuf: Buffer;
+            if (resized.length === 0) {
+              imgBuf = await sharp({
+                create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 255 } },
+              }).toFormat(ext).toBuffer();
+            } else {
+              const [base, ...rest] = resized;
+              imgBuf = await sharp(base)
+                .composite(rest.map(buf => ({ input: buf, blend: "over" as const })))
+                .toFormat(ext)
+                .toBuffer();
+            }
+
+            const nftName = applyNameFormat(nameFormat || (collectionName ? `${collectionName} #{{id}}` : "#{{id}}"), editionNum);
+            const attributes = validLayers.map(l => ({ trait_type: l.trait_type, value: l.trait_value }));
+            const rarityPercentage = total > 0 ? Math.round((editionData.rarityRank / total) * 10000) / 100 : 0;
+            const metaJson = JSON.stringify({
+              name: nftName,
+              description,
+              image: `images/${editionNum}.${ext}`,
+              edition: editionNum,
+              rarity_rank: editionData.rarityRank || editionNum,
+              rarity_score: editionData.rarityScore || 0,
+              rarity_tier: editionData.rarityTier || 'Common',
+              rarity_percentage: rarityPercentage,
+              ...(externalUrl.trim() ? { external_url: `${externalUrl.trim().replace(/\/$/, "")}/${editionNum}` } : {}),
+              attributes,
+            }, null, 2);
+
+            results.push({ editionNum, imgBuf, metaJson });
           }
-
-          let imgBuf: Buffer;
-          if (resized.length === 0) {
-            imgBuf = await sharp({
-              create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 255 } },
-            }).toFormat(ext).toBuffer();
-          } else {
-            const [base, ...rest] = resized;
-            imgBuf = await sharp(base)
-              .composite(rest.map(buf => ({ input: buf, blend: "over" as const })))
-              .toFormat(ext)
-              .toBuffer();
-          }
-
-          const nftName = applyNameFormat(nameFormat || (collectionName ? `${collectionName} #{{id}}` : "#{{id}}"), editionNum);
-          const attributes = validLayers.map(l => ({ trait_type: l.trait_type, value: l.trait_value }));
-          const rarityPercentage = total > 0 ? Math.round((editionData.rarityRank / total) * 10000) / 100 : 0;
-          const metaJson = JSON.stringify({
-            name: nftName,
-            description,
-            image: `images/${editionNum}.${ext}`,
-            edition: editionNum,
-            rarity_rank: editionData.rarityRank || editionNum,
-            rarity_score: editionData.rarityScore || 0,
-            rarity_tier: editionData.rarityTier || 'Common',
-            rarity_percentage: rarityPercentage,
-            ...(externalUrl.trim() ? { external_url: `${externalUrl.trim().replace(/\/$/, "")}/${editionNum}` } : {}),
-            attributes,
-          }, null, 2);
-
-          return { editionNum, imgBuf, metaJson };
-        }));
+        }
+        await Promise.all(Array.from({ length: CONCURRENCY }, processOne));
 
         for (const r of results) {
           zip.addFile(`images/${r.editionNum}.${ext}`, r.imgBuf);
