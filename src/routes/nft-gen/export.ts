@@ -372,7 +372,6 @@ async function fetchEditionRows(jobId: string, offset: number, batchEnd: number)
       AND  gi.edition_number >  $2
       AND  gi.edition_number <= $3
     ORDER BY gi.edition_number,
-             CAST(SPLIT_PART(nl.name, '-', 1) AS INTEGER),
              nl.sort_order
   `, [jobId, offset, batchEnd]);
   return rows;
