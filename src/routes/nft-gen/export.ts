@@ -11,6 +11,7 @@ import pool from "../../pool";
 import { getS3Client } from "../../clients/s3";
 import { batchUpdateItemIpfsCids, syncGeneratedItemsToNftRecords } from "../../services/nft-gen.service";
 import { pollCid } from "../../utils/pollCid";
+import { ZipStream } from "../../utils/zipStream";
 
 const router = Router();
 
@@ -191,6 +192,137 @@ router.get("/preview/:previewId/img/:edition", (req, res) => {
   res.setHeader("Content-Type", "image/png");
   res.setHeader("Cache-Control", "public, max-age=3600");
   fs.createReadStream(imgPath).pipe(res);
+});
+
+// ── GET /download-zip/:jobId — offline bulk download (images + metadata) ──────
+// Streams a ZIP directly to the browser: images/<edition>.<ext> +
+// metadata/<edition>.json per NFT, with metadata `image` pointing at the
+// local relative path (not ipfs://) since no IPFS upload happens here.
+// Capped at DOWNLOAD_ITEM_CAP items to stay within safe (non-ZIP64) ZIP
+// bounds — larger collections should use Server-Side Export to Filebase.
+
+const DOWNLOAD_ITEM_CAP = 4000;
+
+router.get("/download-zip/:jobId", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.view");
+    const { jobId } = req.params;
+    const ext = (req.query.format as string) === "webp" ? "webp" : "png";
+    const width = Math.max(1, Number(req.query.width) || 512);
+    const height = Math.max(1, Number(req.query.height) || 512);
+    const collectionName = String(req.query.collectionName ?? "");
+    const description = String(req.query.description ?? "");
+    const nameFormat = String(req.query.nameFormat ?? "");
+    const externalUrl = String(req.query.externalUrl ?? "");
+
+    if (!hasLayerSource()) {
+      res.status(500).json({ error: "No layer source configured. Set LAYERS_BUCKET (Filebase bucket name)." });
+      return;
+    }
+
+    const { rows: countRows } = await pool.query(
+      "SELECT COUNT(*) AS cnt FROM nft_generated_items WHERE job_id = $1::uuid",
+      [jobId],
+    );
+    const total = Number(countRows[0]?.cnt ?? 0);
+    if (total === 0) { res.status(422).json({ error: "No generated items for this job." }); return; }
+    if (total > DOWNLOAD_ITEM_CAP) {
+      res.status(413).json({
+        error: `This collection has ${total.toLocaleString()} NFTs — direct ZIP download supports up to ${DOWNLOAD_ITEM_CAP.toLocaleString()}. Use Server-Side Export to Filebase for larger collections.`,
+      });
+      return;
+    }
+
+    const safeName = (collectionName || "bearth-nft-collection").replace(/[^a-z0-9-_]+/gi, "-").toLowerCase();
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}.zip"`);
+
+    const zip = new ZipStream(res);
+    const fetchLayerBuf = makeLayerFetcher();
+
+    try {
+      for (let offset = 0; offset < total; offset += BATCH) {
+        const batchEnd = Math.min(offset + BATCH, total);
+        const rows = await fetchEditionRows(jobId, offset, batchEnd);
+
+        type LayerRow = { trait_type: string; trait_value: string; file_path: string | null; sort_order: number };
+        type EditionData = { layers: LayerRow[]; rarityScore: number; rarityRank: number; rarityTier: string };
+        const byEdition = new Map<number, EditionData>();
+        for (const row of rows) {
+          if (!byEdition.has(row.edition_number)) {
+            byEdition.set(row.edition_number, {
+              layers: [],
+              rarityScore: parseFloat(row.rarity_score ?? '0') || 0,
+              rarityRank: parseInt(row.rarity_rank ?? '0', 10) || 0,
+              rarityTier: row.rarity_tier ?? 'Common',
+            });
+          }
+          byEdition.get(row.edition_number)!.layers.push(row);
+        }
+
+        const editions = [...byEdition.keys()].sort((a, b) => a - b);
+
+        // Composite concurrently (CPU/IO-bound), but write to the ZIP
+        // stream sequentially afterward — ZipStream tracks a running byte
+        // offset and is not safe for concurrent writes.
+        const results = await Promise.all(editions.map(async editionNum => {
+          const editionData = byEdition.get(editionNum)!;
+          const validLayers = editionData.layers.filter(l => l.file_path);
+          const resized: Buffer[] = [];
+          for (const layer of validLayers) {
+            const raw = await fetchLayerBuf(layer.file_path!);
+            if (!raw) continue;
+            resized.push(await sharp(raw).resize(width, height).toBuffer());
+          }
+
+          let imgBuf: Buffer;
+          if (resized.length === 0) {
+            imgBuf = await sharp({
+              create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 255 } },
+            }).toFormat(ext).toBuffer();
+          } else {
+            const [base, ...rest] = resized;
+            imgBuf = await sharp(base)
+              .composite(rest.map(buf => ({ input: buf, blend: "over" as const })))
+              .toFormat(ext)
+              .toBuffer();
+          }
+
+          const nftName = applyNameFormat(nameFormat || (collectionName ? `${collectionName} #{{id}}` : "#{{id}}"), editionNum);
+          const attributes = validLayers.map(l => ({ trait_type: l.trait_type, value: l.trait_value }));
+          const rarityPercentage = total > 0 ? Math.round((editionData.rarityRank / total) * 10000) / 100 : 0;
+          const metaJson = JSON.stringify({
+            name: nftName,
+            description,
+            image: `images/${editionNum}.${ext}`,
+            edition: editionNum,
+            rarity_rank: editionData.rarityRank || editionNum,
+            rarity_score: editionData.rarityScore || 0,
+            rarity_tier: editionData.rarityTier || 'Common',
+            rarity_percentage: rarityPercentage,
+            ...(externalUrl.trim() ? { external_url: `${externalUrl.trim().replace(/\/$/, "")}/${editionNum}` } : {}),
+            attributes,
+          }, null, 2);
+
+          return { editionNum, imgBuf, metaJson };
+        }));
+
+        for (const r of results) {
+          zip.addFile(`images/${r.editionNum}.${ext}`, r.imgBuf);
+          zip.addFile(`metadata/${r.editionNum}.json`, Buffer.from(r.metaJson, "utf8"));
+        }
+      }
+
+      zip.finish();
+    } catch (streamErr) {
+      // Headers/bytes are already flushed at this point — a JSON error
+      // response is no longer possible. Destroy the connection so the
+      // browser reports a failed/incomplete download instead of silently
+      // saving a truncated, corrupt ZIP.
+      console.error(`[download-zip] failed mid-stream for job ${jobId}:`, streamErr);
+      res.destroy(streamErr instanceof Error ? streamErr : new Error(String(streamErr)));
+    }
+  } catch (e) { next(e); }
 });
 
 // ── GET /:exportId — poll status ──────────────────────────────────────────────
