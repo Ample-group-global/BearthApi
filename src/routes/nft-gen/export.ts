@@ -83,12 +83,14 @@ router.post("/", async (req, res, next) => {
 
     const {
       jobId, bucket,
-      format = "png", width = 512, height = 512,
+      format = "png", width, height,
       collectionName = "", description = "", nameFormat = "", externalUrl = "",
     } = req.body ?? {};
 
     if (!jobId) { res.status(422).json({ error: "jobId is required." }); return; }
     if (!bucket) { res.status(422).json({ error: "bucket is required." }); return; }
+    if (!width || Number(width) < 1) { res.status(422).json({ error: "width is required and must be >= 1 px." }); return; }
+    if (!height || Number(height) < 1) { res.status(422).json({ error: "height is required and must be >= 1 px." }); return; }
 
     if (!hasLayerSource()) {
       res.status(500).json({ error: "No layer source configured. Set LAYERS_BUCKET (Filebase bucket name)." });

@@ -20,6 +20,9 @@ interface GenerateState {
 }
 const generateJobs = new Map<string, GenerateState>();
 
+// Tracks collections currently undergoing generation — blocks duplicate parallel runs
+const generatingCollections = new Set<string>();
+
 // ── POST /  start server-side generation ──────────────────────────────────────
 
 router.post("/", async (req, res, next) => {
@@ -28,7 +31,10 @@ router.post("/", async (req, res, next) => {
     const { collectionId, editionSize } = req.body ?? {};
     if (!collectionId) { res.status(422).json({ error: "collectionId is required." }); return; }
     if (!editionSize || Number(editionSize) < 1) { res.status(422).json({ error: "editionSize must be >= 1." }); return; }
+    if (Number(editionSize) > 50000) { res.status(422).json({ error: 'editionSize cannot exceed 50,000.' }); return; }
+    if (generatingCollections.has(String(collectionId))) { res.status(409).json({ error: 'A generation is already running for this collection. Wait for it to complete.' }); return; }
     const generateId = randomUUID();
+    generatingCollections.add(String(collectionId));
     generateJobs.set(generateId, { status: "running", phase: "Loading layers…", progress: 0, total: Number(editionSize) });
 
     const createdBy: string | null = (req as any).user?.userId ?? null;
@@ -37,7 +43,8 @@ router.post("/", async (req, res, next) => {
         const s = generateJobs.get(generateId);
         if (s) { s.status = "error"; s.error = err instanceof Error ? err.message : String(err); }
         logger.warn("[generate] job failed", err);
-      });
+      })
+      .finally(() => { generatingCollections.delete(String(collectionId)); });
 
     res.status(202).json({ generateId });
   } catch (e) { next(e); }

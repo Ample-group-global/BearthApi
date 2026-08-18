@@ -1,3 +1,4 @@
+import https from "https";
 import { S3Client } from "@aws-sdk/client-s3";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 
@@ -17,7 +18,7 @@ export function getS3Client(): S3Client {
     // export/preview/download batch can legitimately burst well past that
     // (confirmed live: 136 requests queued behind the cap), stalling jobs
     // for no real reason since Filebase itself isn't the bottleneck.
-    requestHandler: new NodeHttpHandler({ maxSockets: 200 }),
+    requestHandler: new NodeHttpHandler({ httpsAgent: new https.Agent({ maxSockets: 200 }) }),
   });
   return _client;
 }

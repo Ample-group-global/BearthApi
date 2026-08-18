@@ -22,6 +22,9 @@ router.post("/", async (req, res, next) => {
     const { userId } = requirePermission(req, "nft_gen.manage_collections");
     const { name } = req.body ?? {};
     if (!name?.trim()) { res.status(422).json({ error: "Collection name is required." }); return; }
+    const fw = Number(req.body?.formatWidth), fh = Number(req.body?.formatHeight);
+    if (!req.body?.formatWidth || fw < 1) { res.status(422).json({ error: 'formatWidth (image width in px) is required.' }); return; }
+    if (!req.body?.formatHeight || fh < 1) { res.status(422).json({ error: 'formatHeight (image height in px) is required.' }); return; }
     const collection = await svc.createCollection({ ...req.body, createdBy: userId });
     res.status(201).json({ collection });
   } catch (e) { next(e); }

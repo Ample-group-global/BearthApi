@@ -1,17 +1,9 @@
 import pool, { getClient } from "../pool";
 import { toCamel } from "../utils/camel";
-import { S3Client, ListObjectsV2Command, HeadObjectCommand, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { ListObjectsV2Command, HeadObjectCommand, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import sharp from "sharp";
 
-const s3 = new S3Client({
-  endpoint: "https://s3.filebase.com",
-  region: "us-east-1",
-  credentials: {
-    accessKeyId: process.env.FILEBASE_ACCESS_KEY!,
-    secretAccessKey: process.env.FILEBASE_SECRET_KEY!,
-  },
-  forcePathStyle: true,
-});
+import { getS3Client } from "../clients/s3";
 
 const FILEBASE_GATEWAY = "https://amgbearth.myfilebase.com/ipfs";
 const SYNC_CONCURRENCY = 100;
@@ -48,7 +40,7 @@ export async function createCollection(params: {
     "SELECT * FROM nft_gen_collection_create($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
     [
       name, description ?? null, symbol ?? null, network ?? "eth", royaltyBps ?? 0, creatorWallet ?? null,
-      formatWidth ?? 512, formatHeight ?? 512, smoothing ?? false, bgGenerate ?? false, bgStaticColor ?? null,
+      formatWidth ?? null, formatHeight ?? null, smoothing ?? false, bgGenerate ?? false, bgStaticColor ?? null,
       shuffleOutput ?? true, dnaTolerance ?? 10000, createdBy ?? null,
       supply ?? null, nameFormat ?? null, formatType ?? null,
       conflictRules ? JSON.stringify(conflictRules) : null,
@@ -565,7 +557,7 @@ export async function syncGeneratedItemsToNftRecords(jobId?: string): Promise<nu
 
 async function filebaseHead(bucket: string, key: string): Promise<string | null> {
   try {
-    const r = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    const r = await getS3Client().send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
     return r.Metadata?.cid ?? null;
   } catch { return null; }
 }
@@ -574,7 +566,7 @@ async function filebaseGetJson(
   bucket: string, key: string,
 ): Promise<{ cid: string | null; body: Record<string, unknown> }> {
   try {
-    const r = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    const r = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
     const cid = r.Metadata?.cid ?? null;
     const text = await r.Body?.transformToString();
     return { cid, body: text ? JSON.parse(text) as Record<string, unknown> : {} };
@@ -607,7 +599,7 @@ export async function syncFromFilebaseBucket(bucket: string): Promise<{ synced: 
   const imageKeys: string[] = [];
   let listToken: string | undefined;
   do {
-    const r = await s3.send(new ListObjectsV2Command({
+    const r = await getS3Client().send(new ListObjectsV2Command({
       Bucket: bucket, Prefix: "images/", MaxKeys: 1000, ContinuationToken: listToken,
     }));
     imageKeys.push(
@@ -697,7 +689,7 @@ export async function fetchLayerImage(rel: string): Promise<Buffer | null> {
 
   const bucket = process.env.FILEBASE_LAYERS_BUCKET || 'bearth-layers';
   try {
-    const resp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: rel }));
+    const resp = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: rel }));
     if (!resp.Body) return null;
     const chunks: Uint8Array[] = [];
     for await (const chunk of resp.Body as AsyncIterable<Uint8Array>) {
@@ -721,7 +713,7 @@ function thumbKeyFor(rel: string, size: number): string {
 export async function uploadLayerImage(rel: string, buf: Buffer): Promise<void> {
   const ext = rel.split('.').pop()?.toLowerCase() ?? '';
   const bucket = process.env.FILEBASE_LAYERS_BUCKET || 'bearth-layers';
-  await s3.send(new PutObjectCommand({
+  await getS3Client().send(new PutObjectCommand({
     Bucket: bucket,
     Key: rel,
     Body: buf,
@@ -741,7 +733,7 @@ export async function uploadLayerImageWithThumb(rel: string, buf: Buffer): Promi
   await Promise.all([
     uploadLayerImage(rel, buf),
     thumbBuf
-      ? s3.send(new PutObjectCommand({ Bucket: bucket, Key: thumbKeyFor(rel, THUMB_SIZE), Body: thumbBuf, ContentType: 'image/png' }))
+      ? getS3Client().send(new PutObjectCommand({ Bucket: bucket, Key: thumbKeyFor(rel, THUMB_SIZE), Body: thumbBuf, ContentType: 'image/png' }))
       : Promise.resolve(),
   ]);
 }
@@ -771,7 +763,7 @@ export async function fetchLayerThumb(rel: string, size = THUMB_SIZE): Promise<B
     const thumb = await sharp(full).resize(size, size, { fit: 'inside' }).png().toBuffer();
     thumbMemCache.set(cacheKey, thumb);
     const bucket = process.env.FILEBASE_LAYERS_BUCKET || 'bearth-layers';
-    s3.send(new PutObjectCommand({ Bucket: bucket, Key: thumbKeyFor(rel, size), Body: thumb, ContentType: 'image/png' })).catch(() => {});
+    getS3Client().send(new PutObjectCommand({ Bucket: bucket, Key: thumbKeyFor(rel, size), Body: thumb, ContentType: 'image/png' })).catch(() => {});
     return thumb;
   } catch {
     return full; // fall back to original if it isn't a decodable image
