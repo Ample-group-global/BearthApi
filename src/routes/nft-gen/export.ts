@@ -85,6 +85,7 @@ router.post("/", async (req, res, next) => {
       jobId, bucket,
       format = "png", width, height,
       collectionName = "", description = "", nameFormat = "", externalUrl = "",
+      syncToRecords = true,
     } = req.body ?? {};
 
     if (!jobId) { res.status(422).json({ error: "jobId is required." }); return; }
@@ -123,6 +124,7 @@ router.post("/", async (req, res, next) => {
       description: String(description),
       nameFormat: String(nameFormat),
       externalUrl: String(externalUrl),
+      syncToRecords: syncToRecords !== false,
     }).catch(err => {
       const s = exportJobs.get(exportId);
       if (s) { s.status = "error"; s.error = String(err?.message ?? err); }
@@ -298,19 +300,19 @@ router.get("/download-zip/:jobId", async (req, res, next) => {
             }
 
             const nftName = applyNameFormat(nameFormat || (collectionName ? `${collectionName} #{{id}}` : "#{{id}}"), editionNum);
-            const attributes = validLayers.map(l => ({ trait_type: l.trait_type, value: l.trait_value }));
-            const rarityPercentage = total > 0 ? Math.round((editionData.rarityRank / total) * 10000) / 100 : 0;
+            const traitAttributes = validLayers.map(l => ({ trait_type: l.trait_type, value: l.trait_value }));
+            const baseUrl = (externalUrl.trim() || "https://www.imbearth.com").replace(/\/$/, "");
             const metaJson = JSON.stringify({
               name: nftName,
               description,
               image: `images/${editionNum}.${ext}`,
-              edition: editionNum,
-              rarity_rank: editionData.rarityRank || editionNum,
-              rarity_score: editionData.rarityScore || 0,
-              rarity_tier: editionData.rarityTier || 'Common',
-              rarity_percentage: rarityPercentage,
-              ...(externalUrl.trim() ? { external_url: `${externalUrl.trim().replace(/\/$/, "")}/${editionNum}` } : {}),
-              attributes,
+              external_url: `${baseUrl}/${editionNum}`,
+              attributes: [
+                ...traitAttributes,
+                { trait_type: "Rarity Score", value: (editionData.rarityScore || 0).toFixed(2) },
+                { trait_type: "Rarity Rank",  value: `#${editionData.rarityRank || editionNum}` },
+                { trait_type: "Rarity Tier",  value: editionData.rarityTier || "Common" },
+              ],
             }, null, 2);
 
             results.push({ editionNum, imgBuf, metaJson });
@@ -394,9 +396,10 @@ async function runExport(
   opts: {
     bucket: string; format: string; width: number; height: number; total: number;
     collectionName: string; description: string; nameFormat: string; externalUrl: string;
+    syncToRecords: boolean;
   },
 ) {
-  const { bucket, format, width, height, total, collectionName, description, nameFormat, externalUrl } = opts;
+  const { bucket, format, width, height, total, collectionName, description, nameFormat, externalUrl, syncToRecords } = opts;
   const ext = format === "webp" ? "webp" : "png";
   const mime = ext === "webp" ? "image/webp" : "image/png";
   const state = exportJobs.get(exportId)!;
@@ -467,20 +470,20 @@ async function runExport(
 
         // ── 3. Build + upload metadata ────────────────────────────────────────
         const nftName = applyNameFormat(nameFormat || (collectionName ? `${collectionName} #{{id}}` : "#{{id}}"), editionNum);
-        const attributes = validLayers.map(l => ({ trait_type: l.trait_type, value: l.trait_value }));
-        const rarityPercentage = total > 0 ? Math.round((rarityRank / total) * 10000) / 100 : 0;
+        const traitAttributes = validLayers.map(l => ({ trait_type: l.trait_type, value: l.trait_value }));
+        const baseUrl = (externalUrl.trim() || "https://www.imbearth.com").replace(/\/$/, "");
 
         const metaJson = JSON.stringify({
           name: nftName,
           description,
           image: imgCid ? `ipfs://${imgCid}` : `ipfs://PLACEHOLDER_CID/${editionNum}.${ext}`,
-          edition: editionNum,
-          rarity_rank: rarityRank || editionNum,
-          rarity_score: rarityScore || 0,
-          rarity_tier: rarityTier || 'Common',
-          rarity_percentage: rarityPercentage,
-          ...(externalUrl.trim() ? { external_url: `${externalUrl.trim().replace(/\/$/, "")}/${editionNum}` } : {}),
-          attributes,
+          external_url: `${baseUrl}/${editionNum}`,
+          attributes: [
+            ...traitAttributes,
+            { trait_type: "Rarity Score", value: rarityScore.toFixed(2) },
+            { trait_type: "Rarity Rank",  value: `#${rarityRank}` },
+            { trait_type: "Rarity Tier",  value: rarityTier || "Common" },
+          ],
         }, null, 2);
 
         const metaKey = `metadata/${editionNum}.json`;
@@ -500,12 +503,16 @@ async function runExport(
     }
   }
 
-  // Promote all IPFS-synced items into nft_records for wave selling
-  state.phase = "Syncing to NFT Records…";
-  const synced = await syncGeneratedItemsToNftRecords(jobId);
+  let synced = 0;
+  if (syncToRecords) {
+    state.phase = "Syncing to NFT Records…";
+    synced = await syncGeneratedItemsToNftRecords(jobId);
+  }
 
   state.status = "done";
-  state.phase = `Complete — ${total} NFTs exported to Filebase, ${synced} synced to NFT Records`;
+  state.phase = syncToRecords
+    ? `Complete — ${total} NFTs exported to Filebase, ${synced} synced to NFT Records`
+    : `Complete — ${total} NFTs exported to Filebase (test run — nft_records not updated)`;
 }
 
 async function runPreview(

@@ -3,6 +3,7 @@ import multer from "multer";
 import {
   CreateBucketCommand,
   HeadBucketCommand,
+  ListBucketsCommand,
   PutObjectCommand,
   DeleteObjectCommand,
   ListObjectsV2Command,
@@ -14,6 +15,20 @@ import { deleteObjectsChunked } from "../utils/deleteObjects";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+// ── GET /api/filebase/buckets — list all buckets ──────────────────────────────
+
+router.get("/buckets", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.upload_ipfs");
+    const result = await getS3Client().send(new ListBucketsCommand({}));
+    const buckets = (result.Buckets ?? []).map(b => ({
+      name:      b.Name,
+      createdAt: b.CreationDate,
+    }));
+    res.json({ buckets });
+  } catch (e) { next(e); }
+});
 
 // ── GET /api/filebase/buckets/:bucket — exists check ─────────────────────────
 
