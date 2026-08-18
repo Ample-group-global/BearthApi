@@ -116,7 +116,9 @@ router.get("/:id/items", async (req, res, next) => {
 router.get("/:id/display-items", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.view");
-    const limit = Math.min(Number(req.query.limit ?? 50), 10000);
+    // Safety ceiling only (guards against an accidental/malicious huge
+    // LIMIT), not a collection-size cap — real projects can exceed 10K.
+    const limit = Math.min(Number(req.query.limit ?? 50), 50000);
     const offset = Number(req.query.offset ?? 0);
     const { rows } = await pool.query(`
       SELECT
