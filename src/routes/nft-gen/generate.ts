@@ -171,13 +171,13 @@ function computeRarity(combos: Record<string, Asset | null>[], layers: Layer[]):
   return scored;
 }
 
-// ── Async cleanup — runs fire-and-forget before each new generation ───────────
+// ── Async cleanup — runs fire-and-forget AFTER generation completes ────────────
 async function cleanOldGenerationData(collectionId: string, newJobId: string): Promise<void> {
   const { rows: oldJobs } = await pool.query<{ id: string }>(
     `SELECT id FROM nft_generation_jobs
      WHERE collection_id = $1::uuid
        AND id <> $2::uuid
-       AND status IN ('completed', 'failed')`,
+       AND status IN ('complete', 'failed')`,
     [collectionId, newJobId]
   );
   if (!oldJobs.length) return;
@@ -193,7 +193,7 @@ async function cleanOldGenerationData(collectionId: string, newJobId: string): P
 // ── Background worker ─────────────────────────────────────────────────────────
 
 const BATCH_SIZE = 500;
-const BATCH_CONCUR = 5;
+const BATCH_CONCUR = 2;
 
 async function runGenerate(generateId: string, collectionId: string, editionSize: number, createdBy: string | null) {
   const state = generateJobs.get(generateId)!;
@@ -265,9 +265,6 @@ async function runGenerate(generateId: string, collectionId: string, editionSize
   await svc.startJob(String(jobId));
   state.jobId = String(jobId);
 
-  cleanOldGenerationData(collectionId, String(jobId)).catch(err =>
-    logger.warn("[generate] cleanup error (non-critical)", err)
-  );
   state.phase = "Saving to database…";
   const allChunks: ScoredItem[][] = [];
   for (let i = 0; i < scored.length; i += BATCH_SIZE) allChunks.push(scored.slice(i, i + BATCH_SIZE));
@@ -293,10 +290,14 @@ async function runGenerate(generateId: string, collectionId: string, editionSize
     state.phase = `Saving to database… ${done} / ${editionSize}`;
   }
 
-  // 8. Complete job
+  // 8. Complete job, then clean up old jobs (after inserts finish to avoid lock contention)
   await svc.completeJob(String(jobId));
   state.status = "done";
   state.phase = `Complete — ${editionSize} NFTs generated`;
+
+  cleanOldGenerationData(collectionId, String(jobId)).catch(err =>
+    logger.warn("[generate] cleanup error (non-critical)", err)
+  );
 }
 
 export default router;

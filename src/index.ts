@@ -80,7 +80,7 @@ process.on("uncaughtException", (err) => {
 const corsOrigins = (process.env.CORS_ORIGINS ?? "http://localhost:3000").split(",").map(s => s.trim());
 app.use(cors({ origin: corsOrigins, credentials: true }));
 app.use(express.json({ limit: "10mb" }));
-app.use(rateLimit({ windowMs: 60_000, limit: 500, standardHeaders: "draft-7", legacyHeaders: false }));
+app.use(rateLimit({ windowMs: 60_000, limit: 2000, standardHeaders: "draft-7", legacyHeaders: false }));
 
 app.get("/api/docs.json", (req, res) => {
   const proto = (req.headers["x-forwarded-proto"] as string) || "http";
