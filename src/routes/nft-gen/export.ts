@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { randomUUID } from "crypto";
 import path from "path";
 import fs from "fs";
@@ -12,6 +13,7 @@ import { getS3Client } from "../../clients/s3";
 import { batchUpdateItemIpfsCids, syncGeneratedItemsToNftRecords } from "../../services/nft-gen.service";
 import { pollCid } from "../../utils/pollCid";
 import { ZipStream } from "../../utils/zipStream";
+import { S3MultipartWritable } from "../../utils/s3MultipartWritable";
 
 const router = Router();
 
@@ -24,6 +26,11 @@ interface ExportState {
 }
 
 const exportJobs = new Map<string, ExportState>();
+
+// Tracks pre-built ZIP location for each export job so the download endpoint
+// can return a pre-signed URL instead of streaming from scratch.
+// key = jobId, value = { bucket, zipKey }
+const zipRegistry = new Map<string, { bucket: string; zipKey: string }>();
 
 interface PreviewState {
   status: 'running' | 'done' | 'error';
@@ -199,17 +206,19 @@ router.get("/preview/:previewId/img/:edition", (req, res) => {
 });
 
 // ── GET /download-zip/:jobId — offline bulk download (images + metadata) ──────
-// Streams a ZIP directly to the browser: images/<edition>.<ext> +
-// metadata/<edition>.json per NFT, with metadata `image` pointing at the
-// local relative path (not ipfs://) since no IPFS upload happens here.
-// Capped at DOWNLOAD_ITEM_CAP items to stay within safe (non-ZIP64) ZIP
-// bounds — larger collections should use Server-Side Export to Filebase.
+// Streams a ZIP64 archive directly to the browser: images/<edition>.<ext> +
+// metadata/<edition>.json per NFT. ZIP64 supports archives >4 GB (required
+// for large collections at high resolution). Higher batch/concurrency than the
+// background export worker to minimise wall-clock time for the user.
 
-const DOWNLOAD_ITEM_CAP = 4000;
+const DOWNLOAD_BATCH     = 50;   // editions per outer loop iteration (50 × 8 layer S3 reads)
+const DOWNLOAD_CONCURRENCY = 20; // concurrent Sharp composites per batch
 
 router.get("/download-zip/:jobId", async (req, res, next) => {
   try {
     requirePermission(req, "nft_gen.view");
+    // Disable idle timeout — large archives stream for many minutes
+    req.socket?.setTimeout(0);
     const { jobId } = req.params;
     const ext = (req.query.format as string) === "webp" ? "webp" : "png";
     const width = Math.max(1, Number(req.query.width) || 512);
@@ -230,12 +239,7 @@ router.get("/download-zip/:jobId", async (req, res, next) => {
     );
     const total = Number(countRows[0]?.cnt ?? 0);
     if (total === 0) { res.status(422).json({ error: "No generated items for this job." }); return; }
-    if (total > DOWNLOAD_ITEM_CAP) {
-      res.status(413).json({
-        error: `This collection has ${total.toLocaleString()} NFTs — direct ZIP download supports up to ${DOWNLOAD_ITEM_CAP.toLocaleString()}. Use Server-Side Export to Filebase for larger collections.`,
-      });
-      return;
-    }
+    console.log(`[download-zip] job ${jobId}: ${total} NFTs, width=${width} height=${height} — starting ZIP64 stream`);
 
     const safeName = (collectionName || "bearth-nft-collection").replace(/[^a-z0-9-_]+/gi, "-").toLowerCase();
     res.setHeader("Content-Type", "application/zip");
@@ -245,8 +249,8 @@ router.get("/download-zip/:jobId", async (req, res, next) => {
     const fetchLayerBuf = makeLayerFetcher();
 
     try {
-      for (let offset = 0; offset < total; offset += BATCH) {
-        const batchEnd = Math.min(offset + BATCH, total);
+      for (let offset = 0; offset < total; offset += DOWNLOAD_BATCH) {
+        const batchEnd = Math.min(offset + DOWNLOAD_BATCH, total);
         const rows = await fetchEditionRows(jobId, offset, batchEnd);
 
         type LayerRow = { trait_type: string; trait_value: string; file_path: string | null; sort_order: number };
@@ -318,7 +322,7 @@ router.get("/download-zip/:jobId", async (req, res, next) => {
             results.push({ editionNum, imgBuf, metaJson });
           }
         }
-        await Promise.all(Array.from({ length: CONCURRENCY }, processOne));
+        await Promise.all(Array.from({ length: DOWNLOAD_CONCURRENCY }, processOne));
 
         for (const r of results) {
           zip.addFile(`images/${r.editionNum}.${ext}`, r.imgBuf);
@@ -357,6 +361,49 @@ router.post("/sync-records", async (req, res, next) => {
     }
     const synced = await syncGeneratedItemsToNftRecords(jobId);
     res.json({ synced });
+  } catch (e) { next(e); }
+});
+
+// ── GET /presigned-zip/:jobId — instant pre-signed download URL ───────────────
+// Returns a 24-hour Filebase pre-signed URL to the ZIP built during the last
+// server-side export for this job. Falls back gracefully when no pre-built ZIP
+// exists (UI will use the streaming download-zip endpoint instead).
+router.get("/presigned-zip/:jobId", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.view");
+    const { jobId } = req.params;
+
+    // 1. Check in-memory registry first (fastest path, no S3 round-trip).
+    const reg = zipRegistry.get(jobId);
+    if (reg) {
+      const url = await getSignedUrl(
+        getS3Client(),
+        new GetObjectCommand({ Bucket: reg.bucket, Key: reg.zipKey }),
+        { expiresIn: 86400 }, // 24 hours
+      );
+      res.json({ ready: true, url, bucket: reg.bucket, key: reg.zipKey });
+      return;
+    }
+
+    // 2. Not in memory (e.g. server restarted) — check S3 directly.
+    //    Requires the caller to pass ?bucket= so we know where to look.
+    const bucket = String(req.query.bucket ?? "");
+    if (!bucket) { res.json({ ready: false, reason: "no_registry" }); return; }
+
+    const zipKey = `downloads/${jobId}.zip`;
+    try {
+      await getS3Client().send(new HeadObjectCommand({ Bucket: bucket, Key: zipKey }));
+      // Object exists — register it and return a signed URL.
+      zipRegistry.set(jobId, { bucket, zipKey });
+      const url = await getSignedUrl(
+        getS3Client(),
+        new GetObjectCommand({ Bucket: bucket, Key: zipKey }),
+        { expiresIn: 86400 },
+      );
+      res.json({ ready: true, url, bucket, key: zipKey });
+    } catch {
+      res.json({ ready: false, reason: "not_built_yet" });
+    }
   } catch (e) { next(e); }
 });
 
@@ -427,6 +474,14 @@ async function runExport(
   const state = exportJobs.get(exportId)!;
   const s3 = getS3Client();
   const fetchLayerBuf = makeLayerFetcher();
+
+  // ── Pre-built ZIP: stream directly into Filebase via S3 multipart upload ──
+  // One render pass, two outputs: individual files + ZIP, no re-download needed.
+  const safeName = (collectionName || "bearth-nft-collection").replace(/[^a-z0-9-_]+/gi, "-").toLowerCase();
+  const zipKey  = `downloads/${jobId}.zip`;
+  const zipS3   = new S3MultipartWritable(s3, bucket, zipKey);
+  const zipOut  = new ZipStream(zipS3);
+  let   zipOk   = false;
 
   for (let offset = 0; offset < total; offset += BATCH) {
     const batchEnd = Math.min(offset + BATCH, total);
@@ -512,6 +567,10 @@ async function runExport(
         await s3.send(new PutObjectCommand({ Bucket: bucket, Key: metaKey, Body: metaJson, ContentType: "application/json" }));
         const metaCid = await pollCid(s3, bucket, metaKey);
 
+        // ── 4. Add rendered files to pre-built ZIP (S3 multipart stream) ─────
+        zipOut.addFile(`images/${editionNum}.${ext}`, imgBuf);
+        zipOut.addFile(`metadata/${editionNum}.json`, Buffer.from(metaJson, "utf8"));
+
         ipfsUpdates.push({ editionNumber: editionNum, ipfsImageCid: imgCid, ipfsMetadataCid: metaCid, imagePath: imgKey });
         state.progress++;
         state.phase = `Uploading… ${state.progress} / ${total}`;
@@ -525,6 +584,21 @@ async function runExport(
     }
   }
 
+  // ── Finalise pre-built ZIP and upload to Filebase ────────────────────────
+  state.phase = "Finalising download ZIP…";
+  try {
+    zipOut.finish();                  // writes ZIP central directory to the S3 multipart stream
+    await zipS3.complete();           // flushes final S3 part and completes the multipart upload
+    zipRegistry.set(jobId, { bucket, zipKey });
+    zipOk = true;
+    console.log(`[runExport] pre-built ZIP uploaded: s3://${bucket}/${zipKey}`);
+  } catch (zipErr) {
+    // Non-fatal: individual files are already in Filebase.
+    // User can still use the streaming download-zip fallback.
+    console.error(`[runExport] pre-built ZIP failed (streaming fallback still works):`, zipErr);
+    await zipS3.abort().catch(() => {});
+  }
+
   let synced = 0;
   if (syncToRecords) {
     state.phase = "Syncing to NFT Records…";
@@ -533,8 +607,8 @@ async function runExport(
 
   state.status = "done";
   state.phase = syncToRecords
-    ? `Complete — ${total} NFTs exported to Filebase, ${synced} synced to NFT Records`
-    : `Complete — ${total} NFTs exported to Filebase (test run — nft_records not updated)`;
+    ? `Complete — ${total} NFTs exported to Filebase${zipOk ? ' · ZIP ready' : ''}, ${synced} synced to NFT Records`
+    : `Complete — ${total} NFTs exported to Filebase${zipOk ? ' · ZIP ready for instant download' : ''} (test run — nft_records not updated)`;
 }
 
 async function runPreview(

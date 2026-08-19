@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1095.0",
+    "@aws-sdk/s3-request-presigner": "^3.1113.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/multer": "^2.2.0",
     "@types/sharp": "^0.31.1",

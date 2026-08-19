@@ -170,6 +170,7 @@ router.get("/:id/layers-organise", async (req, res, next) => {
           name:          t.name,
           rel:           t.file_path,
           defaultWeight: Number(t.rarity_weight ?? 1),
+          rarityTier:    t.rarity_tier ?? 'common',
         })),
       };
     });

@@ -2,7 +2,6 @@ import pool, { getClient } from "../pool";
 import { toCamel } from "../utils/camel";
 import { ListObjectsV2Command, HeadObjectCommand, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import sharp from "sharp";
-
 import { getS3Client } from "../clients/s3";
 
 const FILEBASE_GATEWAY = "https://amgbearth.myfilebase.com/ipfs";
