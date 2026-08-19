@@ -338,6 +338,28 @@ router.get("/download-zip/:jobId", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── POST /sync-records — sync a completed job's items into nft_records ───────
+// Must be declared before /:exportId to prevent Express treating "sync-records"
+// as an export job ID. Synchronous (pure DB work, typically < 2s for 9999 items).
+router.post("/sync-records", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.upload_ipfs");
+    const { jobId } = req.body ?? {};
+    if (!jobId?.trim()) { res.status(422).json({ error: "jobId is required." }); return; }
+    const { rows } = await pool.query(
+      "SELECT id, status FROM nft_generation_jobs WHERE id = $1::uuid",
+      [jobId],
+    );
+    if (!rows.length) { res.status(404).json({ error: "Job not found." }); return; }
+    if (rows[0].status !== "completed") {
+      res.status(409).json({ error: `Job status is '${rows[0].status}' — must be 'completed' before syncing to NFT Records.` });
+      return;
+    }
+    const synced = await syncGeneratedItemsToNftRecords(jobId);
+    res.json({ synced });
+  } catch (e) { next(e); }
+});
+
 // ── GET /:exportId — poll status ──────────────────────────────────────────────
 
 router.get("/:exportId", (req, res) => {
