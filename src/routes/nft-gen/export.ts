@@ -603,7 +603,13 @@ async function runExport(
         // ── 2. Upload image ───────────────────────────────────────────────────
         const imgKey = `images/${editionNum}.${ext}`;
         await s3.send(new PutObjectCommand({ Bucket: bucket, Key: imgKey, Body: imgBuf, ContentType: mime }));
-        const imgCid = await pollCid(s3, bucket, imgKey, 500);
+        // CIDs are assigned by Filebase asynchronously (typically 10–30s after upload).
+        // Polling per-file during export at 500 ms always times out and returns "" anyway,
+        // while generating ~24 extra HeadObject calls per NFT (650 simultaneous at CONCURRENCY=25)
+        // that saturate Filebase's rate limits and make the export 10–20x slower than necessary.
+        // We skip polling here and persist the S3 key; a separate "Refresh CIDs" pass can
+        // update IPFS CIDs in bulk once Filebase has assigned them.
+        const imgCid = "";
 
         // ── 3. Build + upload metadata ────────────────────────────────────────
         const nftName = applyNameFormat(nameFormat || (collectionName ? `${collectionName} #{{id}}` : "#{{id}}"), editionNum);
@@ -613,7 +619,7 @@ async function runExport(
         const metaJson = JSON.stringify({
           name: nftName,
           description,
-          image: imgCid ? `ipfs://${imgCid}` : `ipfs://PLACEHOLDER_CID/${editionNum}.${ext}`,
+          image: `ipfs://pending/${imgKey}`,
           external_url: `${baseUrl}/${editionNum}`,
           attributes: [
             ...traitAttributes,
@@ -625,7 +631,7 @@ async function runExport(
 
         const metaKey = `metadata/${editionNum}.json`;
         await s3.send(new PutObjectCommand({ Bucket: bucket, Key: metaKey, Body: metaJson, ContentType: "application/json" }));
-        const metaCid = await pollCid(s3, bucket, metaKey, 1500);
+        const metaCid = "";
 
         // ── 4. Add rendered files to pre-built ZIP (S3 multipart stream) ─────
         zipOut.addFile(`images/${editionNum}.${ext}`, imgBuf);
