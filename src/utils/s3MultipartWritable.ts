@@ -42,6 +42,10 @@ export class S3MultipartWritable extends Writable {
     this.key = key;
     this.contentType = contentType;
     this.initDone = this._init();
+    // Prevent Node.js unhandledRejection crash: _init() rejection is handled
+    // in _sendPart() via await, but Node.js fires the event if no .catch()
+    // is attached before the microtask queue drains.
+    this.initDone.catch(() => {});
   }
 
   private async _init() {

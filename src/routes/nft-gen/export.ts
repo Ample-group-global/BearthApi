@@ -26,6 +26,7 @@ interface ExportState {
 }
 
 const exportJobs = new Map<string, ExportState>();
+let exportRunning = false;
 
 // Tracks pre-built ZIP location for each export job so the download endpoint
 // can return a pre-signed URL instead of streaming from scratch.
@@ -60,19 +61,56 @@ function layersBucket(): string | null {
 
 function makeLayerFetcher() {
   const cache = new Map<string, Buffer>();
+  // Deduplicates concurrent fetches of the same key — if 25 workers all need
+  // the same layer simultaneously, only 1 S3 GET fires; others await the same promise.
+  const pending = new Map<string, Promise<Buffer | null>>();
   const bucket = layersBucket();
 
   return async function fetchLayerBuf(filePath: string): Promise<Buffer | null> {
     if (cache.has(filePath)) return cache.get(filePath)!;
+    if (pending.has(filePath)) return pending.get(filePath)!;
     if (!bucket) return null;
-    let buf: Buffer | null = null;
-    try {
-      const res = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: filePath }));
-      buf = await streamToBuffer(res.Body);
-    } catch { buf = null; }
 
-    if (buf) cache.set(filePath, buf);
-    return buf;
+    const promise = getS3Client()
+      .send(new GetObjectCommand({ Bucket: bucket, Key: filePath }))
+      .then(res => streamToBuffer(res.Body))
+      .then(buf => { if (buf) cache.set(filePath, buf); return buf ?? null; })
+      .catch(() => null)
+      .finally(() => pending.delete(filePath));
+
+    pending.set(filePath, promise);
+    return promise;
+  };
+}
+
+// Wraps fetchLayerBuf with a resize cache keyed per file path.
+// Workers call this instead of doing sharp(raw).resize() per NFT —
+// each unique layer is resized exactly once regardless of how many
+// editions share the same trait, dropping thread-pool pressure by ~8x.
+function makeResizedFetcher(
+  fetchLayerBuf: (fp: string) => Promise<Buffer | null>,
+  width: number,
+  height: number,
+) {
+  const cache = new Map<string, Buffer>();
+  const pending = new Map<string, Promise<Buffer | null>>();
+
+  return async function fetchLayerResized(filePath: string): Promise<Buffer | null> {
+    if (cache.has(filePath)) return cache.get(filePath)!;
+    if (pending.has(filePath)) return pending.get(filePath)!;
+
+    const promise = fetchLayerBuf(filePath)
+      .then(async raw => {
+        if (!raw) return null;
+        const buf = await sharp(raw).resize(width, height).toBuffer();
+        cache.set(filePath, buf);
+        return buf;
+      })
+      .catch(() => null)
+      .finally(() => pending.delete(filePath));
+
+    pending.set(filePath, promise);
+    return promise;
   };
 }
 
@@ -97,6 +135,10 @@ router.post("/", async (req, res, next) => {
 
     if (!jobId) { res.status(422).json({ error: "jobId is required." }); return; }
     if (!bucket) { res.status(422).json({ error: "bucket is required." }); return; }
+    if (exportRunning) {
+      res.status(409).json({ error: "An export is already running. Wait for it to complete before starting a new one." });
+      return;
+    }
     if (!width || Number(width) < 1) { res.status(422).json({ error: "width is required and must be >= 1 px." }); return; }
     if (!height || Number(height) < 1) { res.status(422).json({ error: "height is required and must be >= 1 px." }); return; }
 
@@ -121,6 +163,7 @@ router.post("/", async (req, res, next) => {
     const exportId = randomUUID();
     exportJobs.set(exportId, { status: "running", progress: 0, total, phase: "Starting…" });
 
+    exportRunning = true;
     runExport(exportId, jobId, {
       bucket,
       format: String(format),
@@ -135,6 +178,8 @@ router.post("/", async (req, res, next) => {
     }).catch(err => {
       const s = exportJobs.get(exportId);
       if (s) { s.status = "error"; s.error = String(err?.message ?? err); }
+    }).finally(() => {
+      exportRunning = false;
     });
 
     res.status(202).json({ exportId, total });
@@ -417,8 +462,8 @@ router.get("/:exportId", (req, res) => {
 
 // ── Background workers ────────────────────────────────────────────────────────
 
-const BATCH = 10;
-const CONCURRENCY = 5;
+const BATCH = 100;
+const CONCURRENCY = 25;
 const PREVIEW_THUMB = 64;
 const PREVIEW_CONCURRENCY = 20;
 const PREVIEW_BATCH = 200;
@@ -474,6 +519,10 @@ async function runExport(
   const state = exportJobs.get(exportId)!;
   const s3 = getS3Client();
   const fetchLayerBuf = makeLayerFetcher();
+  // Pre-resize cache: each unique layer PNG is resized to the target dimensions
+  // exactly once and cached — workers read from cache instead of calling sharp
+  // per-NFT, dropping thread-pool pressure from 8 resizes+1 composite to 1 composite.
+  const fetchLayerResized = makeResizedFetcher(fetchLayerBuf, width, height);
 
   // ── Pre-built ZIP: stream directly into Filebase via S3 multipart upload ──
   // One render pass, two outputs: individual files + ZIP, no re-download needed.
@@ -509,6 +558,12 @@ async function runExport(
       editionNumber: number; ipfsImageCid: string; ipfsMetadataCid: string; imagePath: string;
     }> = [];
 
+    // Pre-warm: fetch + resize all unique layer PNGs in this batch before workers start.
+    // After batch 1 all layers are cached; subsequent batches resolve instantly.
+    const uniquePaths = new Set<string>();
+    for (const row of rows) { if (row.file_path) uniquePaths.add(row.file_path); }
+    await Promise.all([...uniquePaths].map(fp => fetchLayerResized(fp)));
+
     let cursor = 0;
 
     async function processOne() {
@@ -519,12 +574,14 @@ async function runExport(
         const { rarityScore, rarityRank, rarityTier } = editionData;
 
         // ── 1. Composite ──────────────────────────────────────────────────────
+        // Layers are pre-resized and cached by makeResizedFetcher — each unique
+        // layer PNG is resized exactly once. Workers hit cache here, no S3 reads
+        // or sharp resize calls per NFT — only one composite per NFT remains.
         const validLayers = layerRows.filter(l => l.file_path);
         const resized: Buffer[] = [];
         for (const layer of validLayers) {
-          const raw = await fetchLayerBuf(layer.file_path!);
-          if (!raw) continue;
-          resized.push(await sharp(raw).resize(width, height).toBuffer());
+          const buf = await fetchLayerResized(layer.file_path!);
+          if (buf) resized.push(buf);
         }
 
         let imgBuf: Buffer;
@@ -543,7 +600,7 @@ async function runExport(
         // ── 2. Upload image ───────────────────────────────────────────────────
         const imgKey = `images/${editionNum}.${ext}`;
         await s3.send(new PutObjectCommand({ Bucket: bucket, Key: imgKey, Body: imgBuf, ContentType: mime }));
-        const imgCid = await pollCid(s3, bucket, imgKey);
+        const imgCid = await pollCid(s3, bucket, imgKey, 500);
 
         // ── 3. Build + upload metadata ────────────────────────────────────────
         const nftName = applyNameFormat(nameFormat || (collectionName ? `${collectionName} #{{id}}` : "#{{id}}"), editionNum);
@@ -565,7 +622,7 @@ async function runExport(
 
         const metaKey = `metadata/${editionNum}.json`;
         await s3.send(new PutObjectCommand({ Bucket: bucket, Key: metaKey, Body: metaJson, ContentType: "application/json" }));
-        const metaCid = await pollCid(s3, bucket, metaKey);
+        const metaCid = await pollCid(s3, bucket, metaKey, 1500);
 
         // ── 4. Add rendered files to pre-built ZIP (S3 multipart stream) ─────
         zipOut.addFile(`images/${editionNum}.${ext}`, imgBuf);

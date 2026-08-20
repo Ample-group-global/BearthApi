@@ -4,7 +4,7 @@ import { HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
 // isn't guaranteed to be readable via HeadObject immediately. Poll briefly
 // instead of checking once, or the CID silently comes back null under any
 // real load.
-export async function pollCid(s3: S3Client, bucket: string, key: string, maxMs = 3000): Promise<string> {
+export async function pollCid(s3: S3Client, bucket: string, key: string, maxMs = 6000): Promise<string> {
   const deadline = Date.now() + maxMs;
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 80));
