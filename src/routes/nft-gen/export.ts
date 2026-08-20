@@ -60,21 +60,20 @@ function layersBucket(): string | null {
 }
 
 function makeLayerFetcher() {
-  const cache = new Map<string, Buffer>();
-  // Deduplicates concurrent fetches of the same key — if 25 workers all need
-  // the same layer simultaneously, only 1 S3 GET fires; others await the same promise.
+  // No persistent raw-buffer cache — raw PNGs are only needed during the resize step.
+  // makeResizedFetcher holds the permanent resize cache; once a layer is resized the
+  // raw buffer is released to GC, keeping peak memory bounded regardless of collection size.
+  // The pending Map deduplicates concurrent S3 GETs (e.g. all pre-warm calls in parallel).
   const pending = new Map<string, Promise<Buffer | null>>();
   const bucket = layersBucket();
 
   return async function fetchLayerBuf(filePath: string): Promise<Buffer | null> {
-    if (cache.has(filePath)) return cache.get(filePath)!;
     if (pending.has(filePath)) return pending.get(filePath)!;
     if (!bucket) return null;
 
     const promise = getS3Client()
       .send(new GetObjectCommand({ Bucket: bucket, Key: filePath }))
       .then(res => streamToBuffer(res.Body))
-      .then(buf => { if (buf) cache.set(filePath, buf); return buf ?? null; })
       .catch(() => null)
       .finally(() => pending.delete(filePath));
 
