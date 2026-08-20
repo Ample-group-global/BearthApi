@@ -515,7 +515,7 @@ export async function syncGeneratedItemsToNftRecords(jobId?: string): Promise<nu
       traits,
       rarity_score: meta.score != null ? Number(meta.score) : null,
       rarity_rank: meta.rank != null ? Number(meta.rank) : null,
-      rarity_tier: meta.tier != null ? String(meta.tier) : null,
+      rarity_tier: meta.tier != null ? String(meta.tier).toLowerCase() : null,
     };
   });
 

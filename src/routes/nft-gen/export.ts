@@ -1,123 +1,25 @@
 import { Router } from "express";
-import { PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { randomUUID } from "crypto";
 import path from "path";
 import fs from "fs";
 import os from "os";
-import { Readable } from "stream";
 import sharp from "sharp";
 import { requirePermission } from "../../adminAuth";
 import pool from "../../pool";
 import { getS3Client } from "../../clients/s3";
-import { batchUpdateItemIpfsCids, syncGeneratedItemsToNftRecords } from "../../services/nft-gen.service";
-import { pollCid } from "../../utils/pollCid";
+import { syncGeneratedItemsToNftRecords } from "../../services/nft-gen.service";
 import { ZipStream } from "../../utils/zipStream";
-import { S3MultipartWritable } from "../../utils/s3MultipartWritable";
+import {
+  hasLayerSource, makeLayerFetcher, fetchEditionRows, applyNameFormat,
+} from "./export-helpers";
+import {
+  exportMeta, refreshCidMeta, previewMeta, zipRegistry,
+} from "./export-state";
+import { runExport, runPreview, runRefreshCids } from "./export-workers";
 
 const router = Router();
-
-interface ExportState {
-  status: 'running' | 'done' | 'error';
-  progress: number;
-  total: number;
-  phase: string;
-  error?: string;
-}
-
-const exportJobs = new Map<string, ExportState>();
-let exportRunning = false;
-
-// Tracks pre-built ZIP location for each export job so the download endpoint
-// can return a pre-signed URL instead of streaming from scratch.
-// key = jobId, value = { bucket, zipKey }
-const zipRegistry = new Map<string, { bucket: string; zipKey: string }>();
-
-interface PreviewState {
-  status: 'running' | 'done' | 'error';
-  progress: number;
-  total: number;
-  phase: string;
-  validCount: number;
-  invalidItems: Array<{ edition: number; reason: string }>;
-  error?: string;
-}
-
-const previewJobs = new Map<string, PreviewState & { dir: string }>();
-
-// ── Layer fetcher ─────────────────────────────────────────────────────────────
-async function streamToBuffer(body: unknown): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    const readable = body as Readable;
-    readable.on("data", (c: Buffer) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
-    readable.on("end", () => resolve(Buffer.concat(chunks)));
-    readable.on("error", reject);
-  });
-}
-function layersBucket(): string | null {
-  return process.env.LAYERS_BUCKET || process.env.FILEBASE_LAYERS_BUCKET || null;
-}
-
-function makeLayerFetcher() {
-  // No persistent raw-buffer cache — raw PNGs are only needed during the resize step.
-  // makeResizedFetcher holds the permanent resize cache; once a layer is resized the
-  // raw buffer is released to GC, keeping peak memory bounded regardless of collection size.
-  // The pending Map deduplicates concurrent S3 GETs (e.g. all pre-warm calls in parallel).
-  const pending = new Map<string, Promise<Buffer | null>>();
-  const bucket = layersBucket();
-
-  return async function fetchLayerBuf(filePath: string): Promise<Buffer | null> {
-    if (pending.has(filePath)) return pending.get(filePath)!;
-    if (!bucket) return null;
-
-    const promise = getS3Client()
-      .send(new GetObjectCommand({ Bucket: bucket, Key: filePath }))
-      .then(res => streamToBuffer(res.Body))
-      .catch(() => null)
-      .finally(() => pending.delete(filePath));
-
-    pending.set(filePath, promise);
-    return promise;
-  };
-}
-
-// Wraps fetchLayerBuf with a resize cache keyed per file path.
-// Workers call this instead of doing sharp(raw).resize() per NFT —
-// each unique layer is resized exactly once regardless of how many
-// editions share the same trait, dropping thread-pool pressure by ~8x.
-function makeResizedFetcher(
-  fetchLayerBuf: (fp: string) => Promise<Buffer | null>,
-  width: number,
-  height: number,
-) {
-  const cache = new Map<string, Buffer>();
-  const pending = new Map<string, Promise<Buffer | null>>();
-
-  return async function fetchLayerResized(filePath: string): Promise<Buffer | null> {
-    if (cache.has(filePath)) return cache.get(filePath)!;
-    if (pending.has(filePath)) return pending.get(filePath)!;
-
-    const promise = fetchLayerBuf(filePath)
-      .then(async raw => {
-        if (!raw) return null;
-        const buf = await sharp(raw).resize(width, height).toBuffer();
-        cache.set(filePath, buf);
-        return buf;
-      })
-      .catch(() => null)
-      .finally(() => pending.delete(filePath));
-
-    pending.set(filePath, promise);
-    return promise;
-  };
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function hasLayerSource(): boolean {
-  return !!layersBucket();
-}
 
 // ── POST / — start server-side export ────────────────────────────────────────
 
@@ -130,11 +32,12 @@ router.post("/", async (req, res, next) => {
       format = "png", width, height,
       collectionName = "", description = "", nameFormat = "", externalUrl = "",
       syncToRecords = true,
+      resumeFrom = 0,
     } = req.body ?? {};
 
     if (!jobId) { res.status(422).json({ error: "jobId is required." }); return; }
     if (!bucket) { res.status(422).json({ error: "bucket is required." }); return; }
-    if (exportRunning) {
+    if (exportMeta.running) {
       res.status(409).json({ error: "An export is already running. Wait for it to complete before starting a new one." });
       return;
     }
@@ -159,10 +62,11 @@ router.post("/", async (req, res, next) => {
     const total = Number(countRows[0]?.cnt ?? 0);
     if (total === 0) { res.status(422).json({ error: "No generated items for this job. Generate NFTs first." }); return; }
 
+    const startFrom = Math.max(0, Math.min(Number(resumeFrom) || 0, total));
     const exportId = randomUUID();
-    exportJobs.set(exportId, { status: "running", progress: 0, total, phase: "Starting…" });
+    exportMeta.jobs.set(exportId, { status: "running", progress: startFrom, total, phase: startFrom > 0 ? `Resuming from ${startFrom}…` : "Starting…" });
 
-    exportRunning = true;
+    exportMeta.running = true;
     runExport(exportId, jobId, {
       bucket,
       format: String(format),
@@ -174,11 +78,12 @@ router.post("/", async (req, res, next) => {
       nameFormat: String(nameFormat),
       externalUrl: String(externalUrl),
       syncToRecords: syncToRecords !== false,
+      resumeFrom: startFrom,
     }).catch(err => {
-      const s = exportJobs.get(exportId);
+      const s = exportMeta.jobs.get(exportId);
       if (s) { s.status = "error"; s.error = String(err?.message ?? err); }
     }).finally(() => {
-      exportRunning = false;
+      exportMeta.running = false;
     });
 
     res.status(202).json({ exportId, total });
@@ -211,14 +116,14 @@ router.post("/preview", async (req, res, next) => {
     const previewDir = path.join(os.tmpdir(), "bearth-previews", previewId);
     fs.mkdirSync(previewDir, { recursive: true });
 
-    previewJobs.set(previewId, {
+    previewMeta.jobs.set(previewId, {
       status: "running", progress: 0, total,
       phase: "Starting…", validCount: 0, invalidItems: [], dir: previewDir,
     });
 
     runPreview(previewId, jobId, { width: Number(width), height: Number(height), total, previewDir })
       .catch(err => {
-        const s = previewJobs.get(previewId);
+        const s = previewMeta.jobs.get(previewId);
         if (s) { s.status = "error"; s.error = String(err?.message ?? err); }
       });
 
@@ -229,7 +134,7 @@ router.post("/preview", async (req, res, next) => {
 // ── GET /preview/:previewId — poll preview status ─────────────────────────────
 
 router.get("/preview/:previewId", (req, res) => {
-  const state = previewJobs.get(req.params.previewId);
+  const state = previewMeta.jobs.get(req.params.previewId);
   if (!state) { res.status(404).json({ error: "Preview job not found." }); return; }
   const { dir, ...rest } = state;
   res.json(rest);
@@ -238,7 +143,7 @@ router.get("/preview/:previewId", (req, res) => {
 // ── GET /preview/:previewId/img/:edition — serve a thumbnail PNG ──────────────
 
 router.get("/preview/:previewId/img/:edition", (req, res) => {
-  const state = previewJobs.get(req.params.previewId);
+  const state = previewMeta.jobs.get(req.params.previewId);
   if (!state) { res.status(404).json({ error: "Preview job not found." }); return; }
   const edition = parseInt(req.params.edition, 10);
   if (isNaN(edition) || edition < 1) { res.status(400).json({ error: "Invalid edition." }); return; }
@@ -255,8 +160,8 @@ router.get("/preview/:previewId/img/:edition", (req, res) => {
 // for large collections at high resolution). Higher batch/concurrency than the
 // background export worker to minimise wall-clock time for the user.
 
-const DOWNLOAD_BATCH     = 50;   // editions per outer loop iteration (50 × 8 layer S3 reads)
-const DOWNLOAD_CONCURRENCY = 20; // concurrent Sharp composites per batch
+const DOWNLOAD_BATCH       = 50;
+const DOWNLOAD_CONCURRENCY = 20;
 
 router.get("/download-zip/:jobId", async (req, res, next) => {
   try {
@@ -331,19 +236,19 @@ router.get("/download-zip/:jobId", async (req, res, next) => {
             for (const layer of validLayers) {
               const raw = await fetchLayerBuf(layer.file_path!);
               if (!raw) continue;
-              resized.push(await sharp(raw).resize(width, height).toBuffer());
+              resized.push(await sharp(raw).resize(width, height, { kernel: sharp.kernel.lanczos3, fit: "fill" }).toBuffer());
             }
 
             let imgBuf: Buffer;
             if (resized.length === 0) {
               imgBuf = await sharp({
                 create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 255 } },
-              }).toFormat(ext).toBuffer();
+              }).toFormat(ext === "webp" ? "webp" : "png", ext === "webp" ? { quality: 95, effort: 4 } : {}).toBuffer();
             } else {
               const [base, ...rest] = resized;
               imgBuf = await sharp(base)
                 .composite(rest.map(buf => ({ input: buf, blend: "over" as const })))
-                .toFormat(ext)
+                .toFormat(ext === "webp" ? "webp" : "png", ext === "webp" ? { quality: 95, effort: 4 } : {})
                 .toBuffer();
             }
 
@@ -354,7 +259,7 @@ router.get("/download-zip/:jobId", async (req, res, next) => {
               name: nftName,
               description,
               image: `images/${editionNum}.${ext}`,
-              external_url: `${baseUrl}/${editionNum}`,
+              external_url: baseUrl,
               attributes: [
                 ...traitAttributes,
                 { trait_type: "Rarity Score", value: (editionData.rarityScore || 0).toFixed(2) },
@@ -451,335 +356,45 @@ router.get("/presigned-zip/:jobId", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// ── GET /:exportId — poll status ──────────────────────────────────────────────
+// ── POST /refresh-cids — resolve ipfs://pending/ placeholders with real CIDs ──
+// After all images are uploaded, Filebase assigns IPFS CIDs asynchronously.
+// This step reads each image's CID via HeadObject and re-uploads the metadata
+// JSON with image: "ipfs://<real_cid>" replacing the placeholder.
+router.post("/refresh-cids", async (req, res, next) => {
+  try {
+    requirePermission(req, "nft_gen.upload_ipfs");
+    const { bucket, format = "png" } = req.body ?? {};
+    if (!bucket) { res.status(422).json({ error: "bucket is required." }); return; }
+    if (refreshCidMeta.running) {
+      res.status(409).json({ error: "A CID refresh is already running." });
+      return;
+    }
+    const refreshId = randomUUID();
+    refreshCidMeta.jobs.set(refreshId, { status: "running", progress: 0, total: 0, resolved: 0, skipped: 0, phase: "Listing images…" });
+    refreshCidMeta.running = true;
+    runRefreshCids(refreshId, bucket, String(format))
+      .catch(err => {
+        const s = refreshCidMeta.jobs.get(refreshId);
+        if (s) { s.status = "error"; s.error = String(err?.message ?? err); }
+      })
+      .finally(() => { refreshCidMeta.running = false; });
+    res.status(202).json({ refreshId });
+  } catch (e) { next(e); }
+});
 
-router.get("/:exportId", (req, res) => {
-  const state = exportJobs.get(req.params.exportId);
-  if (!state) { res.status(404).json({ error: "Export job not found." }); return; }
+// ── GET /refresh-cids/:refreshId — poll CID refresh status ───────────────────
+router.get("/refresh-cids/:refreshId", (req, res) => {
+  const state = refreshCidMeta.jobs.get(req.params.refreshId);
+  if (!state) { res.status(404).json({ error: "Refresh job not found." }); return; }
   res.json(state);
 });
 
-// ── Background workers ────────────────────────────────────────────────────────
+// ── GET /:exportId — poll status ──────────────────────────────────────────────
 
-const BATCH = 100;
-const CONCURRENCY = 25;
-const PREVIEW_THUMB = 64;
-const PREVIEW_CONCURRENCY = 20;
-const PREVIEW_BATCH = 200;
-
-interface EditionRow {
-  edition_number: number;
-  trait_type: string;
-  trait_value: string;
-  file_path: string | null;
-  sort_order: number;
-  rarity_score: string | null;
-  rarity_rank: string | null;
-  rarity_tier: string | null;
-}
-
-// Shared by runExport and runPreview — identical join/filter/order, only
-// the composited output differs. Rarity columns are always selected (same
-// table, no extra join cost); runPreview just doesn't read them.
-async function fetchEditionRows(jobId: string, offset: number, batchEnd: number): Promise<EditionRow[]> {
-  const { rows } = await pool.query<EditionRow>(`
-    SELECT gi.edition_number, nit.trait_type, nit.trait_value, nt.file_path, nl.sort_order,
-           (gi.metadata_json->>'score') AS rarity_score,
-           (gi.metadata_json->>'rank')  AS rarity_rank,
-           (gi.metadata_json->>'tier')  AS rarity_tier
-    FROM   nft_generated_items gi
-    JOIN   nft_item_traits        nit ON nit.item_id        = gi.id
-    JOIN   nft_generation_jobs    j   ON j.id               = gi.job_id
-    JOIN   nft_layers             nl  ON nl.collection_id   = j.collection_id
-                                    AND nl.display_name     = nit.trait_type
-    LEFT JOIN nft_traits          nt  ON nt.layer_id        = nl.id
-                                    AND nt.name             = nit.trait_value
-    WHERE  gi.job_id = $1::uuid
-      AND  gi.edition_number >  $2
-      AND  gi.edition_number <= $3
-    ORDER BY gi.edition_number,
-             nl.sort_order
-  `, [jobId, offset, batchEnd]);
-  return rows;
-}
-
-async function runExport(
-  exportId: string,
-  jobId: string,
-  opts: {
-    bucket: string; format: string; width: number; height: number; total: number;
-    collectionName: string; description: string; nameFormat: string; externalUrl: string;
-    syncToRecords: boolean;
-  },
-) {
-  const { bucket, format, width, height, total, collectionName, description, nameFormat, externalUrl, syncToRecords } = opts;
-  const ext = format === "webp" ? "webp" : "png";
-  const mime = ext === "webp" ? "image/webp" : "image/png";
-  const state = exportJobs.get(exportId)!;
-  const s3 = getS3Client();
-  const fetchLayerBuf = makeLayerFetcher();
-  // Pre-resize cache: each unique layer PNG is resized to the target dimensions
-  // exactly once and cached — workers read from cache instead of calling sharp
-  // per-NFT, dropping thread-pool pressure from 8 resizes+1 composite to 1 composite.
-  const fetchLayerResized = makeResizedFetcher(fetchLayerBuf, width, height);
-
-  // ── Pre-built ZIP: stream directly into Filebase via S3 multipart upload ──
-  // One render pass, two outputs: individual files + ZIP, no re-download needed.
-  const safeName = (collectionName || "bearth-nft-collection").replace(/[^a-z0-9-_]+/gi, "-").toLowerCase();
-  const zipKey  = `downloads/${jobId}.zip`;
-  const zipS3   = new S3MultipartWritable(s3, bucket, zipKey);
-  const zipOut  = new ZipStream(zipS3);
-  let   zipOk   = false;
-
-  for (let offset = 0; offset < total; offset += BATCH) {
-    const batchEnd = Math.min(offset + BATCH, total);
-    state.phase = `Compositing ${offset + 1}–${batchEnd} of ${total}…`;
-
-    const rows = await fetchEditionRows(jobId, offset, batchEnd);
-
-    type LayerRow = { trait_type: string; trait_value: string; file_path: string | null; sort_order: number };
-    type EditionData = { layers: LayerRow[]; rarityScore: number; rarityRank: number; rarityTier: string };
-    const byEdition = new Map<number, EditionData>();
-    for (const row of rows) {
-      if (!byEdition.has(row.edition_number)) {
-        byEdition.set(row.edition_number, {
-          layers: [],
-          rarityScore: parseFloat(row.rarity_score ?? '0') || 0,
-          rarityRank: parseInt(row.rarity_rank ?? '0', 10) || 0,
-          rarityTier: row.rarity_tier ?? 'Common',
-        });
-      }
-      byEdition.get(row.edition_number)!.layers.push(row);
-    }
-
-    const editions = [...byEdition.keys()].sort((a, b) => a - b);
-    const ipfsUpdates: Array<{
-      editionNumber: number; ipfsImageCid: string; ipfsMetadataCid: string; imagePath: string;
-    }> = [];
-
-    // Pre-warm: fetch + resize all unique layer PNGs before workers start.
-    // After batch 1 all layers are cached; subsequent batches resolve instantly from cache.
-    // Bounded concurrency of 5 prevents 50 simultaneous sharp resize operations from
-    // spiking memory (each 2000×2000 op consumes ~16–20 MB internally in libvips).
-    const uniquePaths = [...new Set(rows.map(r => r.file_path).filter(Boolean))] as string[];
-    const PREWARM_C = 5;
-    for (let p = 0; p < uniquePaths.length; p += PREWARM_C) {
-      await Promise.all(uniquePaths.slice(p, p + PREWARM_C).map(fp => fetchLayerResized(fp)));
-    }
-
-    let cursor = 0;
-
-    async function processOne() {
-      while (cursor < editions.length) {
-        const editionNum = editions[cursor++];
-        const editionData = byEdition.get(editionNum)!;
-        const layerRows = editionData.layers;
-        const { rarityScore, rarityRank, rarityTier } = editionData;
-
-        // ── 1. Composite ──────────────────────────────────────────────────────
-        // Layers are pre-resized and cached by makeResizedFetcher — each unique
-        // layer PNG is resized exactly once. Workers hit cache here, no S3 reads
-        // or sharp resize calls per NFT — only one composite per NFT remains.
-        const validLayers = layerRows.filter(l => l.file_path);
-        const resized: Buffer[] = [];
-        for (const layer of validLayers) {
-          const buf = await fetchLayerResized(layer.file_path!);
-          if (buf) resized.push(buf);
-        }
-
-        let imgBuf: Buffer;
-        if (resized.length === 0) {
-          imgBuf = await sharp({
-            create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 255 } },
-          }).toFormat(ext === "webp" ? "webp" : "png").toBuffer();
-        } else {
-          const [base, ...rest] = resized;
-          imgBuf = await sharp(base)
-            .composite(rest.map(buf => ({ input: buf, blend: "over" as const })))
-            .toFormat(ext === "webp" ? "webp" : "png")
-            .toBuffer();
-        }
-
-        // ── 2. Upload image ───────────────────────────────────────────────────
-        const imgKey = `images/${editionNum}.${ext}`;
-        await s3.send(new PutObjectCommand({ Bucket: bucket, Key: imgKey, Body: imgBuf, ContentType: mime }));
-        // CIDs are assigned by Filebase asynchronously (typically 10–30s after upload).
-        // Polling per-file during export at 500 ms always times out and returns "" anyway,
-        // while generating ~24 extra HeadObject calls per NFT (650 simultaneous at CONCURRENCY=25)
-        // that saturate Filebase's rate limits and make the export 10–20x slower than necessary.
-        // We skip polling here and persist the S3 key; a separate "Refresh CIDs" pass can
-        // update IPFS CIDs in bulk once Filebase has assigned them.
-        const imgCid = "";
-
-        // ── 3. Build + upload metadata ────────────────────────────────────────
-        const nftName = applyNameFormat(nameFormat || (collectionName ? `${collectionName} #{{id}}` : "#{{id}}"), editionNum);
-        const traitAttributes = validLayers.map(l => ({ trait_type: l.trait_type, value: l.trait_value }));
-        const baseUrl = (externalUrl.trim() || "https://www.imbearth.com").replace(/\/$/, "");
-
-        const metaJson = JSON.stringify({
-          name: nftName,
-          description,
-          image: `ipfs://pending/${imgKey}`,
-          external_url: `${baseUrl}/${editionNum}`,
-          attributes: [
-            ...traitAttributes,
-            { trait_type: "Rarity Score", value: rarityScore.toFixed(2) },
-            { trait_type: "Rarity Rank",  value: `#${rarityRank}` },
-            { trait_type: "Rarity Tier",  value: rarityTier || "Common" },
-          ],
-        }, null, 2);
-
-        const metaKey = `metadata/${editionNum}.json`;
-        await s3.send(new PutObjectCommand({ Bucket: bucket, Key: metaKey, Body: metaJson, ContentType: "application/json" }));
-        const metaCid = "";
-
-        // ── 4. Add rendered files to pre-built ZIP (S3 multipart stream) ─────
-        zipOut.addFile(`images/${editionNum}.${ext}`, imgBuf);
-        zipOut.addFile(`metadata/${editionNum}.json`, Buffer.from(metaJson, "utf8"));
-
-        ipfsUpdates.push({ editionNumber: editionNum, ipfsImageCid: imgCid, ipfsMetadataCid: metaCid, imagePath: imgKey });
-        state.progress++;
-        state.phase = `Uploading… ${state.progress} / ${total}`;
-      }
-    }
-
-    await Promise.all(Array.from({ length: CONCURRENCY }, processOne));
-
-    if (ipfsUpdates.length > 0) {
-      await batchUpdateItemIpfsCids({ jobId, items: ipfsUpdates });
-    }
-  }
-
-  // ── Finalise pre-built ZIP and upload to Filebase ────────────────────────
-  state.phase = "Finalising download ZIP…";
-  try {
-    zipOut.finish();                  // writes ZIP central directory to the S3 multipart stream
-    await zipS3.complete();           // flushes final S3 part and completes the multipart upload
-    zipRegistry.set(jobId, { bucket, zipKey });
-    zipOk = true;
-    console.log(`[runExport] pre-built ZIP uploaded: s3://${bucket}/${zipKey}`);
-  } catch (zipErr) {
-    // Non-fatal: individual files are already in Filebase.
-    // User can still use the streaming download-zip fallback.
-    console.error(`[runExport] pre-built ZIP failed (streaming fallback still works):`, zipErr);
-    await zipS3.abort().catch(() => {});
-  }
-
-  let synced = 0;
-  if (syncToRecords) {
-    state.phase = "Syncing to NFT Records…";
-    synced = await syncGeneratedItemsToNftRecords(jobId);
-  }
-
-  state.status = "done";
-  state.phase = syncToRecords
-    ? `Complete — ${total} NFTs exported to Filebase${zipOk ? ' · ZIP ready' : ''}, ${synced} synced to NFT Records`
-    : `Complete — ${total} NFTs exported to Filebase${zipOk ? ' · ZIP ready for instant download' : ''} (test run — nft_records not updated)`;
-}
-
-async function runPreview(
-  previewId: string,
-  jobId: string,
-  opts: { width: number; height: number; total: number; previewDir: string },
-) {
-  const { total, previewDir } = opts;
-  const state = previewJobs.get(previewId)!;
-  const fetchLayerBuf = makeLayerFetcher();
-  const resizedCache = new Map<string, Promise<Buffer>>();
-  function getResized(filePath: string, raw: Buffer): Promise<Buffer> {
-    if (!resizedCache.has(filePath)) {
-      resizedCache.set(
-        filePath,
-        sharp(raw).resize(PREVIEW_THUMB, PREVIEW_THUMB, { fit: "cover" }).png().toBuffer(),
-      );
-    }
-    return resizedCache.get(filePath)!;
-  }
-
-  for (let offset = 0; offset < total; offset += PREVIEW_BATCH) {
-    const batchEnd = Math.min(offset + PREVIEW_BATCH, total);
-    state.phase = `Compositing ${offset + 1}–${batchEnd} of ${total}…`;
-
-    const rows = await fetchEditionRows(jobId, offset, batchEnd);
-
-    type LayerRow = { trait_type: string; trait_value: string; file_path: string | null; sort_order: number };
-    const byEdition = new Map<number, LayerRow[]>();
-    for (const row of rows) {
-      if (!byEdition.has(row.edition_number)) byEdition.set(row.edition_number, []);
-      byEdition.get(row.edition_number)!.push(row);
-    }
-
-    // Pre-warm the resized cache for all unique trait PNGs in this batch
-    const uniquePaths = new Set<string>();
-    for (const row of rows) { if (row.file_path) uniquePaths.add(row.file_path); }
-    await Promise.all([...uniquePaths].map(async fp => {
-      const raw = await fetchLayerBuf(fp);
-      return raw ? getResized(fp, raw) : null;
-    }));
-
-    const editions = [...byEdition.keys()].sort((a, b) => a - b);
-    let cursor = 0;
-
-    async function processOnePreview() {
-      while (cursor < editions.length) {
-        const editionNum = editions[cursor++];
-        const layerRows = byEdition.get(editionNum)!;
-        const validLayers = layerRows.filter(l => l.file_path);
-
-        // All resized buffers are already in cache — no expensive decode/resize per NFT
-        const resized: Buffer[] = [];
-        for (const layer of validLayers) {
-          const raw = await fetchLayerBuf(layer.file_path!);
-          if (!raw) continue;
-          resized.push(await getResized(layer.file_path!, raw));
-        }
-
-        let imgBuf: Buffer;
-        if (resized.length === 0) {
-          imgBuf = await sharp({
-            create: { width: PREVIEW_THUMB, height: PREVIEW_THUMB, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 255 } },
-          }).png().toBuffer();
-        } else {
-          const [base, ...rest] = resized;
-          imgBuf = await sharp(base)
-            .composite(rest.map(buf => ({ input: buf, blend: "over" as const })))
-            .png()
-            .toBuffer();
-        }
-
-        // Industry-standard quality check: image must have visual variance (not all-one-color)
-        let invalidReason = "";
-        if (validLayers.length === 0) {
-          invalidReason = "No visible layers — solid black";
-        } else {
-          try {
-            const stats = await sharp(imgBuf).stats();
-            const rgbStdev = stats.channels.slice(0, 3).reduce((s, c) => s + ((c as any).stdev ?? (c as any).std ?? 0), 0);
-            if (rgbStdev < 2) invalidReason = `Uniform image (rgb stdev=${rgbStdev.toFixed(1)}) — compositing may have failed`;
-          } catch { invalidReason = "Could not validate image"; }
-        }
-
-        if (invalidReason) {
-          state.invalidItems.push({ edition: editionNum, reason: invalidReason });
-        } else {
-          state.validCount++;
-        }
-
-        fs.writeFileSync(path.join(previewDir, `${editionNum}.png`), imgBuf);
-        state.progress++;
-        state.phase = `Validating… ${state.progress} / ${total}`;
-      }
-    }
-
-    await Promise.all(Array.from({ length: PREVIEW_CONCURRENCY }, processOnePreview));
-  }
-
-  state.status = "done";
-  state.phase = `Complete — ${state.validCount}/${total} valid${state.invalidItems.length ? `, ${state.invalidItems.length} issues` : ''}`;
-}
-
-function applyNameFormat(fmt: string, id: number): string {
-  return fmt.replace(/\{\{id\}\}/g, String(id));
-}
+router.get("/:exportId", (req, res) => {
+  const state = exportMeta.jobs.get(req.params.exportId);
+  if (!state) { res.status(404).json({ error: "Export job not found." }); return; }
+  res.json(state);
+});
 
 export default router;
