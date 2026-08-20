@@ -557,11 +557,15 @@ async function runExport(
       editionNumber: number; ipfsImageCid: string; ipfsMetadataCid: string; imagePath: string;
     }> = [];
 
-    // Pre-warm: fetch + resize all unique layer PNGs in this batch before workers start.
-    // After batch 1 all layers are cached; subsequent batches resolve instantly.
-    const uniquePaths = new Set<string>();
-    for (const row of rows) { if (row.file_path) uniquePaths.add(row.file_path); }
-    await Promise.all([...uniquePaths].map(fp => fetchLayerResized(fp)));
+    // Pre-warm: fetch + resize all unique layer PNGs before workers start.
+    // After batch 1 all layers are cached; subsequent batches resolve instantly from cache.
+    // Bounded concurrency of 5 prevents 50 simultaneous sharp resize operations from
+    // spiking memory (each 2000×2000 op consumes ~16–20 MB internally in libvips).
+    const uniquePaths = [...new Set(rows.map(r => r.file_path).filter(Boolean))] as string[];
+    const PREWARM_C = 5;
+    for (let p = 0; p < uniquePaths.length; p += PREWARM_C) {
+      await Promise.all(uniquePaths.slice(p, p + PREWARM_C).map(fp => fetchLayerResized(fp)));
+    }
 
     let cursor = 0;
 
