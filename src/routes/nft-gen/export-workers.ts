@@ -16,6 +16,7 @@ import {
   streamToBuffer,
 } from "./export-helpers";
 import { exportMeta, refreshCidMeta, previewMeta, zipRegistry } from "./export-state";
+import { saveTask } from "../../utils/taskProgress";
 
 export const BATCH             = 500;
 export const CONCURRENCY       = 50;
@@ -134,6 +135,7 @@ export async function runExport(
     }
 
     await Promise.all(Array.from({ length: CONCURRENCY }, processOneImage));
+    await saveTask(exportId, 'export', { status: 'running', phase: state.phase, progress: state.progress, total, meta: { jobId } });
   }
 
   // ── PHASE 2: Resolve CIDs and upload metadata once with correct image URI ─
@@ -220,6 +222,7 @@ export async function runExport(
     }
 
     await Promise.all(Array.from({ length: META_CONCURRENCY }, processOneMeta));
+    await saveTask(exportId, 'export', { status: 'running', phase: state.phase, progress: state.progress, total, meta: { jobId } });
 
     if (ipfsUpdates.length > 0) {
       await batchUpdateItemIpfsCids({ jobId, items: ipfsUpdates });
@@ -253,6 +256,7 @@ export async function runExport(
   state.phase = syncToRecords
     ? `Complete — ${uploadedCount} NFTs uploaded${resumeFrom > 0 ? ` (${total} total in bucket)` : ''}${zipOk ? ' · ZIP ready' : ''}, ${synced} synced to NFT Records`
     : `Complete — ${uploadedCount} NFTs uploaded${resumeFrom > 0 ? ` (${total} total in bucket)` : ''}${zipOk ? ' · ZIP ready for instant download' : ''} (test run — nft_records not updated)`;
+  await saveTask(exportId, 'export', { status: 'done', phase: state.phase, progress: total, total, meta: { jobId } });
 }
 
 export async function runPreview(
@@ -477,4 +481,5 @@ export async function runRefreshCids(refreshId: string, bucket: string, format: 
 
   state.status = "done";
   state.phase = `Complete — ${state.resolved} CIDs resolved${state.skipped > 0 ? `, ${state.skipped} skipped (not yet assigned)` : ""}`;
+  await saveTask(refreshId, 'refresh_cids', { status: 'done', phase: state.phase, progress: state.progress, total: state.total, meta: { resolved: state.resolved, skipped: state.skipped } });
 }

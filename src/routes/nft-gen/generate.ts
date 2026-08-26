@@ -5,6 +5,7 @@ import { requirePermission } from "../../adminAuth";
 import pool from "../../pool";
 import * as svc from "../../services/nft-gen.service";
 import { logger } from "../../logger";
+import { saveTask, getTask, keepAlive } from '../../utils/taskProgress';
 
 const router = Router();
 
@@ -38,22 +39,28 @@ router.post("/", async (req, res, next) => {
     generateJobs.set(generateId, { status: "running", phase: "Loading layers…", progress: 0, total: Number(editionSize) });
 
     const createdBy: string | null = (req as any).user?.userId ?? null;
-    runGenerate(generateId, String(collectionId), Number(editionSize), createdBy)
-      .catch(err => {
+    const job = runGenerate(generateId, String(collectionId), Number(editionSize), createdBy)
+      .catch(async err => {
         const s = generateJobs.get(generateId);
-        if (s) { s.status = "error"; s.error = err instanceof Error ? err.message : String(err); }
+        const msg = err instanceof Error ? err.message : String(err);
+        if (s) { s.status = "error"; s.error = msg; }
+        await saveTask(generateId, 'generate', { status: 'error', phase: 'Failed', progress: s?.progress ?? 0, total: Number(editionSize), error: msg, meta: { collectionId: String(collectionId) } });
         logger.warn("[generate] job failed", err);
       })
       .finally(() => { generatingCollections.delete(String(collectionId)); });
+    keepAlive(job);
+    await saveTask(generateId, 'generate', { status: 'running', phase: 'Loading layers…', progress: 0, total: Number(editionSize), meta: { collectionId: String(collectionId) } });
 
     res.status(202).json({ generateId });
   } catch (e) { next(e); }
 });
 
-router.get("/:generateId", (req, res) => {
+router.get("/:generateId", async (req, res) => {
   const state = generateJobs.get(req.params.generateId);
-  if (!state) { res.status(404).json({ error: "Generate job not found." }); return; }
-  res.json(state);
+  if (state) { res.json(state); return; }
+  const db = await getTask(req.params.generateId);
+  if (!db) { res.status(404).json({ error: "Generate job not found." }); return; }
+  res.json(db);
 });
 
 type Asset = { stem: string; name: string; rel: string | null; defaultWeight: number };
@@ -288,12 +295,14 @@ async function runGenerate(generateId: string, collectionId: string, editionSize
     done += group.reduce((s, c) => s + c.length, 0);
     state.progress = done;
     state.phase = `Saving to database… ${done} / ${editionSize}`;
+    await saveTask(generateId, 'generate', { status: 'running', phase: state.phase, progress: done, total: editionSize, meta: { collectionId } });
   }
 
   // 8. Complete job, then clean up old jobs (after inserts finish to avoid lock contention)
   await svc.completeJob(String(jobId));
   state.status = "done";
   state.phase = `Complete — ${editionSize} NFTs generated`;
+  await saveTask(generateId, 'generate', { status: 'done', phase: state.phase, progress: editionSize, total: editionSize, meta: { collectionId, jobId: String(jobId) } });
 
   cleanOldGenerationData(collectionId, String(jobId)).catch(err =>
     logger.warn("[generate] cleanup error (non-critical)", err)

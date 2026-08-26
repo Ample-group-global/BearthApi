@@ -18,6 +18,7 @@ import {
   exportMeta, refreshCidMeta, previewMeta, zipRegistry,
 } from "./export-state";
 import { runExport, runPreview, runRefreshCids } from "./export-workers";
+import { saveTask, getTask, keepAlive } from "../../utils/taskProgress";
 
 const router = Router();
 
@@ -67,7 +68,7 @@ router.post("/", async (req, res, next) => {
     exportMeta.jobs.set(exportId, { status: "running", progress: startFrom, total, phase: startFrom > 0 ? `Resuming from ${startFrom}…` : "Starting…" });
 
     exportMeta.running = true;
-    runExport(exportId, jobId, {
+    const exportJob = runExport(exportId, jobId, {
       bucket,
       format: String(format),
       width: Number(width),
@@ -79,12 +80,16 @@ router.post("/", async (req, res, next) => {
       externalUrl: String(externalUrl),
       syncToRecords: syncToRecords !== false,
       resumeFrom: startFrom,
-    }).catch(err => {
+    }).catch(async err => {
       const s = exportMeta.jobs.get(exportId);
-      if (s) { s.status = "error"; s.error = String(err?.message ?? err); }
+      const msg = String(err?.message ?? err);
+      if (s) { s.status = "error"; s.error = msg; }
+      await saveTask(exportId, 'export', { status: 'error', phase: s?.phase ?? 'Failed', progress: s?.progress ?? startFrom, total, error: msg, meta: { jobId } });
     }).finally(() => {
       exportMeta.running = false;
     });
+    keepAlive(exportJob);
+    await saveTask(exportId, 'export', { status: 'running', phase: startFrom > 0 ? `Resuming from ${startFrom}…` : 'Starting…', progress: startFrom, total, meta: { jobId } });
 
     res.status(202).json({ exportId, total });
   } catch (e) { next(e); }
@@ -372,29 +377,37 @@ router.post("/refresh-cids", async (req, res, next) => {
     const refreshId = randomUUID();
     refreshCidMeta.jobs.set(refreshId, { status: "running", progress: 0, total: 0, resolved: 0, skipped: 0, phase: "Listing images…" });
     refreshCidMeta.running = true;
-    runRefreshCids(refreshId, bucket, String(format))
-      .catch(err => {
+    const refreshJob = runRefreshCids(refreshId, bucket, String(format))
+      .catch(async err => {
         const s = refreshCidMeta.jobs.get(refreshId);
-        if (s) { s.status = "error"; s.error = String(err?.message ?? err); }
+        const msg = String(err?.message ?? err);
+        if (s) { s.status = "error"; s.error = msg; }
+        await saveTask(refreshId, 'refresh_cids', { status: 'error', phase: s?.phase ?? 'Failed', progress: s?.progress ?? 0, total: s?.total ?? 0, error: msg, meta: {} });
       })
       .finally(() => { refreshCidMeta.running = false; });
+    keepAlive(refreshJob);
+    await saveTask(refreshId, 'refresh_cids', { status: 'running', phase: 'Listing images…', progress: 0, total: 0, meta: {} });
     res.status(202).json({ refreshId });
   } catch (e) { next(e); }
 });
 
 // ── GET /refresh-cids/:refreshId — poll CID refresh status ───────────────────
-router.get("/refresh-cids/:refreshId", (req, res) => {
+router.get("/refresh-cids/:refreshId", async (req, res) => {
   const state = refreshCidMeta.jobs.get(req.params.refreshId);
-  if (!state) { res.status(404).json({ error: "Refresh job not found." }); return; }
-  res.json(state);
+  if (state) { res.json(state); return; }
+  const db = await getTask(req.params.refreshId);
+  if (!db) { res.status(404).json({ error: "Refresh job not found." }); return; }
+  res.json(db);
 });
 
 // ── GET /:exportId — poll status ──────────────────────────────────────────────
 
-router.get("/:exportId", (req, res) => {
+router.get("/:exportId", async (req, res) => {
   const state = exportMeta.jobs.get(req.params.exportId);
-  if (!state) { res.status(404).json({ error: "Export job not found." }); return; }
-  res.json(state);
+  if (state) { res.json(state); return; }
+  const db = await getTask(req.params.exportId);
+  if (!db) { res.status(404).json({ error: "Export job not found." }); return; }
+  res.json(db);
 });
 
 export default router;
