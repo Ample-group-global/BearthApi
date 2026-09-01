@@ -76,7 +76,7 @@ router.get("/", async (_req, res, next) => {
 
 // POST /api/nft-sell/collection/provenance — not supported; provenance is set via contractURI
 router.post("/provenance", requireAdmin, (_req, res) => {
-  res.status(501).json({ error: "setProvenanceHash was removed from BearthGenesisNFT. Use PUT /api/nft-sell/collection/contract-uri instead." });
+  res.status(501).json({ error: "setProvenanceHash was removed from BearthNFT. Use PUT /api/nft-sell/collection/contract-uri instead." });
 });
 
 // POST /api/nft-sell/collection/phase — advance phase

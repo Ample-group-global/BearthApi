@@ -76,7 +76,7 @@ router.post("/:id/passes", requireAdmin, async (req, res, next) => {
     if (!seasonRows.length)
       return res.status(404).json({ error: "Season not found" });
 
-    // Record in DB (on-chain minting via mintSeasonPass was removed from BearthGenesisNFT)
+    // Record in DB (on-chain minting via mintSeasonPass was removed from BearthNFT)
     const { rows } = await pool.query("SELECT nft_season_pass_issue($1,$2,$3,$4,$5)", [req.params.id, customer_id, wallet_address.toLowerCase(), amount_paid_eth ?? null, amount_paid_twd ?? null]);
     const pass = rows[0]?.nft_season_pass_issue;
 
